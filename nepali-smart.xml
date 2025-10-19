@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component>
+    <name>org.freedesktop.IBus.NepaliSmart</name>
+    <description>Nepali Smart Input Method Engine</description>
+    <exec>/usr/lib/ibus/engines/nepali-smart --ibus</exec>
+    <version>1.0</version>
+    <author>Sabin</author>
+    <license>MIT</license>
+    <homepage>https://github.com/yourusername/nepali-smart-ime</homepage>
+    <textdomain>nepali-smart</textdomain>
+    
+    <engines>
+        <engine>
+            <name>nepali-smart</name>
+            <longname>Nepali (Smart)</longname>
+            <description>An intelligent, learning Nepali IME</description>
+            <language>ne</language>
+            <license>MIT</license>
+            <author>Sabin</author>
+            <icon>/usr/share/icons/hicolor/scalable/apps/ibus-keyboard.svg</icon>
+            <layout>us</layout>
+            <rank>50</rank>
+        </engine>
+    </engines>
+</component>
