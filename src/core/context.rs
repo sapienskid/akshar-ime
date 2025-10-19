@@ -2,7 +2,7 @@ use crate::core::types::WordId;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContextModel {
     window_size: usize,
     history: VecDeque<WordId>,

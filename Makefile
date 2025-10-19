@@ -1,33 +1,47 @@
-.PHONY: all release debug test install profile clean
+.PHONY: all release debug test install uninstall profile clean
 
 # Default target
 all: release
 
-# Optimized production binary (< 1.5 MB)
+# Optimized production binary
 release:
 	@echo "Building optimized release binary..."
 	@cargo build --release
-	@echo "Binary size:"
-	@size target/release/ime_engine
 
-# Development build with debug symbols
+# Development build
 debug:
 	@cargo build
 
-# Run unit tests and benchmarks
+# Run tests
 test:
 	@cargo test -- --nocapture
 
-# System-wide deployment (example)
+# --- FINAL INSTALL TARGET ---
 install: release
-	@echo "Installing ime_engine to /usr/local/bin..."
+	@echo "Installing ime_engine binary to /usr/local/bin..."
 	@sudo cp target/release/ime_engine /usr/local/bin/
-	@echo "Installing m17n definition..."
-	@sudo mkdir -p /usr/share/m17n/
-	@sudo cp m17n/ne-smart.mim /usr/share/m17n/ne-smart.mim
-	@echo "Installation complete. Restart your input method framework."
+	
+	@echo "Installing Python loader script to /usr/local/bin..."
+	@sudo cp ibus/nepali-smart-ime-loader.py /usr/local/bin/
+	@echo "Making loader script executable..."
+	@sudo chmod +x /usr/local/bin/nepali-smart-ime-loader.py
+	
+	@echo "Installing IBus component definition..."
+	@sudo cp ibus/nepali_smart_ime.xml /usr/share/ibus/component/
+	
+	@echo "Installation complete. Please restart IBus."
 
-# Build for performance profiling
+# --- FINAL UNINSTALL TARGET ---
+uninstall:
+	@echo "Uninstalling ime_engine binary..."
+	@sudo rm -f /usr/local/bin/ime_engine
+	@echo "Uninstalling Python loader script..."
+	@sudo rm -f /usr/local/bin/nepali-smart-ime-loader.py
+	@echo "Uninstalling IBus component definition..."
+	@sudo rm -f /usr/share/ibus/component/nepali_smart_ime.xml
+	@echo "Uninstallation complete. Please restart IBus."
+
+# Build for profiling
 profile:
 	@cargo build --release --features="flame_it"
 

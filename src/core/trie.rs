@@ -5,7 +5,7 @@ use std::collections::{HashMap, BinaryHeap};
 
 // --- TrieBuilder: Used for real-time, in-memory learning ---
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 struct BuilderNode {
     children: HashMap<u8, usize>,
     word_id: Option<WordId>,
@@ -20,7 +20,7 @@ impl BuilderNode {
 
 /// A mutable, in-memory trie optimized for fast insertions and updates.
 /// This is the structure the engine interacts with during a user session.
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct TrieBuilder {
     nodes: Vec<BuilderNode>,
     pub metadata_store: Vec<WordMetadata>,

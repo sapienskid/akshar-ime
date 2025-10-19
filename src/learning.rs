@@ -1,7 +1,6 @@
 use crate::core::{
     context::ContextModel,
     trie::TrieBuilder,
-    types::{WordId},
 };
 
 pub struct LearningEngine {

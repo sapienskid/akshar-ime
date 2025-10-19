@@ -1,0 +1,14 @@
+/run/media/sapiens/Development/Development/nepali-ime/target/release/deps/serde-2113d0a21c5de63f.d: /home/sapiens/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /home/sapiens/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /home/sapiens/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /home/sapiens/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /home/sapiens/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /run/media/sapiens/Development/Development/nepali-ime/target/release/build/serde-5a180f54d9fe4ff1/out/private.rs
+
+/run/media/sapiens/Development/Development/nepali-ime/target/release/deps/libserde-2113d0a21c5de63f.rlib: /home/sapiens/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /home/sapiens/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /home/sapiens/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /home/sapiens/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /home/sapiens/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /run/media/sapiens/Development/Development/nepali-ime/target/release/build/serde-5a180f54d9fe4ff1/out/private.rs
+
+/run/media/sapiens/Development/Development/nepali-ime/target/release/deps/libserde-2113d0a21c5de63f.rmeta: /home/sapiens/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /home/sapiens/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /home/sapiens/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /home/sapiens/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /home/sapiens/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /run/media/sapiens/Development/Development/nepali-ime/target/release/build/serde-5a180f54d9fe4ff1/out/private.rs
+
+/home/sapiens/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs:
+/home/sapiens/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs:
+/home/sapiens/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs:
+/home/sapiens/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs:
+/home/sapiens/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs:
+/run/media/sapiens/Development/Development/nepali-ime/target/release/build/serde-5a180f54d9fe4ff1/out/private.rs:
+
+# env-dep:OUT_DIR=/run/media/sapiens/Development/Development/nepali-ime/target/release/build/serde-5a180f54d9fe4ff1/out

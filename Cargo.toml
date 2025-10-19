@@ -5,29 +5,31 @@ edition = "2021"
 authors = ["Elite Systems Architect"]
 
 [dependencies]
-# Serde for fast, compact binary serialization
 serde = { version = "1.0", features = ["derive"] }
 bincode = "1.3"
-# For atomic file writes
 tempfile = "3.10"
-# For command-line interface styling in the example binary
-crossterm = "0.27"
-# ADD THIS LINE for the persistence logic
+crossterm = "0.27" # For the simulator
 serde_json = "1.0"
+dirs = "5.0" 
 
-
+# This section tells Cargo to build both a standard Rust library (rlib)
+# and a C-compatible dynamic shared library (cdylib).
 [lib]
 name = "ime_core"
 path = "src/lib.rs"
+crate-type = ["rlib", "cdylib"]
 
 [[bin]]
 name = "ime_engine"
 path = "src/bin/main.rs"
 
-# Profile for release build to achieve minimal binary size and max speed
+# For automatically generating the C header file
+[build-dependencies]
+cbindgen = "0.26"
+
 [profile.release]
-opt-level = 'z'     # Optimize for size
-lto = true          # Link-Time Optimization
-codegen-units = 1   # Slower build, better optimization
-panic = 'abort'     # Remove panic unwinding code
-strip = true        # Strip debug symbols
+opt-level = 'z'
+lto = true
+codegen-units = 1
+panic = 'abort'
+strip = true

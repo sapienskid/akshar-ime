@@ -1,0 +1,13 @@
+target
+Cargo.lock
+*.rs.bk
+*.log
+.vscode
+.idea
+.DS_Store
+node_modules
+dist
+.env
+*.swp
+*.tmp
+*.bak
