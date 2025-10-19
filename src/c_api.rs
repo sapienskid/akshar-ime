@@ -1,5 +1,4 @@
-// This file is correct from the previous step. No changes needed.
-// It uses raw pointers and catch_unwind for stability.
+// File: src/c_api.rs
 use crate::ImeEngine;
 use std::ffi::{CStr, CString};
 use libc::c_char;

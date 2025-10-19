@@ -1,3 +1,4 @@
+// File: src/core/context.rs
 use crate::core::types::WordId;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};

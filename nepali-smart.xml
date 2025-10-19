@@ -1,3 +1,4 @@
+<!-- Nepali Smart IME Configuration, nepali-smart.xml -->
 <?xml version="1.0" encoding="UTF-8"?>
 <component>
     <name>org.freedesktop.IBus.NepaliSmart</name>

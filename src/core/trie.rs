@@ -1,3 +1,4 @@
+// --- File: src/core/trie.rs
 use std::collections::HashSet;
 use crate::core::types::{WordId, WordMetadata};
 use serde::{Deserialize, Serialize};

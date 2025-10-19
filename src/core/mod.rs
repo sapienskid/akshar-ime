@@ -1,3 +1,4 @@
+// File: src/core/mod.rs
 pub mod context;
 pub mod converter;
 pub mod engine;

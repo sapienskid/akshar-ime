@@ -1,3 +1,4 @@
+// file: src/core/types.rs
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
