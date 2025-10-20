@@ -9,7 +9,9 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 static mut IME_ENGINE: *mut ImeEngine = ptr::null_mut();
 
 fn get_dictionary_path() -> PathBuf {
-    let mut path = dirs::data_local_dir()
+    // NOTE: Changed to use dirs::config_dir() for better cross-platform support
+    let mut path = dirs::config_dir()
+        .or_else(dirs::data_local_dir)
         .or_else(dirs::home_dir)
         .expect("Could not find a valid home/data directory");
     path.push("nepali-smart-ime");
@@ -28,7 +30,6 @@ pub extern "C" fn nepali_ime_engine_init() {
             }
             let engine = ImeEngine::from_file_or_new(dict_path.to_str().unwrap_or(""));
             IME_ENGINE = Box::into_raw(Box::new(engine));
-            eprintln!("[Rust] Nepali IME Engine Initialized successfully.");
         }
     });
     if result.is_err() {
@@ -42,17 +43,14 @@ pub extern "C" fn nepali_ime_engine_destroy() {
     unsafe {
         if IME_ENGINE.is_null() { return; }
         let engine = Box::from_raw(IME_ENGINE);
-        if let Err(e) = engine.save_dictionary() {
-            eprintln!("[Rust ERR] Failed to save dictionary: {}", e);
-        } else {
-            eprintln!("[Rust] Dictionary saved successfully.");
-        }
+        let _ = engine.save_dictionary();
         IME_ENGINE = ptr::null_mut();
     }
 }
 
 unsafe fn get_engine_mut<'a>() -> Option<&'a mut ImeEngine> { IME_ENGINE.as_mut() }
 unsafe fn get_engine<'a>() -> Option<&'a ImeEngine> { IME_ENGINE.as_ref() }
+
 
 #[no_mangle]
 pub extern "C" fn nepali_ime_get_suggestions(prefix: *const c_char) -> *mut c_char {
@@ -68,10 +66,7 @@ pub extern "C" fn nepali_ime_get_suggestions(prefix: *const c_char) -> *mut c_ch
         }
         "[]".to_string()
     }));
-    let json_string = result.unwrap_or_else(|_| {
-        eprintln!("[Rust FATAL] Panic in get_suggestions.");
-        "[]".to_string()
-    });
+    let json_string = result.unwrap_or_else(|_| "[]".to_string());
     CString::new(json_string).unwrap().into_raw()
 }
 
