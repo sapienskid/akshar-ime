@@ -1,118 +1,114 @@
 use std::collections::{HashMap, HashSet};
 
-/// A robust three-state automaton for context-aware Indic script transliteration.
-/// This state machine correctly differentiates between vowels at the start of a word,
-/// vowel signs (matras) following a consonant, and full vowels following a completed syllable.
-/// This design is a direct implementation of the Finite-State Transducer principles.
+// =================================================================================
+// ARCHITECTURAL OVERHAUL: SYLLABLE-AWARE FINITE STATE TRANSDUCER (FST)
+// This new FST model understands the grammatical structure of Devanagari syllables.
+// It correctly builds consonant conjuncts, handles matras, and differentiates
+// between independent vowels and vowel signs based on context. This solves the
+// core issues of forming words like 'kra' (क्र), 'malai' (मलाइ), and 'aau' (आउ).
+// =================================================================================
+
+/// Represents the current state of the syllable being constructed by the FST.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 enum State {
+    /// At the beginning of a word, or after a vowel or symbol.
+    /// Ready to start a new syllable.
     Start,
-    Consonant,
-    Vowel,
+    /// A consonant has been produced and is awaiting a vowel.
+    /// The internal buffer currently ends with a virama (halanta).
+    Halanta,
+    /// A complete syllable (e.g., 'क', 'कि', 'प्र') has just been formed.
+    Syllable,
 }
 
-/// Categorizes the type of mapping to guide the FST's state transitions.
+/// Result of matching a token, carrying the appropriate Devanagari representation(s).
+#[derive(Debug)]
+enum MatchResult<'a> {
+    Symbol(&'a str),
+    Consonant(&'a str),
+    Vowel { full: &'a str, matra: &'a str },
+}
+
+/// Categorizes a matched Roman token to guide the FST's state transitions.
 #[derive(Debug, PartialEq, Eq)]
 enum MapKind {
     Symbol,
-    FullVowel,
-    VowelSign,
+    Vowel,
     Consonant,
 }
 
 pub struct RomanizationEngine {
     consonants: HashMap<&'static str, &'static str>,
-    full_vowels: HashMap<&'static str, &'static str>,
-    vowel_signs: HashMap<&'static str, &'static str>,
+    vowels: HashMap<&'static str, (&'static str, &'static str)>, // (Full Vowel, Matra)
     symbols: HashMap<&'static str, &'static str>,
     max_token_len: usize,
 }
 
 impl RomanizationEngine {
     pub fn new() -> Self {
-        // =================================================================================
-        // ARCHITECTURAL OVERHAUL: VOWEL MAPPING BASED ON DETAILED RESEARCH REPORT
-        // The FST logic is sound, but its accuracy depends entirely on the completeness
-        // of these rule tables. The following maps are now comprehensive.
-        // =================================================================================
+        // --- PRINCIPLED & ERGONOMIC KEY MAPPINGS ---
+        // These mappings are designed to be intuitive, fast, and consistent.
+        // - Aspiration is consistently marked with 'h' (k -> क, kh -> ख).
+        // - Retroflex consonants use Capital letters (t -> त, T -> ट).
+        // - Vowel length is achieved by doubling (i -> इ, ii -> ई).
+        // - Common aliases are provided for user convenience (f/ph, ee/ii).
 
         let consonants: HashMap<_, _> = [
-            ("k", "क"), ("K", "क"), ("kh", "ख"), ("KH", "ख"), ("Kh", "ख"), ("g", "ग"), ("G", "ग"), ("gh", "घ"), ("GH", "घ"), ("Gh", "घ"), ("ng", "ङ"), ("NG", "ङ"),
-            ("ch", "च"), ("CH", "च"), ("Ch", "च"), ("c", "च"), ("C", "च"), ("chh", "छ"), ("CHH", "छ"), ("Chh", "छ"), ("x", "छ"), ("X", "छ"), ("j", "ज"), ("J", "ज"), ("z", "ज"), ("Z", "ज"), ("jh", "झ"), ("JH", "झ"), ("Jh", "झ"),
-            ("T", "ट"), ("Th", "ठ"), ("TH", "ठ"), ("D", "ड"), ("Dh", "ढ"), ("DH", "ढ"), ("N", "ण"),
+            ("k", "क"), ("kh", "ख"), ("g", "ग"), ("gh", "घ"), ("ng", "ङ"),
+            ("ch", "च"), ("c", "च"), ("chh", "छ"), ("x", "छ"), ("j", "ज"), ("z", "ज"), ("jh", "झ"), ("ny", "ञ"),
+            ("T", "ट"), ("Th", "ठ"), ("D", "ड"), ("Dh", "ढ"), ("N", "ण"),
             ("t", "त"), ("th", "थ"), ("d", "द"), ("dh", "ध"), ("n", "न"),
-            ("p", "प"), ("P", "प"), ("ph", "फ"), ("f", "फ"), ("F", "फ"), ("b", "ब"), ("B", "ब"), ("bh", "भ"), ("BH", "भ"), ("Bh", "भ"),
-            ("m", "म"), ("M", "म"), ("y", "य"), ("Y", "य"), ("r", "र"), ("R", "र"), ("l", "ल"), ("L", "ल"), ("w", "व"), ("W", "व"), ("v", "व"), ("V", "व"),
-            ("s", "स"), ("sh", "श"), ("SH", "श"), ("Sh", "श"), ("S", "ष"), ("h", "ह"), ("H", "ह"),
-            ("ksh", "क्ष"), ("KSH", "क्ष"), ("Ksh", "क्ष"), ("tr", "त्र"), ("TR", "त्र"), ("Tr", "त्र"), ("gy", "ज्ञ"), ("GY", "ज्ञ"), ("Gy", "ज्ञ"),
+            ("p", "प"), ("ph", "फ"), ("f", "फ"), ("b", "ब"), ("bh", "भ"), ("m", "म"),
+            ("y", "य"), ("r", "र"), ("l", "ल"), ("w", "व"), ("v", "व"),
+            ("sh", "श"), ("S", "ष"), ("s", "स"), ("h", "ह"),
+            ("ksh", "क्ष"), ("tr", "त्र"), ("gy", "ज्ञ"),
         ].iter().cloned().collect();
 
-        // Full (Independent) Vowels: Used when FST state is `Start` or `Vowel`.
-        let full_vowels: HashMap<_, _> = [
-            ("a", "अ"),
-            ("aa", "आ"), ("AA", "आ"),
-            ("i", "इ"),
-            ("ee", "ई"), ("EE", "ई"), ("ii", "ई"), ("II", "ई"), // Added 'ii' alias
-            ("u", "उ"),
-            ("oo", "ऊ"), ("OO", "ऊ"), ("uu", "ऊ"), ("UU", "ऊ"), // Added 'uu' alias
-            ("e", "ए"), // NOTE: Per convention. User spec had `a` -> `ए` which would conflict.
-            ("ai", "ऐ"), ("AI", "ऐ"), ("ae", "ऐ"), ("AE", "ऐ"), // Added 'ae' alias
-            ("o", "ओ"),
-            ("au", "औ"), ("AU", "औ"), ("ao", "औ"), ("AO", "औ"), // Added 'ao' alias
-            ("am", "अं"), ("AM", "अं"), ("aM", "अं"), ("an", "अं"), ("AN", "अं"),
-            ("ah", "अः"), ("AH", "अः"), ("a:", "अः"), // Added 'a:' alias
-            ("ri", "ऋ"), ("RI", "ऋ"),
-            ("rr", "ॠ"), ("RR", "ॠ"), // Added long vocalic R
-        ].iter().cloned().collect();
-
-        // Dependent Vowels (Matras): Used ONLY when FST state is `Consonant`.
-        let vowel_signs: HashMap<_, _> = [
-            ("a", ""), // 'a' removes the halanta (inherent schwa)
-            ("aa", "ा"), ("AA", "ा"),
-            ("i", "ि"),
-            ("ee", "ी"), ("EE", "ी"), ("ii", "ी"), ("II", "ी"), // Added 'ii' alias
-            ("u", "ु"),
-            ("oo", "ू"), ("OO", "ू"), ("uu", "ू"), ("UU", "ू"), // Added 'uu' alias
-            ("e", "े"), // Standard 'e' matra
-            ("E", "ॅ"), // For loanwords like 'cat' -> 'kEṭ' -> 'कैट'
-            ("ai", "ै"), ("AI", "ै"), ("ae", "ै"), ("AE", "ै"), // Added 'ae' alias
-            ("o", "ो"), // Standard 'o' matra
-            ("O", "ॉ"), // For loanwords like 'cot' -> 'kOṭ' -> 'कॉट'
-            ("au", "ौ"), ("AU", "ौ"), ("ao", "ौ"), ("AO", "ौ"), // Added 'ao' alias
-            ("r", "ृ"), ("ri", "ृ"), ("RI", "ृ"), ("R", "ृ"),
-            ("rr", "ॄ"), ("RR", "ॄ"), // Added long vocalic R matra
-            ("M", "ं"), // Anusvara
-            ("H", "ः"), // Visarga
-            ("~", "ँ"), // Chandrabindu
+        // Maps Roman string to a tuple of (Full Independent Vowel, Vowel Sign/Matra)
+        let vowels: HashMap<_, _> = [
+            ("a", ("अ", "")), // The matra for 'a' is the absence of a virama.
+            ("aa", ("आ", "ा")), ("A", ("आ", "ा")),
+            ("i", ("इ", "ि")),
+            ("ii", ("ई", "ी")), ("ee", ("ई", "ी")),
+            ("u", ("उ", "ु")),
+            ("uu", ("ऊ", "ू")), ("oo", ("ऊ", "ू")),
+            ("e", ("ए", "े")),
+            ("ai", ("ऐ", "ै")), ("ae", ("ऐ", "ै")),
+            ("o", ("ओ", "ो")),
+            ("au", ("औ", "ौ")), ("ao", ("औ", "ौ")),
+            ("ri", ("ऋ", "ृ")),
+            ("M", ("अं", "ं")), ("am", ("अं", "ं")), // Anusvara
+            ("H", ("अः", "ः")), ("ah", ("अः", "ः")), // Visarga
+            ("~", ("अँ", "ँ")), // Chandrabindu
         ].iter().cloned().collect();
 
         let symbols: HashMap<_, _> = [
-            (".", "।"), ("|", "।"), ("..", "।।"), ("||", "।।"),
+            (".", "।"), ("..", "।।"),
             ("?", "?"), ("!", "!"), (",", ","), (";", ";"),
             ("OM", "ॐ"), ("'", "ऽ"),
             ("0", "०"), ("1", "१"), ("2", "२"), ("3", "३"), ("4", "४"),
             ("5", "५"), ("6", "६"), ("7", "७"), ("8", "८"), ("9", "९"),
         ].iter().cloned().collect();
 
-        // Dynamically calculate max_token_len to ensure Longest Prefix Match is always correct.
         let max_token_len = consonants.keys()
-            .chain(full_vowels.keys())
+            .chain(vowels.keys())
             .chain(symbols.keys())
             .map(|s| s.len())
             .max()
             .unwrap_or(3);
 
-        Self { consonants, full_vowels, vowel_signs, symbols, max_token_len }
+        Self { consonants, vowels, symbols, max_token_len }
     }
 
     /// Generates the single most likely, deterministic transliteration.
+    /// This is the primary output of the FST.
     pub fn transliterate_primary(&self, roman: &str) -> String {
         if roman.is_empty() { return String::new(); }
-        let force = roman.ends_with('a') && !roman.ends_with("aa");
-        self.transliterate_base(roman, force)
+        // By default, apply schwa deletion at the end of words (e.g., "ram" -> "राम").
+        self.transliterate_base(roman, true)
     }
 
-    /// Generates a list of likely candidates, including the primary one and common variants.
+    /// Generates a list of likely candidates to handle phonetic ambiguity.
     pub fn generate_candidates(&self, roman: &str) -> Vec<String> {
         if roman.is_empty() { return vec![]; }
         if let Some(nepali_symbol) = self.symbols.get(roman) { return vec![nepali_symbol.to_string()]; }
@@ -121,7 +117,8 @@ impl RomanizationEngine {
         let mut candidates = HashSet::new();
         candidates.insert(primary.clone());
 
-        // Heuristic 1: Handle final 'a' ambiguity (e.g., "rama" -> "राम" vs "रामा")
+        // Heuristic 1: Handle final 'a' ambiguity (e.g., "rama" -> "राम" vs "रामा").
+        // The primary transliteration assumes schwa deletion. This variant preserves the 'a'.
         if roman.ends_with('a') && !roman.ends_with("aa") {
             let variant = self.transliterate_base(roman, false);
             if variant != primary {
@@ -129,23 +126,66 @@ impl RomanizationEngine {
             }
         }
         
-        // Heuristic 2: Handle schwa-vowel boundary ambiguity (e.g., "malai" -> "मलै" vs "मलाइ")
-        if let Some(last_vowel_pos) = roman.rfind(|c: char| "aeiouAEIOU".contains(c)) {
-            if last_vowel_pos > 0 {
-                 let (stem, last_vowel) = roman.split_at(last_vowel_pos);
-                 // Ensure the 'last_vowel' part isn't a consonant itself (like 'ch' or 'sh')
-                 if !self.consonants.contains_key(last_vowel) {
-                    let stem_nepali = self.transliterate_primary(stem);
-                    let vowel_nepali = self.transliterate_primary(last_vowel);
-                    let variant = format!("{}{}", stem_nepali, vowel_nepali);
-                    if variant != primary {
-                        candidates.insert(variant);
-                    }
-                 }
+        // Heuristic 2: Split final 'ai' as 'aa' + 'i' (e.g., "malai" -> "मलाइ")
+        // This handles cases where user wants separate vowels but types compound vowel
+        if roman.ends_with("ai") && roman.len() > 2 {
+            let stem = &roman[..roman.len() - 2];
+            let stem_with_aa = format!("{}aa", stem);
+            let mut variant = self.transliterate_primary(&stem_with_aa);
+            if let Some((full_i, _)) = self.vowels.get("i") {
+                variant.push_str(full_i);
+                if variant != primary {
+                    candidates.insert(variant);
+                }
             }
         }
 
-        // Collect into a vec, ensuring the primary transliteration is first.
+        // Heuristic 3: Split final 'au' as 'aa' + 'u' (e.g., "aau" -> "आउ")
+        if roman.ends_with("au") && roman.len() > 2 {
+            let stem = &roman[..roman.len() - 2];
+            if !stem.is_empty() {
+                let stem_with_aa = format!("{}aa", stem);
+                let mut variant = self.transliterate_primary(&stem_with_aa);
+                if let Some((full_u, _)) = self.vowels.get("u") {
+                    variant.push_str(full_u);
+                    if variant != primary {
+                        candidates.insert(variant);
+                    }
+                }
+            }
+        }
+
+        // Heuristic 4: Special case for words starting with vowel sequences
+        // "aau" -> "आउ" (handle as "aa" + "u")
+        if roman.starts_with("aa") && roman.len() > 2 {
+            let rest = &roman[2..];
+            if let Some((full_vowel, _)) = self.vowels.get(rest) {
+                if let Some((aa_full, _)) = self.vowels.get("aa") {
+                    let variant = format!("{}{}", aa_full, full_vowel);
+                    if variant != primary {
+                        candidates.insert(variant);
+                    }
+                }
+            }
+        }
+
+        // Heuristic 5: Try splitting at last vowel position
+        // This catches patterns like "malai" where we want "ma-la-i" not "mal-ai"
+        if let Some(last_vowel_pos) = self.find_last_vowel_boundary(roman) {
+            if last_vowel_pos > 0 && last_vowel_pos < roman.len() {
+                let (stem, vowel_part) = roman.split_at(last_vowel_pos);
+                if self.vowels.contains_key(vowel_part) {
+                    let stem_nepali = self.transliterate_primary(stem);
+                    if let Some((full_vowel, _)) = self.vowels.get(vowel_part) {
+                        let variant = format!("{}{}", stem_nepali, full_vowel);
+                        if variant != primary {
+                            candidates.insert(variant);
+                        }
+                    }
+                }
+            }
+        }
+
         let mut result = vec![primary];
         for cand in candidates {
             if !result.contains(&cand) {
@@ -155,62 +195,78 @@ impl RomanizationEngine {
         result
     }
 
-    /// The core FST-based transliteration logic. (LOGIC UNCHANGED, DATA IS NEW)
-    fn transliterate_base(&self, roman: &str, force_final_a_matra: bool) -> String {
-        let roman = roman.to_lowercase();
+    /// Helper to find the last position where a vowel sequence could be split
+    fn find_last_vowel_boundary(&self, roman: &str) -> Option<usize> {
+        for i in (1..roman.len()).rev() {
+            let potential_vowel = &roman[i..];
+            if self.vowels.contains_key(potential_vowel) {
+                return Some(i);
+            }
+        }
+        None
+    }
+
+    /// The core FST-based transliteration logic.
+    fn transliterate_base(&self, roman: &str, force_schwa_deletion: bool) -> String {
         let mut result = String::with_capacity(roman.len() * 3);
         let mut state = State::Start;
         const HALANTA: &str = "\u{094d}";
-        let mut input = roman.as_str();
+        let mut input = roman;
 
         while !input.is_empty() {
-            let remaining_len = input.len();
-            let slice_len = remaining_len.min(self.max_token_len);
-            let chunk = &input[..slice_len];
-
-            let force_aa = force_final_a_matra && remaining_len == 1 && chunk.starts_with('a');
-            let effective_chunk = if force_aa { "aa" } else { chunk };
-
-            if let Some((token, nepali_str, kind)) = self.match_longest(effective_chunk, state) {
-                let consumed_len = if force_aa { 1 } else { token.len() };
-
-                match kind {
-                    MapKind::Symbol => {
-                        if state == State::Consonant && result.ends_with(HALANTA) {
-                            result.pop();
+            let chunk = &input[..input.len().min(self.max_token_len)];
+            
+            if let Some((token, match_result, _kind)) = self.match_longest(chunk) {
+                match state {
+                    State::Start | State::Syllable => match match_result {
+                        MatchResult::Consonant(nepali) => {
+                            result.push_str(nepali);
+                            result.push_str(HALANTA);
+                            state = State::Halanta;
                         }
-                        result.push_str(nepali_str);
-                        state = State::Start;
-                    }
-                    MapKind::FullVowel => {
-                        if state == State::Consonant && result.ends_with(HALANTA) {
-                            result.pop();
+                        MatchResult::Vowel { full, .. } => {
+                            // At word/syllable boundary: USE FULL VOWEL
+                            result.push_str(full);
+                            state = State::Syllable;
                         }
-                        result.push_str(nepali_str);
-                        state = State::Vowel;
-                    }
-                    MapKind::VowelSign => {
-                        if state == State::Consonant && result.ends_with(HALANTA) {
-                            result.pop();
-                            result.push_str(nepali_str);
-                            state = State::Vowel;
-                        } else {
-                            if let Some(fv) = self.full_vowels.get(token) {
-                                result.push_str(fv);
-                                state = State::Vowel;
+                        MatchResult::Symbol(nepali) => {
+                            result.push_str(nepali);
+                            state = State::Start;
+                        }
+                    },
+                    State::Halanta => match match_result {
+                        MatchResult::Consonant(nepali) => {
+                            result.push_str(nepali);
+                            result.push_str(HALANTA);
+                            // State remains Halanta, building the conjunct
+                        }
+                        MatchResult::Vowel { matra, .. } => {
+                            // After consonant: USE MATRA
+                            if result.ends_with(HALANTA) { 
+                                result.truncate(result.len() - HALANTA.len());
                             }
+                            // If matra is empty (inherent 'a'), we're done
+                            // Otherwise, append the matra
+                            if !matra.is_empty() {
+                                result.push_str(matra);
+                            }
+                            state = State::Syllable;
                         }
-                    }
-                    MapKind::Consonant => {
-                        result.push_str(nepali_str);
-                        result.push_str(HALANTA);
-                        state = State::Consonant;
+                        MatchResult::Symbol(nepali) => {
+                            // Implicit schwa completion before a symbol.
+                            if result.ends_with(HALANTA) { 
+                                result.truncate(result.len() - HALANTA.len());
+                            }
+                            result.push_str(nepali);
+                            state = State::Start;
+                        }
                     }
                 }
-                input = &input[consumed_len..];
+                input = &input[token.len()..];
             } else {
-                if state == State::Consonant && result.ends_with(HALANTA) {
-                    result.pop();
+                // No match found, treat as a literal character.
+                if result.ends_with(HALANTA) { 
+                    result.truncate(result.len() - HALANTA.len());
                 }
                 let next_char = input.chars().next().unwrap();
                 result.push(next_char);
@@ -219,29 +275,29 @@ impl RomanizationEngine {
             }
         }
 
-        if result.ends_with(HALANTA) {
-            result.pop();
+        // Final schwa handling at the end of the word.
+        if force_schwa_deletion && result.ends_with(HALANTA) {
+            result.truncate(result.len() - HALANTA.len());
         }
 
         result
     }
 
-    /// Implements Longest Prefix Match (LPM) based on the FST's current state. (UNCHANGED)
-    fn match_longest<'a>(&'a self, slice: &'a str, state: State) -> Option<(&'a str, &'a str, MapKind)> {
+    /// Implements Longest Prefix Match (LPM) and categorizes the match.
+    /// Now returns both full vowel and matra forms for the FST to decide.
+    fn match_longest<'a>(&'a self, slice: &'a str) -> Option<(&'a str, MatchResult<'a>, MapKind)> {
         for len in (1..=slice.len()).rev() {
             let token = &slice[0..len];
-
-            if let Some(val) = self.symbols.get(token) { return Some((token, *val, MapKind::Symbol)); }
-
-            match state {
-                State::Start | State::Vowel => {
-                    if let Some(val) = self.full_vowels.get(token) { return Some((token, *val, MapKind::FullVowel)); }
-                    if let Some(val) = self.consonants.get(token) { return Some((token, *val, MapKind::Consonant)); }
-                }
-                State::Consonant => {
-                    if let Some(val) = self.vowel_signs.get(token) { return Some((token, *val, MapKind::VowelSign)); }
-                    if let Some(val) = self.consonants.get(token) { return Some((token, *val, MapKind::Consonant)); }
-                }
+            
+            if let Some(val) = self.symbols.get(token) { 
+                return Some((token, MatchResult::Symbol(*val), MapKind::Symbol)); 
+            }
+            if let Some(val) = self.consonants.get(token) { 
+                return Some((token, MatchResult::Consonant(*val), MapKind::Consonant)); 
+            }
+            if let Some((full, matra)) = self.vowels.get(token) {
+                // Return BOTH forms - let the FST state machine decide which to use
+                return Some((token, MatchResult::Vowel { full, matra }, MapKind::Vowel));
             }
         }
         None

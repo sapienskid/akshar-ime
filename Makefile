@@ -14,6 +14,14 @@ STANDARD_LIB_PATH = /usr/lib
 IBUS_ENGINE_PATH = /usr/lib/ibus/engines
 IBUS_COMPONENT_PATH = /usr/share/ibus/component
 
+# User data paths for dictionary management (respect XDG where possible)
+XDG_CONFIG ?= $(HOME)/.config
+XDG_DATA ?= $(HOME)/.local/share
+DICTIONARY_REL_PATH = nepali-smart-ime/user_dictionary.bin
+DICT_LOCATIONS = $(XDG_CONFIG)/$(DICTIONARY_REL_PATH) $(XDG_DATA)/$(DICTIONARY_REL_PATH) $(HOME)/$(DICTIONARY_REL_PATH)
+BACKUP_DIR ?= $(XDG_DATA)/nepali-smart-ime/backups
+
+
 .PHONY: all release debug test install clean uninstall check-install
 
 all: release
@@ -28,7 +36,7 @@ rust_lib:
 
 c_engine: rust_lib
 	gcc $(CFLAGS) -o $(TARGET_DIR)/$(C_ENGINE_NAME) src/ibus_engine.c \
-		-L$(TARGET_DIR) -lnepali_smart_ime $(LDFLAGS) -Wl,-rpath,'$$ORIGIN'
+		-L$(TARGET_DIR) -lnepali_smart_ime $(LDFLAGS) -Wl,-rpath,/usr/lib
 
 # Installation with proper steps
 install: release
@@ -64,7 +72,7 @@ install: release
 	
 	@echo ""
 	@echo "Step 7: Clearing IBus cache..."
-	rm -f ~/.cache/ibus/bus/* 2>/dev/null || true
+		rm -f ~/.cache/ibus/bus/* 2>/dev/null || true
 	
 	@echo ""
 	@echo "Step 8: Restarting IBus daemon..."
@@ -178,3 +186,56 @@ uninstall:
 clean:
 	cargo clean
 	rm -f $(TARGET_DIR)/$(C_ENGINE_NAME)
+
+## ------------------ Dictionary & Cache Utilities ------------------ ##
+.PHONY: reset-dictionary clear-ibus-cache factory-reset reinstall backup-dictionary
+
+# Back up and remove any user dictionary found in typical locations
+reset-dictionary:
+	@echo "======================================================================"
+	@echo "Backing up and removing user dictionary(s)"
+	@echo "======================================================================"
+	@mkdir -p $(BACKUP_DIR)
+	@TIMESTAMP=`date +%Y%m%d-%H%M%S` && \
+	for f in $(DICT_LOCATIONS); do \
+		if [ -f "$$f" ]; then \
+			echo "Backing up $$f to $(BACKUP_DIR)/user_dictionary.bin.$$TIMESTAMP"; \
+			cp "$$f" "$(BACKUP_DIR)/user_dictionary.bin.$$TIMESTAMP"; \
+			rm -f "$$f"; \
+		else \
+			echo "No dictionary found at $$f"; \
+		fi; \
+	done
+
+# Explicit cache clearing for ibus
+clear-ibus-cache:
+	@echo "Clearing IBus cache files..."
+	@rm -f ~/.cache/ibus/bus/* 2>/dev/null || true
+	@rm -rf ~/.cache/ibus/* 2>/dev/null || true
+	@echo "Restarting IBus daemon..."
+	-ibus exit 2>/dev/null || true
+	@sleep 1
+	@ibus-daemon --daemonize --replace --xim || true
+	@sleep 1
+	@echo "IBus cache cleared and daemon restarted."
+
+# Convenience: perform both cache and dictionary reset
+factory-reset: clear-ibus-cache reset-dictionary
+	@echo "Factory reset complete. Please re-add the input method if necessary."
+
+# Reinstall shortcut
+reinstall: uninstall release install
+	@echo "Reinstall completed"
+
+# Backup dictionary only
+backup-dictionary:
+	@mkdir -p $(BACKUP_DIR)
+	@TIMESTAMP=`date +%Y%m%d-%H%M%S` && \
+	for f in $(DICT_LOCATIONS); do \
+		if [ -f "$$f" ]; then \
+			echo "Copying $$f to $(BACKUP_DIR)/user_dictionary.bin.$$TIMESTAMP"; \
+			cp "$$f" "$(BACKUP_DIR)/user_dictionary.bin.$$TIMESTAMP"; \
+		else \
+			echo "No dictionary found at $$f"; \
+		fi; \
+	done
