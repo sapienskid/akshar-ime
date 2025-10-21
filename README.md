@@ -66,7 +66,7 @@ sudo dnf install rust cargo ibus-devel jansson-devel
 Clone the repository and use the provided `Makefile`:
 
 ```bash
-git clone https://github.com/your-repo/nepali-smart-ime.git
+git clone https://github.com/sapienskid/nepali-smart-ime.git
 cd nepali-smart-ime
 make install
 ```
