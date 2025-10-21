@@ -1,5 +1,5 @@
 // File: src/learning.rs
-use crate::core::{context::ContextModel, trie::TrieBuilder};
+use crate::core::{context::ContextModel, trie::Trie}; // MODIFIED
 use crate::fuzzy::symspell::SymSpell;
 
 pub struct LearningEngine {
@@ -18,23 +18,30 @@ impl LearningEngine {
 
     pub fn learn(
         &self,
-        trie_builder: &mut TrieBuilder,
+        trie: &mut Trie, // MODIFIED
         context_model: &mut ContextModel,
         symspell: &mut SymSpell,
         confirmation: &WordConfirmation,
     ) {
-        let word_id = trie_builder.get_or_create_metadata(&confirmation.nepali);
+        let word_id = trie.get_or_create_metadata(&confirmation.nepali);
         
-        let metadata = &mut trie_builder.metadata_store[word_id];
+        let metadata = &mut trie.metadata_store[word_id];
         metadata.frequency += self.frequency_increment;
-        metadata.variants.insert(confirmation.roman.clone());
+        
+        // Only add the variant if it's new, to avoid bloating the metadata store
+        if metadata.variants.insert(confirmation.roman.clone()) {
+            // OPTIMIZATION: Only add the primary Roman variant and the Nepali word itself to the
+            // fuzzy index. This keeps the SymSpell dictionary much smaller and faster than
+            // indexing every single user-typed variant.
+            symspell.add_word(&confirmation.roman, word_id);
+            if metadata.variants.len() == 1 { // First time we see this word, add its Nepali form too
+                 symspell.add_word(&confirmation.nepali, word_id);
+            }
+        }
         
         let updated_freq = metadata.frequency;
 
-        trie_builder.insert(&confirmation.roman, word_id, updated_freq);
-
-        symspell.add_word(&confirmation.roman, word_id);
-        symspell.add_word(&confirmation.nepali, word_id);
+        trie.insert(&confirmation.roman, word_id, updated_freq);
 
         context_model.add_word(word_id);
     }

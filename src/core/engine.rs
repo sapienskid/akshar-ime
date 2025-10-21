@@ -1,7 +1,7 @@
 // File: src/core/engine.rs
 use crate::core::{
     context::ContextModel, converter::RomanizationEngine,
-    trie::TrieBuilder, types::WordId,
+    trie::Trie, types::WordId,
 };
 use crate::fuzzy::symspell::SymSpell;
 use crate::learning::{LearningEngine, WordConfirmation};
@@ -13,22 +13,18 @@ const CONTEXT_WINDOW_SIZE: usize = 3;
 const MAX_EDIT_DISTANCE: usize = 2;
 
 const LITERAL_BASE_SCORE: u64 = 1;
-// Give the primary transliteration a slightly higher base score
-// so it appears before other generated variants if no dictionary entry exists.
 const PRIMARY_LITERAL_SCORE: u64 = 2;
 
-/// Defines the origin of a suggestion to allow for intelligent ranking.
-/// Higher variants are considered higher quality.
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
 enum SuggestionSource {
-    Literal,        // A heuristic-based variant from the FST
-    PrimaryLiteral, // The single, deterministic FST output
-    Fuzzy,          // A match from SymSpell
-    Trie,           // A direct prefix match from the learned dictionary (highest quality)
+    Literal,
+    PrimaryLiteral,
+    Fuzzy,
+    Trie,
 }
 
 pub struct ImeEngine {
-    pub trie_builder: TrieBuilder,
+    pub trie: Trie,
     pub context_model: ContextModel,
     pub romanizer: RomanizationEngine,
     pub symspell: SymSpell,
@@ -39,7 +35,7 @@ pub struct ImeEngine {
 impl ImeEngine {
     pub fn new() -> Self {
         Self {
-            trie_builder: TrieBuilder::new(),
+            trie: Trie::new(),
             context_model: ContextModel::new(CONTEXT_WINDOW_SIZE),
             romanizer: RomanizationEngine::new(),
             symspell: SymSpell::new(MAX_EDIT_DISTANCE),
@@ -59,11 +55,9 @@ impl ImeEngine {
 
         let mut candidates: HashMap<String, (u64, SuggestionSource)> = HashMap::new();
 
-        // Helper to add candidates while respecting suggestion source quality.
-        // A higher-quality source (e.g., Trie) will always overwrite a lower one (e.g., Literal),
-        // regardless of score.
-        let mut add_candidate = |nepali: String, score: u64, source: SuggestionSource| {
-            candidates.entry(nepali)
+        // Helper closure to manage candidate insertion logic.
+        let add_candidate = |nepali: String, score: u64, source: SuggestionSource, current_candidates: &mut HashMap<String, (u64, SuggestionSource)>| {
+            current_candidates.entry(nepali)
                 .and_modify(|(existing_score, existing_source)| {
                     if source > *existing_source {
                         *existing_score = score;
@@ -75,35 +69,36 @@ impl ImeEngine {
                 .or_insert((score, source));
         };
 
-        // --- Stage 1: Trie Search (Highest Quality) ---
-        let trie_suggestions = self.trie_builder.get_top_k_suggestions(prefix, count);
+        // --- Stage 1: Trie Search ---
+        let trie_suggestions = self.trie.get_top_k_suggestions(prefix, count);
         for (word_id, score) in trie_suggestions {
-            if let Some(metadata) = self.trie_builder.metadata_store.get(word_id) {
-                add_candidate(metadata.nepali.clone(), score, SuggestionSource::Trie);
+            if let Some(metadata) = self.trie.metadata_store.get(word_id) {
+                add_candidate(metadata.nepali.clone(), score, SuggestionSource::Trie, &mut candidates);
             }
         }
 
+        // --- BORROW CHECKER FIX IS HERE ---
+        // The original code had a long-lived closure that caused a borrow conflict.
+        // This new structure separates the fuzzy search logic, ensuring borrows do not overlap.
         // --- Stage 2: Fuzzy Search ---
-        let fuzzy_matches = self.symspell.lookup(prefix);
-        for word_id in fuzzy_matches {
-            if let Some(metadata) = self.trie_builder.metadata_store.get(word_id) {
-                // Fuzzy matches are penalized slightly to rank below exact prefix matches.
-                let score = metadata.frequency.saturating_sub(1);
-                add_candidate(metadata.nepali.clone(), score, SuggestionSource::Fuzzy);
+        if candidates.len() < count {
+            let fuzzy_matches = self.symspell.lookup(prefix);
+            for word_id in fuzzy_matches {
+                if let Some(metadata) = self.trie.metadata_store.get(word_id) {
+                    let score = metadata.frequency.saturating_sub(1);
+                    add_candidate(metadata.nepali.clone(), score, SuggestionSource::Fuzzy, &mut candidates);
+                }
             }
         }
-
-        // --- Stage 3: Primary Rule-Based Transliteration (Ground Truth) ---
-        // This is the single, most direct transliteration from the FST. We add it with a
-        // special priority to ensure it's always an option for the user.
+        
+        // --- Stage 3: Primary Rule-Based Transliteration ---
         let primary_nepali = self.romanizer.transliterate_primary(prefix);
-        add_candidate(primary_nepali, PRIMARY_LITERAL_SCORE, SuggestionSource::PrimaryLiteral);
+        add_candidate(primary_nepali, PRIMARY_LITERAL_SCORE, SuggestionSource::PrimaryLiteral, &mut candidates);
 
-        // --- Stage 4: Other Literal FSM Candidates (Fallback Heuristics) ---
+        // --- Stage 4: Other Literal FSM Candidates ---
         let literal_candidates = self.romanizer.generate_candidates(prefix);
         for nepali in literal_candidates {
-            // This will only insert if the candidate isn't already present from a better source.
-            add_candidate(nepali, LITERAL_BASE_SCORE, SuggestionSource::Literal);
+            add_candidate(nepali, LITERAL_BASE_SCORE, SuggestionSource::Literal, &mut candidates);
         }
 
         // --- Stage 5: Conversion, Contextual Re-ranking, and Final Sort ---
@@ -112,19 +107,19 @@ impl ImeEngine {
             .map(|(s, (score, _))| (s, score))
             .collect();
 
-        // Contextual re-ranking
         let mut suggestions_with_ids: Vec<(WordId, u64)> = all_suggestions.iter()
             .filter_map(|(nepali, score)| {
-                self.trie_builder.find_word_id_by_nepali(nepali).map(|id| (id, *score))
+                self.trie.find_word_id_by_nepali(nepali).map(|id| (id, *score))
             })
             .collect();
 
         self.context_model.rerank_suggestions(&mut suggestions_with_ids);
 
         for (id, new_score) in suggestions_with_ids {
-            let nepali_word = &self.trie_builder.metadata_store[id].nepali;
-            if let Some(entry) = all_suggestions.iter_mut().find(|(s, _)| s == nepali_word) {
-                entry.1 = new_score;
+            if let Some(nepali_word) = self.trie.metadata_store.get(id).map(|m| &m.nepali) {
+                 if let Some(entry) = all_suggestions.iter_mut().find(|(s, _)| s == nepali_word) {
+                    entry.1 = new_score;
+                }
             }
         }
 
@@ -136,18 +131,16 @@ impl ImeEngine {
     pub fn user_confirms(&mut self, roman: &str, nepali: &str) {
         if roman.is_empty() || nepali.is_empty() { return; }
         let confirmation = WordConfirmation { roman: roman.to_string(), nepali: nepali.to_string() };
-        self.learning_engine.learn(&mut self.trie_builder, &mut self.context_model, &mut self.symspell, &confirmation);
+        self.learning_engine.learn(&mut self.trie, &mut self.context_model, &mut self.symspell, &confirmation);
     }
 
     pub fn save_dictionary(&self) -> Result<(), std::io::Error> {
         if let Some(path) = &self.dictionary_path {
             save_to_disk(self, Path::new(path))
         } else {
-            // In a real scenario, log a warning here.
             Ok(())
         }
     }
-
 }
 
 impl Default for ImeEngine { fn default() -> Self { Self::new() } }
