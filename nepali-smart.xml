@@ -3,7 +3,7 @@
 <component>
     <name>org.freedesktop.IBus.NepaliSmart</name>
     <description>Nepali Smart Input Method Engine</description>
-    <exec>/usr/lib/ibus/engines/nepali-smart</exec>
+    <exec>/usr/lib/ibus/engines/nepali-smart --ibus</exec>
     <version>1.0</version>
     <author>Sabin</author>
     <license>MIT</license>

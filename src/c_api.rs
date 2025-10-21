@@ -10,10 +10,7 @@ static mut IME_ENGINE: *mut ImeEngine = ptr::null_mut();
 
 fn get_dictionary_path() -> PathBuf {
     // NOTE: Changed to use dirs::config_dir() for better cross-platform support
-    let mut path = dirs::config_dir()
-        .or_else(dirs::data_local_dir)
-        .or_else(dirs::home_dir)
-        .expect("Could not find a valid home/data directory");
+    let mut path = dirs::config_dir().expect("Could not find a valid config directory");
     path.push("nepali-smart-ime");
     path.push("user_dictionary.bin");
     path

@@ -1,3 +1,4 @@
+// File: src/core/converter.rs
 use std::collections::{HashMap, HashSet};
 
 // =================================================================================
@@ -55,13 +56,17 @@ impl RomanizationEngine {
 
         let consonants: HashMap<_, _> = [
             ("k", "क"), ("kh", "ख"), ("g", "ग"), ("gh", "घ"), ("ng", "ङ"),
-            ("ch", "च"), ("c", "च"), ("chh", "छ"), ("x", "छ"), ("j", "ज"), ("z", "ज"), ("jh", "झ"), ("ny", "ञ"),
+            ("ch", "च"), ("c", "च"), ("chh", "छ"), ("x", "छ"), ("j", "ज"), ("z", "ज"), ("jh", "झ"),
+            // MODIFICATION 1: Use 'jny' for ज्ञ, which is less ambiguous than 'gy'.
+            ("ny", "ञ"), ("jny", "ज्ञ"),
             ("T", "ट"), ("Th", "ठ"), ("D", "ड"), ("Dh", "ढ"), ("N", "ण"),
             ("t", "त"), ("th", "थ"), ("d", "द"), ("dh", "ध"), ("n", "न"),
             ("p", "प"), ("ph", "फ"), ("f", "फ"), ("b", "ब"), ("bh", "भ"), ("m", "म"),
             ("y", "य"), ("r", "र"), ("l", "ल"), ("w", "व"), ("v", "व"),
             ("sh", "श"), ("S", "ष"), ("s", "स"), ("h", "ह"),
-            ("ksh", "क्ष"), ("tr", "त्र"), ("gy", "ज्ञ"),
+            ("ksh", "क्ष"),
+            // REMOVED 'tr' and 'gy'. The FST will now build them dynamically.
+            // This allows 'mantra' (मन्त्र) and 'lagyo' (लाग्यो) to be formed correctly.
         ].iter().cloned().collect();
 
         // Maps Roman string to a tuple of (Full Independent Vowel, Vowel Sign/Matra)
@@ -125,9 +130,39 @@ impl RomanizationEngine {
                 candidates.insert(variant);
             }
         }
+
+        // MODIFICATION 3: Added a new, robust heuristic for medial vowel promotion.
+        // This handles cases like "lagyo" by creating a candidate from "laagyo" -> "लाग्यो".
+        let mut temp_input = roman;
+        let mut prefix = String::with_capacity(roman.len());
+        while !temp_input.is_empty() {
+            if let Some((token, _, kind)) = self.match_longest(temp_input) {
+                prefix.push_str(token);
+                if kind == MapKind::Consonant {
+                    let remaining = &temp_input[token.len()..];
+                    // Check for a consonant followed by a single 'a'
+                    if remaining.starts_with('a') && !remaining.starts_with("aa") {
+                        let mut promoted_roman = prefix.clone();
+                        promoted_roman.push('a'); // Promote 'a' to 'aa'
+                        promoted_roman.push_str(remaining);
+                        
+                        let variant = self.transliterate_primary(&promoted_roman);
+                        if variant != primary {
+                            candidates.insert(variant);
+                        }
+                        // Only promote the first occurrence to avoid generating too many candidates
+                        break;
+                    }
+                }
+                temp_input = &temp_input[token.len()..];
+            } else {
+                // Unmatchable character, advance by one to prevent infinite loop
+                prefix.push(temp_input.chars().next().unwrap());
+                temp_input = &temp_input[1..];
+            }
+        }
         
         // Heuristic 2: Split final 'ai' as 'aa' + 'i' (e.g., "malai" -> "मलाइ")
-        // This handles cases where user wants separate vowels but types compound vowel
         if roman.ends_with("ai") && roman.len() > 2 {
             let stem = &roman[..roman.len() - 2];
             let stem_with_aa = format!("{}aa", stem);
@@ -156,7 +191,6 @@ impl RomanizationEngine {
         }
 
         // Heuristic 4: Special case for words starting with vowel sequences
-        // "aau" -> "आउ" (handle as "aa" + "u")
         if roman.starts_with("aa") && roman.len() > 2 {
             let rest = &roman[2..];
             if let Some((full_vowel, _)) = self.vowels.get(rest) {
@@ -170,7 +204,6 @@ impl RomanizationEngine {
         }
 
         // Heuristic 5: Try splitting at last vowel position
-        // This catches patterns like "malai" where we want "ma-la-i" not "mal-ai"
         if let Some(last_vowel_pos) = self.find_last_vowel_boundary(roman) {
             if last_vowel_pos > 0 && last_vowel_pos < roman.len() {
                 let (stem, vowel_part) = roman.split_at(last_vowel_pos);
@@ -225,7 +258,6 @@ impl RomanizationEngine {
                             state = State::Halanta;
                         }
                         MatchResult::Vowel { full, .. } => {
-                            // At word/syllable boundary: USE FULL VOWEL
                             result.push_str(full);
                             state = State::Syllable;
                         }
@@ -236,24 +268,28 @@ impl RomanizationEngine {
                     },
                     State::Halanta => match match_result {
                         MatchResult::Consonant(nepali) => {
-                            result.push_str(nepali);
-                            result.push_str(HALANTA);
-                            // State remains Halanta, building the conjunct
+                            // MODIFICATION 2: Add special grammatical rules for ya-phala and rakar.
+                            // When 'y' or 'r' follow a consonant, they form a special conjunct
+                            // without adding another halanta. This correctly forms 'ग्य' or 'प्र'.
+                            if token == "y" || token == "r" {
+                                result.push_str(nepali); // e.g., 'ग्' + 'य' -> 'ग्य'
+                                // State remains Halanta, as the conjunct is still awaiting a vowel.
+                            } else {
+                                result.push_str(nepali);
+                                result.push_str(HALANTA);
+                                // State remains Halanta, building a standard conjunct like 'क्त्'.
+                            }
                         }
                         MatchResult::Vowel { matra, .. } => {
-                            // After consonant: USE MATRA
                             if result.ends_with(HALANTA) { 
                                 result.truncate(result.len() - HALANTA.len());
                             }
-                            // If matra is empty (inherent 'a'), we're done
-                            // Otherwise, append the matra
                             if !matra.is_empty() {
                                 result.push_str(matra);
                             }
                             state = State::Syllable;
                         }
                         MatchResult::Symbol(nepali) => {
-                            // Implicit schwa completion before a symbol.
                             if result.ends_with(HALANTA) { 
                                 result.truncate(result.len() - HALANTA.len());
                             }
@@ -264,7 +300,6 @@ impl RomanizationEngine {
                 }
                 input = &input[token.len()..];
             } else {
-                // No match found, treat as a literal character.
                 if result.ends_with(HALANTA) { 
                     result.truncate(result.len() - HALANTA.len());
                 }
@@ -275,7 +310,6 @@ impl RomanizationEngine {
             }
         }
 
-        // Final schwa handling at the end of the word.
         if force_schwa_deletion && result.ends_with(HALANTA) {
             result.truncate(result.len() - HALANTA.len());
         }
@@ -284,7 +318,6 @@ impl RomanizationEngine {
     }
 
     /// Implements Longest Prefix Match (LPM) and categorizes the match.
-    /// Now returns both full vowel and matra forms for the FST to decide.
     fn match_longest<'a>(&'a self, slice: &'a str) -> Option<(&'a str, MatchResult<'a>, MapKind)> {
         for len in (1..=slice.len()).rev() {
             let token = &slice[0..len];
@@ -296,7 +329,6 @@ impl RomanizationEngine {
                 return Some((token, MatchResult::Consonant(*val), MapKind::Consonant)); 
             }
             if let Some((full, matra)) = self.vowels.get(token) {
-                // Return BOTH forms - let the FST state machine decide which to use
                 return Some((token, MatchResult::Vowel { full, matra }, MapKind::Vowel));
             }
         }

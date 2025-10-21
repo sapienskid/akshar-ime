@@ -1,6 +1,6 @@
 // Minimal test harness for Nepali IME RomanizationEngine
 // Run with: cargo run --bin ime_test
-
+// src/bin/ime_test.rs
 use nepali_smart_ime::core::converter::RomanizationEngine;
 
 fn main() {
