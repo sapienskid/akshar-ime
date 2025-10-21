@@ -34,16 +34,16 @@ impl Trie {
         }
     }
 
-    pub fn find_word_id_by_nepali(&self, nepali: &str) -> Option<WordId> {
-        self.metadata_store.iter().position(|meta| meta.nepali == nepali)
+    pub fn find_word_id_by_devanagari(&self, devanagari: &str) -> Option<WordId> {
+        self.metadata_store.iter().position(|meta| meta.devanagari == devanagari)
     }
 
-    pub fn get_or_create_metadata(&mut self, nepali: &str) -> WordId {
-        if let Some(id) = self.find_word_id_by_nepali(nepali) {
+    pub fn get_or_create_metadata(&mut self, devanagari: &str) -> WordId {
+        if let Some(id) = self.find_word_id_by_devanagari(devanagari) {
             id
         } else {
             let new_meta = WordMetadata {
-                nepali: nepali.to_string(),
+                devanagari: devanagari.to_string(),
                 frequency: 0,
                 variants: HashSet::new(),
             };

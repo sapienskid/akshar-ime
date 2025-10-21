@@ -56,8 +56,8 @@ impl ImeEngine {
         let mut candidates: HashMap<String, (u64, SuggestionSource)> = HashMap::new();
 
         // Helper closure to manage candidate insertion logic.
-        let add_candidate = |nepali: String, score: u64, source: SuggestionSource, current_candidates: &mut HashMap<String, (u64, SuggestionSource)>| {
-            current_candidates.entry(nepali)
+        let add_candidate = |devanagari: String, score: u64, source: SuggestionSource, current_candidates: &mut HashMap<String, (u64, SuggestionSource)>| {
+            current_candidates.entry(devanagari)
                 .and_modify(|(existing_score, existing_source)| {
                     if source > *existing_source {
                         *existing_score = score;
@@ -73,7 +73,7 @@ impl ImeEngine {
         let trie_suggestions = self.trie.get_top_k_suggestions(prefix, count);
         for (word_id, score) in trie_suggestions {
             if let Some(metadata) = self.trie.metadata_store.get(word_id) {
-                add_candidate(metadata.nepali.clone(), score, SuggestionSource::Trie, &mut candidates);
+                add_candidate(metadata.devanagari.clone(), score, SuggestionSource::Trie, &mut candidates);
             }
         }
 
@@ -86,19 +86,19 @@ impl ImeEngine {
             for word_id in fuzzy_matches {
                 if let Some(metadata) = self.trie.metadata_store.get(word_id) {
                     let score = metadata.frequency.saturating_sub(1);
-                    add_candidate(metadata.nepali.clone(), score, SuggestionSource::Fuzzy, &mut candidates);
+                    add_candidate(metadata.devanagari.clone(), score, SuggestionSource::Fuzzy, &mut candidates);
                 }
             }
         }
         
         // --- Stage 3: Primary Rule-Based Transliteration ---
-        let primary_nepali = self.romanizer.transliterate_primary(prefix);
-        add_candidate(primary_nepali, PRIMARY_LITERAL_SCORE, SuggestionSource::PrimaryLiteral, &mut candidates);
+    let primary_devanagari = self.romanizer.transliterate_primary(prefix);
+    add_candidate(primary_devanagari, PRIMARY_LITERAL_SCORE, SuggestionSource::PrimaryLiteral, &mut candidates);
 
         // --- Stage 4: Other Literal FSM Candidates ---
         let literal_candidates = self.romanizer.generate_candidates(prefix);
-        for nepali in literal_candidates {
-            add_candidate(nepali, LITERAL_BASE_SCORE, SuggestionSource::Literal, &mut candidates);
+        for devanagari in literal_candidates {
+            add_candidate(devanagari, LITERAL_BASE_SCORE, SuggestionSource::Literal, &mut candidates);
         }
 
         // --- Stage 5: Conversion, Contextual Re-ranking, and Final Sort ---
@@ -108,16 +108,16 @@ impl ImeEngine {
             .collect();
 
         let mut suggestions_with_ids: Vec<(WordId, u64)> = all_suggestions.iter()
-            .filter_map(|(nepali, score)| {
-                self.trie.find_word_id_by_nepali(nepali).map(|id| (id, *score))
+            .filter_map(|(dev, score)| {
+                self.trie.find_word_id_by_devanagari(dev).map(|id| (id, *score))
             })
             .collect();
 
         self.context_model.rerank_suggestions(&mut suggestions_with_ids);
 
         for (id, new_score) in suggestions_with_ids {
-            if let Some(nepali_word) = self.trie.metadata_store.get(id).map(|m| &m.nepali) {
-                 if let Some(entry) = all_suggestions.iter_mut().find(|(s, _)| s == nepali_word) {
+            if let Some(dev_word) = self.trie.metadata_store.get(id).map(|m| &m.devanagari) {
+                 if let Some(entry) = all_suggestions.iter_mut().find(|(s, _)| s == dev_word) {
                     entry.1 = new_score;
                 }
             }
@@ -128,9 +128,9 @@ impl ImeEngine {
         all_suggestions
     }
 
-    pub fn user_confirms(&mut self, roman: &str, nepali: &str) {
-        if roman.is_empty() || nepali.is_empty() { return; }
-        let confirmation = WordConfirmation { roman: roman.to_string(), nepali: nepali.to_string() };
+    pub fn user_confirms(&mut self, roman: &str, devanagari: &str) {
+        if roman.is_empty() || devanagari.is_empty() { return; }
+        let confirmation = WordConfirmation { roman: roman.to_string(), devanagari: devanagari.to_string() };
         self.learning_engine.learn(&mut self.trie, &mut self.context_model, &mut self.symspell, &confirmation);
     }
 

@@ -1,8 +1,8 @@
-# Nepali Smart IME
+# Akshar Devanagari IME
 
-**An intelligent, high-performance, and adaptive Input Method Engine for the Nepali language.**
+**An intelligent, high-performance, and adaptive Input Method Engine for the Devanagari script.**
 
-Nepali Smart IME is a next-generation input method built from the ground up for speed, efficiency, and intelligence. It learns from your typing patterns to provide incredibly accurate and fast suggestions, all while maintaining a minimal memory and CPU footprint.
+Akshar Devanagari IME is a next-generation input method built from the ground up for speed, efficiency, and intelligence. It learns from your typing patterns to provide incredibly accurate and fast suggestions, all while maintaining a minimal memory and CPU footprint.
 
 ![Build Status](https://img.shields.io/badge/build-passing-brightgreen)
 ![License](https://img.shields.io/badge/license-MIT-blue)
@@ -12,7 +12,7 @@ Nepali Smart IME is a next-generation input method built from the ground up for 
 - **Blazing Fast Performance:** Sub-50ms keystroke latency and sub-100ms suggestion generation, achieved through cutting-edge algorithms like a **Pruning Radix Trie**.
 - **Extremely Lightweight:** The entire installed engine is under 5MB, with a low memory footprint suitable for any machine.
 - **Adaptive Learning:** The IME learns your vocabulary and spelling variations in real-time. The words and phrases you use most frequently will appear first.
-- **Intelligent Transliteration:** A sophisticated Syllable-Aware Finite State Transducer (FST) correctly handles complex Nepali conjuncts (`ज्ञ`, `क्ष`, `त्र`), ya-phala (`्य`), rakar (`्र`), and other grammatical nuances.
+**Intelligent Transliteration:** A sophisticated Syllable-Aware Finite State Transducer (FST) correctly handles complex Devanagari conjuncts (`ज्ञ`, `क्ष`, `त्र`), ya-phala (`्य`), rakar (`्र`), and other grammatical nuances.
 - **Fuzzy Search:** The engine can find the correct words even if you make spelling mistakes in Roman script.
 - **Context-Aware:** Suggestions are re-ranked based on the words you've just typed, making predictions for phrases more accurate.
 
@@ -66,8 +66,8 @@ sudo dnf install rust cargo ibus-devel jansson-devel
 Clone the repository and use the provided `Makefile`:
 
 ```bash
-git clone https://github.com/sapienskid/nepali-smart-ime.git
-cd nepali-smart-ime
+git clone https://github.com/sapienskid/akshar-devanagari-ime.git
+cd akshar-devanagari-ime
 make install
 ```
 
@@ -76,7 +76,7 @@ The `make install` command will compile the Rust core, build the C engine, and i
 After installation, you need to add the IME to your system's input sources:
 1. Go to `Settings` > `Keyboard` > `Input Sources`.
 2. Click `+` to add a new source.
-3. Search for "Nepali (Smart)" and add it.
+3. Search for "Devanagari (Akshar)" and add it.
 4. (Optional) Log out and log back in to ensure all changes are applied.
 
 ## Project Structure
@@ -89,7 +89,7 @@ After installation, you need to add the IME to your system's input sources:
   - `c_api.rs`: The Foreign Function Interface (FFI) for the C layer.
 - `src/ibus_engine.c`: The C code that integrates the Rust library with IBus.
 - `Makefile`: The build and installation script.
-- `nepali-smart.xml`: The IBus component registration file.
+- `devanagari-smart.xml`: The IBus component registration file.
 
 ## License
 

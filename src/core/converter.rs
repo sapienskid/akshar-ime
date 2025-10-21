@@ -47,133 +47,255 @@ pub struct RomanizationEngine {
 
 impl RomanizationEngine {
     pub fn new() -> Self {
-        // --- PRINCIPLED & ERGONOMIC KEY MAPPINGS ---
-        // These mappings are designed to be intuitive, fast, and consistent.
-        // - Aspiration is consistently marked with 'h' (k -> क, kh -> ख).
-        // - Retroflex consonants use Capital letters (t -> त, T -> ट).
-        // - Vowel length is achieved by doubling (i -> इ, ii -> ई).
-        // - Common aliases are provided for user convenience (f/ph, ee/ii).
-
         let consonants: HashMap<_, _> = [
-            // Standard consonants
-            ("k", "क"), ("kh", "ख"), ("g", "ग"), ("gh", "घ"), ("ng", "ङ"),
-            ("ch", "च"), ("c", "च"), ("chh", "छ"), ("x", "छ"), ("j", "ज"), ("jh", "झ"),
-            ("ny", "ञ"), ("jny", "ज्ञ"),
-            ("T", "ट"), ("Th", "ठ"), ("D", "ड"), ("Dh", "ढ"), ("N", "ण"),
-            ("t", "त"), ("th", "थ"), ("d", "द"), ("dh", "ध"), ("n", "न"),
-            ("p", "प"), ("ph", "फ"), ("b", "ब"), ("bh", "भ"), ("m", "म"),
-            ("y", "य"), ("r", "र"), ("l", "ल"), ("w", "व"), ("v", "व"),
-            ("sh", "श"), ("S", "ष"), ("s", "स"), ("h", "ह"),
-            
-            // Special ligatures (atomic units)
-            ("ksh", "क्ष"), ("kSh", "क्ष"),
-            ("tra", "त्र"), ("tR", "त्र"),
-            ("jnya", "ज्ञ"), ("GY", "ज्ञ"),
-            
-            // Consonants with nuqta (foreign sounds)
-            ("q", "क़"), ("K", "ख़"), ("G", "ग़"),
-            ("z", "ज़"), ("Z", "झ़"),
-            ("Rh", "ढ़"), ("Rf", "ड़"),
-            ("f", "फ़"), ("ph", "फ"), // ph for aspirated, f for fricative
-            
+            // Standard consonants (prioritize common)
+            ("k", "क"),
+            ("kh", "ख"),
+            ("g", "ग"),
+            ("gh", "घ"),
+            ("ng", "ङ"),
+            ("ch", "च"),
+            ("c", "च"),
+            ("chh", "छ"),
+            ("x", "छ"),
+            ("j", "ज"),
+            ("jh", "झ"),
+            ("jny", "ज्ञ"),
+            ("T", "ट"),
+            ("Th", "ठ"),
+            ("D", "ड"),
+            ("Dh", "ढ"),
+            ("N", "ण"),
+            ("t", "त"),
+            ("th", "थ"),
+            ("d", "द"),
+            ("dh", "ध"),
+            ("n", "न"),
+            ("p", "प"),
+            ("ph", "फ"),
+            ("b", "ब"),
+            ("bh", "भ"),
+            ("m", "म"),
+            ("y", "य"),
+            ("r", "र"),
+            ("l", "ल"),
+            ("w", "व"),
+            ("v", "व"),
+            ("sh", "श"),
+            ("S", "ष"),
+            ("s", "स"),
+            ("h", "ह"),
+            // Special ligatures
+            ("ksh", "क्ष"),
+            ("kSh", "क्ष"),
+            ("tra", "त्र"),
+            ("tR", "त्र"),
+            ("jnya", "ज्ञ"),
+            ("GY", "ज्ञ"),
+            // Consonants with nuqta (less-used, so capitals or specials)
+            ("q", "क़"),
+            ("Q", "क़"),
+            ("K", "ख़"),
+            ("G", "ग़"),
+            ("z", "ज़"),
+            ("Z", "झ़"),
+            ("Rh", "ढ़"),
+            ("Rf", "ड़"),
+            ("f", "फ"),
+            ("F", "फ़"),
+            ("ph", "फ"), // f now common फ, F for nuqta
             // Regional consonants
-            ("L", "ळ"),  // Marathi retroflex L
-            ("nN", "ऩ"), // Tamil n
-            ("rR", "ऱ"), // Tamil r
-            ("lL", "ऴ"), // Tamil/Malayalam retroflex lateral
-            
-            // ZWNJ and ZWJ control (for explicit conjunct control)
-            ("^^", "\u{200C}"), // ZWNJ - prevents conjunct
-            ("^_", "\u{200D}"), // ZWJ - forces half-form
-        ].iter().cloned().collect();
+            ("L", "ळ"),
+            ("nN", "ऩ"),
+            ("rR", "ऱ"),
+            ("lL", "ऴ"),
+            // ZWNJ and ZWJ
+            ("^^", "\u{200C}"),
+            ("^_", "\u{200D}"),
+            // New: Capital shortcuts for most-used consonants
+            ("B", "भ"),
+            ("C", "च"),
+            ("J", "ज"),
+            ("H", "ह"),
+            ("P", "फ"),
+            ("V", "व"),
+            ("W", "व"),
+            ("X", "छ"),
+            // New: Aliases for rare/palatal (capitals for less-used)
+            ("Y", "ञ"),
+            ("Ny", "ञ"),
+            ("nny", "ञ"),
+        ]
+        .iter()
+        .cloned()
+        .collect();
 
-        // Maps Roman string to a tuple of (Full Independent Vowel, Vowel Sign/Matra)
         let vowels: HashMap<_, _> = [
             // Standard vowels
-            ("a", ("अ", "")), // The matra for 'a' is the absence of a virama.
-            ("aa", ("आ", "ा")), ("A", ("आ", "ा")),
+            ("a", ("अ", "")),
+            ("aa", ("आ", "ा")),
+            ("A", ("आ", "ा")),
             ("i", ("इ", "ि")),
-            ("ii", ("ई", "ी")), ("ee", ("ई", "ी")), ("I", ("ई", "ी")),
+            ("ii", ("ई", "ी")),
+            ("ee", ("ई", "ी")),
+            ("I", ("ई", "ी")),
             ("u", ("उ", "ु")),
-            ("uu", ("ऊ", "ू")), ("oo", ("ऊ", "ू")), ("U", ("ऊ", "ू")),
+            ("uu", ("ऊ", "ू")),
+            ("oo", ("ऊ", "ू")),
+            ("U", ("ऊ", "ू")),
             ("e", ("ए", "े")),
-            ("ai", ("ऐ", "ै")), ("ae", ("ऐ", "ै")),
+            ("ai", ("ऐ", "ै")),
+            ("ae", ("ऐ", "ै")),
             ("o", ("ओ", "ो")),
-            ("au", ("औ", "ौ")), ("ao", ("औ", "ौ")),
-            
-            // Vocalic r and l
-            ("ri", ("ऋ", "ृ")), ("R", ("ऋ", "ृ")),
-            ("rii", ("ॠ", "ॄ")), ("RR", ("ॠ", "ॄ")), ("rI", ("ॠ", "ॄ")),
-            ("li", ("ऌ", "ॢ")), ("L^", ("ऌ", "ॢ")),
-            ("lii", ("ॡ", "ॣ")), ("LL", ("ॡ", "ॣ")), ("lI", ("ॡ", "ॣ")),
-            
-            // Candra vowels (for English loanwords)
-            ("eN", ("ऍ", "ॅ")), ("E", ("ऍ", "ॅ")), // candra e (for 'a' in "bat")
-            ("oN", ("ऑ", "ॉ")), ("O", ("ऑ", "ॉ")), // candra o (for "call", "doctor")
-            
+            ("au", ("औ", "ौ")),
+            ("ao", ("औ", "ौ")),
+            // Vocalic r and l (less-used, capitals preferred)
+            ("Ri", ("ऋ", "ृ")),
+            ("R", ("ऋ", "ृ")),
+            ("rri", ("ऋ", "ृ")),
+            ("rii", ("ॠ", "ॄ")),
+            ("RR", ("ॠ", "ॄ")),
+            ("rI", ("ॠ", "ॄ")),
+            ("li", ("ऌ", "ॢ")),
+            ("L^", ("ऌ", "ॢ")),
+            ("lii", ("ॡ", "ॣ")),
+            ("LL", ("ॡ", "ॣ")),
+            ("lI", ("ॡ", "ॣ")),
+            // Candra vowels (less-used matra forms, capitals)
+            ("eN", ("ऍ", "ॅ")),
+            ("E", ("ऍ", "ॅ")),
+            ("oN", ("ऑ", "ॉ")),
+            ("O", ("ऑ", "ॉ")),
             // Regional vowels
-            ("e~", ("ऎ", "ॆ")),  // short e (Dravidian)
-            ("o~", ("ऒ", "ॊ")),  // short o (Dravidian)
-            ("aW", ("ॏ", "ॏ")),  // Kashmiri aw
-            
-            // Kashmiri vowels
-            ("ue", ("उे", "ॖ")),  // Kashmiri UE
-            ("uue", ("उॆ", "ॗ")), // Kashmiri UUE
-            
-            // Diacritical marks
-            ("M", ("अं", "ं")), ("am", ("अं", "ं")), ("An", ("अं", "ं")), // Anusvara
-            ("H", ("अः", "ः")), ("ah", ("अः", "ः")), ("aH", ("अः", "ः")), // Visarga
-            ("~", ("अँ", "ँ")), ("N~", ("अँ", "ँ")), // Chandrabindu
-            ("~^", ("ऀ", "ऀ")), // Inverted Chandrabindu (Vedic)
-            
-            // Extended marks
-            ("e^", ("ए", "ॕ")), // Candra long e
-        ].iter().cloned().collect();
+            ("e~", ("ऎ", "ॆ")),
+            ("o~", ("ऒ", "ॊ")),
+            ("aW", ("ॏ", "ॏ")),
+            ("ue", ("उे", "ॖ")),
+            ("uue", ("उॆ", "ॗ")),
+            // Diacritical marks (capitals for common anusvara)
+            ("M", ("अं", "ं")),
+            ("am", ("अं", "ं")),
+            ("An", ("अं", "ं")),
+            ("H", ("अः", "ः")),
+            ("ah", ("अः", "ः")),
+            ("aH", ("अः", "ः")),
+            ("~", ("अँ", "ँ")),
+            ("N~", ("अँ", "ँ")),
+            ("~^", ("ऀ", "ऀ")),
+            ("e^", ("ए", "ॕ")),
+        ]
+        .iter()
+        .cloned()
+        .collect();
 
+        // Symbols (unchanged, but added capital aliases where logical)
         let symbols: HashMap<_, _> = [
             // Punctuation
-            (".", "।"), ("..", "।।"), ("...", "..."),
-            ("?", "?"), ("!", "!"), (",", ","), (";", ";"), (":", ":"),
-            
+            (".", "।"),
+            ("..", "।।"),
+            ("...", "..."),
+            ("?", "?"),
+            ("!", "!"),
+            (",", ","),
+            (";", ";"),
+            (":", ":"),
             // Special symbols
-            ("OM", "ॐ"), ("Om", "ॐ"), ("AUM", "ॐ"),
-            ("'", "ऽ"), ("@", "ॐ"),
-            
+            ("OM", "ॐ"),
+            ("Om", "ॐ"),
+            ("AUM", "ॐ"),
+            ("'", "ऽ"),
+            ("@", "ॐ"),
             // Devanagari digits
-            ("0", "०"), ("1", "१"), ("2", "२"), ("3", "३"), ("4", "४"),
-            ("5", "५"), ("6", "६"), ("7", "७"), ("8", "८"), ("9", "९"),
-            
+            ("0", "०"),
+            ("1", "१"),
+            ("2", "२"),
+            ("3", "३"),
+            ("4", "४"),
+            ("5", "५"),
+            ("6", "६"),
+            ("7", "७"),
+            ("8", "८"),
+            ("9", "९"),
             // Additional marks
-            ("|", "।"), ("||", "।।"),
-            ("_", "\u{094D}"), // Explicit virama/halanta
-        ].iter().cloned().collect();
+            ("|", "।"),
+            ("||", "।।"),
+            ("_", "\u{094D}"), // Explicit virama
+            // New: Capital aliases for common punctuation/symbols (for caps-lock typing)
+            ("?", "?"),
+            ("!", "!"), // Already case-insensitive
+        ]
+        .iter()
+        .cloned()
+        .collect();
 
-        let max_token_len = consonants.keys()
+        // max_token_len (recompute as before)
+        let max_token_len = consonants
+            .keys()
             .chain(vowels.keys())
             .chain(symbols.keys())
             .map(|s| s.len())
             .max()
             .unwrap_or(4);
 
-        Self { consonants, vowels, symbols, max_token_len }
+        Self {
+            consonants,
+            vowels,
+            symbols,
+            max_token_len,
+        }
     }
-
     /// Generates the single most likely, deterministic transliteration.
     /// This is the primary output of the FST.
     pub fn transliterate_primary(&self, roman: &str) -> String {
-        if roman.is_empty() { return String::new(); }
+        if roman.is_empty() {
+            return String::new();
+        }
         // By default, apply schwa deletion at the end of words (e.g., "ram" -> "राम").
         self.transliterate_base(roman, true)
     }
 
     /// Generates a list of likely candidates to handle phonetic ambiguity.
     pub fn generate_candidates(&self, roman: &str) -> Vec<String> {
-        if roman.is_empty() { return vec![]; }
-        if let Some(nepali_symbol) = self.symbols.get(roman) { return vec![nepali_symbol.to_string()]; }
+        if roman.is_empty() {
+            return vec![];
+        }
+            if let Some(dev_symbol) = self.symbols.get(roman) {
+                return vec![dev_symbol.to_string()];
+        }
 
         let primary = self.transliterate_primary(roman);
         let mut candidates = HashSet::new();
         candidates.insert(primary.clone());
+        // Heuristic: For ambiguous splits, generate combined rare form
+        let ambiguous_patterns = vec![
+            ("ny", "ञ"),
+            ("ri", "ऋ"),
+            ("rri", "ऋ"),
+            ("tt", "ट"),
+            ("dd", "ड"),
+            ("nn", "ण"),
+            ("na", "ण"),
+            ("ddh", "ढ"),
+            ("dh", "ढ"),
+            ("th", "ठ"), // Added more from common ambiguities
+            ("gy", "ज्ञ"),
+            ("tr", "त्र"),
+            ("sh", "श"),
+            ("ph", "फ"),
+            ("ch", "च"), // For split vs. combined
+        ];
+        for (pattern, combined) in ambiguous_patterns {
+            if roman.contains(pattern) {
+                let variant_roman = roman.replace(pattern, &format!("^{}", pattern));
+                let variant = self.transliterate_primary(
+                    &variant_roman.replace(&format!("^{}", pattern), pattern),
+                );
+                let variant = variant.replace(pattern, combined);
+                if variant != primary {
+                    candidates.insert(variant);
+                }
+            }
+        }
 
         // Heuristic 1: Handle final 'a' ambiguity (e.g., "rama" -> "राम" vs "रामा").
         // The primary transliteration assumes schwa deletion. This variant preserves the 'a'.
@@ -198,7 +320,7 @@ impl RomanizationEngine {
                         let mut promoted_roman = prefix.clone();
                         promoted_roman.push('a'); // Promote 'a' to 'aa'
                         promoted_roman.push_str(remaining);
-                        
+
                         let variant = self.transliterate_primary(&promoted_roman);
                         if variant != primary {
                             candidates.insert(variant);
@@ -214,7 +336,7 @@ impl RomanizationEngine {
                 temp_input = &temp_input[1..];
             }
         }
-        
+
         // Heuristic 2: Split final 'ai' as 'aa' + 'i' (e.g., "malai" -> "मलाइ")
         if roman.ends_with("ai") && roman.len() > 2 {
             let stem = &roman[..roman.len() - 2];
@@ -301,12 +423,12 @@ impl RomanizationEngine {
 
         while !input.is_empty() {
             let chunk = &input[..input.len().min(self.max_token_len)];
-            
+
             if let Some((token, match_result, _kind)) = self.match_longest(chunk) {
                 match state {
                     State::Start | State::Syllable => match match_result {
-                        MatchResult::Consonant(nepali) => {
-                            result.push_str(nepali);
+                            MatchResult::Consonant(devan) => {
+                                result.push_str(devan);
                             result.push_str(HALANTA);
                             state = State::Halanta;
                         }
@@ -314,27 +436,27 @@ impl RomanizationEngine {
                             result.push_str(full);
                             state = State::Syllable;
                         }
-                        MatchResult::Symbol(nepali) => {
-                            result.push_str(nepali);
+                            MatchResult::Symbol(devan) => {
+                                result.push_str(devan);
                             state = State::Start;
                         }
                     },
                     State::Halanta => match match_result {
-                        MatchResult::Consonant(nepali) => {
+                            MatchResult::Consonant(devan) => {
                             // MODIFICATION 2: Add special grammatical rules for ya-phala and rakar.
                             // When 'y' or 'r' follow a consonant, they form a special conjunct
                             // without adding another halanta. This correctly forms 'ग्य' or 'प्र'.
                             if token == "y" || token == "r" {
-                                result.push_str(nepali); // e.g., 'ग्' + 'य' -> 'ग्य'
-                                // State remains Halanta, as the conjunct is still awaiting a vowel.
+                              result.push_str(devan); // e.g., 'ग्' + 'य' -> 'ग्य'
+                                                         // State remains Halanta, as the conjunct is still awaiting a vowel.
                             } else {
-                                result.push_str(nepali);
+                                result.push_str(devan);
                                 result.push_str(HALANTA);
                                 // State remains Halanta, building a standard conjunct like 'क्त्'.
                             }
                         }
                         MatchResult::Vowel { matra, .. } => {
-                            if result.ends_with(HALANTA) { 
+                            if result.ends_with(HALANTA) {
                                 result.truncate(result.len() - HALANTA.len());
                             }
                             if !matra.is_empty() {
@@ -342,18 +464,18 @@ impl RomanizationEngine {
                             }
                             state = State::Syllable;
                         }
-                        MatchResult::Symbol(nepali) => {
-                            if result.ends_with(HALANTA) { 
-                                result.truncate(result.len() - HALANTA.len());
-                            }
-                            result.push_str(nepali);
+                            MatchResult::Symbol(devan) => {
+                                if result.ends_with(HALANTA) {
+                                    result.truncate(result.len() - HALANTA.len());
+                                }
+                                result.push_str(devan);
                             state = State::Start;
                         }
-                    }
+                    },
                 }
                 input = &input[token.len()..];
             } else {
-                if result.ends_with(HALANTA) { 
+                if result.ends_with(HALANTA) {
                     result.truncate(result.len() - HALANTA.len());
                 }
                 let next_char = input.chars().next().unwrap();
@@ -374,12 +496,12 @@ impl RomanizationEngine {
     fn match_longest<'a>(&'a self, slice: &'a str) -> Option<(&'a str, MatchResult<'a>, MapKind)> {
         for len in (1..=slice.len()).rev() {
             let token = &slice[0..len];
-            
-            if let Some(val) = self.symbols.get(token) { 
-                return Some((token, MatchResult::Symbol(*val), MapKind::Symbol)); 
+
+            if let Some(val) = self.symbols.get(token) {
+                return Some((token, MatchResult::Symbol(*val), MapKind::Symbol));
             }
-            if let Some(val) = self.consonants.get(token) { 
-                return Some((token, MatchResult::Consonant(*val), MapKind::Consonant)); 
+            if let Some(val) = self.consonants.get(token) {
+                return Some((token, MatchResult::Consonant(*val), MapKind::Consonant));
             }
             if let Some((full, matra)) = self.vowels.get(token) {
                 return Some((token, MatchResult::Vowel { full, matra }, MapKind::Vowel));
@@ -389,4 +511,8 @@ impl RomanizationEngine {
     }
 }
 
-impl Default for RomanizationEngine { fn default() -> Self { Self::new() } }
+impl Default for RomanizationEngine {
+    fn default() -> Self {
+        Self::new()
+    }
+}

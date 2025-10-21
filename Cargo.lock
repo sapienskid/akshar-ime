@@ -3,6 +3,18 @@
 version = 4
 
 [[package]]
+name = "akshar_ime"
+version = "1.0.0"
+dependencies = [
+ "bincode",
+ "dirs",
+ "libc",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "bincode"
 version = "1.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -116,18 +128,6 @@ name = "memchr"
 version = "2.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f52b00d39961fc5b2736ea853c9cc86238e165017a493d1d5c8eac6bdc4cc273"
-
-[[package]]
-name = "nepali_smart_ime"
-version = "1.0.0"
-dependencies = [
- "bincode",
- "dirs",
- "libc",
- "serde",
- "serde_json",
- "tempfile",
-]
 
 [[package]]
 name = "once_cell"

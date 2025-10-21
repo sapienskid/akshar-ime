@@ -1,10 +1,10 @@
 # ==============================================================================
-# Makefile for Nepali Smart IME
+# Makefile for Akshar Devanagari IME
 # ==============================================================================
 
 # --- Variables ---
-RUST_LIB_NAME := libnepali_smart_ime.so
-C_ENGINE_NAME := nepali-smart
+RUST_LIB_NAME := libakshar_ime.so
+C_ENGINE_NAME := devanagari-smart
 TARGET_DIR    := target/release
 
 # Compiler and Linker Flags (discovered via pkg-config for portability)
@@ -42,12 +42,11 @@ rust_lib:
 c_engine: rust_lib
 	@echo "Building C engine against release library..."
 	@$(CC) $(CFLAGS) -o $(TARGET_DIR)/$(C_ENGINE_NAME) src/ibus_engine.c \
-		-L$(TARGET_DIR) -lnepali_smart_ime $(LDFLAGS) -Wl,-rpath,$(LIB_DIR)
+		-L$(TARGET_DIR) -lakshar_ime $(LDFLAGS) -Wl,-rpath,$(LIB_DIR)
 
-# --- Installation & Management ---
 
 install: release  ## Compile and install the engine to system directories.
-	@echo "Installing Nepali Smart IME..."
+	@echo "Installing Akshar Devanagari IME..."
 	@echo "  > Stopping IBus daemon..."
 	@-ibus exit 2>/dev/null || true
 	@echo "  > Creating system directories..."
@@ -57,22 +56,23 @@ install: release  ## Compile and install the engine to system directories.
 	@sudo cp $(TARGET_DIR)/$(C_ENGINE_NAME) $(IBUS_ENGINE_DIR)/
 	@sudo cp $(TARGET_DIR)/$(RUST_LIB_NAME) $(LIB_DIR)/
 	@echo "  > Installing IBus component file..."
-	@sudo cp nepali-smart.xml $(IBUS_COMPONENT_DIR)/
+	@sudo cp devanagari-smart.xml $(IBUS_COMPONENT_DIR)/
 	@echo "  > Updating linker cache..."
 	@sudo ldconfig
 	@echo "  > Clearing IBus cache and restarting daemon..."
 	@rm -f ~/.cache/ibus/bus/* 2>/dev/null || true
 	@ibus-daemon --daemonize --replace --xim
-	@echo "\nInstallation complete. Please add 'Nepali (Smart)' in your system's keyboard settings."
+	@echo "\nInstallation complete. Please add 'Devanagari (Akshar)' in your system's keyboard settings."
+
 
 uninstall:  ## Remove the engine from the system.
-	@echo "Uninstalling Nepali Smart IME..."
+	@echo "Uninstalling Akshar Devanagari IME..."
 	@echo "  > Stopping IBus daemon..."
 	@-ibus exit 2>/dev/null || true
 	@echo "  > Removing system files..."
 	@sudo rm -f $(IBUS_ENGINE_DIR)/$(C_ENGINE_NAME)
 	@sudo rm -f $(LIB_DIR)/$(RUST_LIB_NAME)
-	@sudo rm -f $(IBUS_COMPONENT_DIR)/nepali-smart.xml
+	@sudo rm -f $(IBUS_COMPONENT_DIR)/devanagari-smart.xml
 	@echo "  > Updating linker cache..."
 	@sudo ldconfig
 	@echo "  > Restarting IBus daemon..."
@@ -87,8 +87,7 @@ clean:  ## Remove all build artifacts.
 
 # --- Help ---
 
-help:  ## Show this help message.
-	@echo "Nepali Smart IME Makefile"
+	@echo "Akshar Devanagari IME Makefile"
 	@echo "-------------------------"
 	@echo "Usage: make [target]"
 	@echo ""

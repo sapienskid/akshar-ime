@@ -1,5 +1,5 @@
-<!-- Akshar Devanagari IME Configuration, devanagari-smart.xml -->
 <?xml version="1.0" encoding="UTF-8"?>
+<!-- Akshar Devanagari IME Component -->
 <component>
     <name>org.freedesktop.IBus.AksharDevanagari</name>
     <description>Akshar Devanagari Input Method Engine</description>
@@ -7,9 +7,8 @@
     <version>1.0</version>
     <author>Sabin</author>
     <license>MIT</license>
-    <homepage>https://github.com/sapienskid/akshar-ime</homepage>
+    <homepage>https://github.com/yourusername/akshar-devanagari-ime</homepage>
     <textdomain>devanagari-smart</textdomain>
-    
     <engines>
         <engine>
             <name>devanagari-smart</name>
@@ -18,7 +17,7 @@
             <language>ne</language>
             <license>MIT</license>
             <author>Sabin</author>
-            <icon>/usr/share/icons/hicolor/scalable/apps/Akshar.svg</icon>
+            <icon>/usr/share/icons/hicolor/scalable/apps/ibus-keyboard.svg</icon>
             <layout>us</layout>
             <rank>50</rank>
         </engine>

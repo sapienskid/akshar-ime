@@ -8,7 +8,7 @@ pub struct LearningEngine {
 
 pub struct WordConfirmation {
     pub roman: String,
-    pub nepali: String,
+    pub devanagari: String,
 }
 
 impl LearningEngine {
@@ -23,19 +23,19 @@ impl LearningEngine {
         symspell: &mut SymSpell,
         confirmation: &WordConfirmation,
     ) {
-        let word_id = trie.get_or_create_metadata(&confirmation.nepali);
+    let word_id = trie.get_or_create_metadata(&confirmation.devanagari);
         
         let metadata = &mut trie.metadata_store[word_id];
         metadata.frequency += self.frequency_increment;
         
         // Only add the variant if it's new, to avoid bloating the metadata store
         if metadata.variants.insert(confirmation.roman.clone()) {
-            // OPTIMIZATION: Only add the primary Roman variant and the Nepali word itself to the
+            // OPTIMIZATION: Only add the primary Roman variant and the Devanagari word itself to the
             // fuzzy index. This keeps the SymSpell dictionary much smaller and faster than
             // indexing every single user-typed variant.
             symspell.add_word(&confirmation.roman, word_id);
             if metadata.variants.len() == 1 { // First time we see this word, add its Nepali form too
-                 symspell.add_word(&confirmation.nepali, word_id);
+                 symspell.add_word(&confirmation.devanagari, word_id);
             }
         }
         
