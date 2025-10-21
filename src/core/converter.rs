@@ -55,44 +55,97 @@ impl RomanizationEngine {
         // - Common aliases are provided for user convenience (f/ph, ee/ii).
 
         let consonants: HashMap<_, _> = [
+            // Standard consonants
             ("k", "क"), ("kh", "ख"), ("g", "ग"), ("gh", "घ"), ("ng", "ङ"),
-            ("ch", "च"), ("c", "च"), ("chh", "छ"), ("x", "छ"), ("j", "ज"), ("z", "ज"), ("jh", "झ"),
-            // MODIFICATION 1: Use 'jny' for ज्ञ, which is less ambiguous than 'gy'.
+            ("ch", "च"), ("c", "च"), ("chh", "छ"), ("x", "छ"), ("j", "ज"), ("jh", "झ"),
             ("ny", "ञ"), ("jny", "ज्ञ"),
             ("T", "ट"), ("Th", "ठ"), ("D", "ड"), ("Dh", "ढ"), ("N", "ण"),
             ("t", "त"), ("th", "थ"), ("d", "द"), ("dh", "ध"), ("n", "न"),
-            ("p", "प"), ("ph", "फ"), ("f", "फ"), ("b", "ब"), ("bh", "भ"), ("m", "म"),
+            ("p", "प"), ("ph", "फ"), ("b", "ब"), ("bh", "भ"), ("m", "म"),
             ("y", "य"), ("r", "र"), ("l", "ल"), ("w", "व"), ("v", "व"),
             ("sh", "श"), ("S", "ष"), ("s", "स"), ("h", "ह"),
-            ("ksh", "क्ष"),
-            // REMOVED 'tr' and 'gy'. The FST will now build them dynamically.
-            // This allows 'mantra' (मन्त्र) and 'lagyo' (लाग्यो) to be formed correctly.
+            
+            // Special ligatures (atomic units)
+            ("ksh", "क्ष"), ("kSh", "क्ष"),
+            ("tra", "त्र"), ("tR", "त्र"),
+            ("jnya", "ज्ञ"), ("GY", "ज्ञ"),
+            
+            // Consonants with nuqta (foreign sounds)
+            ("q", "क़"), ("K", "ख़"), ("G", "ग़"),
+            ("z", "ज़"), ("Z", "झ़"),
+            ("Rh", "ढ़"), ("Rf", "ड़"),
+            ("f", "फ़"), ("ph", "फ"), // ph for aspirated, f for fricative
+            
+            // Regional consonants
+            ("L", "ळ"),  // Marathi retroflex L
+            ("nN", "ऩ"), // Tamil n
+            ("rR", "ऱ"), // Tamil r
+            ("lL", "ऴ"), // Tamil/Malayalam retroflex lateral
+            
+            // ZWNJ and ZWJ control (for explicit conjunct control)
+            ("^^", "\u{200C}"), // ZWNJ - prevents conjunct
+            ("^_", "\u{200D}"), // ZWJ - forces half-form
         ].iter().cloned().collect();
 
         // Maps Roman string to a tuple of (Full Independent Vowel, Vowel Sign/Matra)
         let vowels: HashMap<_, _> = [
+            // Standard vowels
             ("a", ("अ", "")), // The matra for 'a' is the absence of a virama.
             ("aa", ("आ", "ा")), ("A", ("आ", "ा")),
             ("i", ("इ", "ि")),
-            ("ii", ("ई", "ी")), ("ee", ("ई", "ी")),
+            ("ii", ("ई", "ी")), ("ee", ("ई", "ी")), ("I", ("ई", "ी")),
             ("u", ("उ", "ु")),
-            ("uu", ("ऊ", "ू")), ("oo", ("ऊ", "ू")),
+            ("uu", ("ऊ", "ू")), ("oo", ("ऊ", "ू")), ("U", ("ऊ", "ू")),
             ("e", ("ए", "े")),
             ("ai", ("ऐ", "ै")), ("ae", ("ऐ", "ै")),
             ("o", ("ओ", "ो")),
             ("au", ("औ", "ौ")), ("ao", ("औ", "ौ")),
-            ("ri", ("ऋ", "ृ")),
-            ("M", ("अं", "ं")), ("am", ("अं", "ं")), // Anusvara
-            ("H", ("अः", "ः")), ("ah", ("अः", "ः")), // Visarga
-            ("~", ("अँ", "ँ")), // Chandrabindu
+            
+            // Vocalic r and l
+            ("ri", ("ऋ", "ृ")), ("R", ("ऋ", "ृ")),
+            ("rii", ("ॠ", "ॄ")), ("RR", ("ॠ", "ॄ")), ("rI", ("ॠ", "ॄ")),
+            ("li", ("ऌ", "ॢ")), ("L^", ("ऌ", "ॢ")),
+            ("lii", ("ॡ", "ॣ")), ("LL", ("ॡ", "ॣ")), ("lI", ("ॡ", "ॣ")),
+            
+            // Candra vowels (for English loanwords)
+            ("eN", ("ऍ", "ॅ")), ("E", ("ऍ", "ॅ")), // candra e (for 'a' in "bat")
+            ("oN", ("ऑ", "ॉ")), ("O", ("ऑ", "ॉ")), // candra o (for "call", "doctor")
+            
+            // Regional vowels
+            ("e~", ("ऎ", "ॆ")),  // short e (Dravidian)
+            ("o~", ("ऒ", "ॊ")),  // short o (Dravidian)
+            ("aW", ("ॏ", "ॏ")),  // Kashmiri aw
+            
+            // Kashmiri vowels
+            ("ue", ("उे", "ॖ")),  // Kashmiri UE
+            ("uue", ("उॆ", "ॗ")), // Kashmiri UUE
+            
+            // Diacritical marks
+            ("M", ("अं", "ं")), ("am", ("अं", "ं")), ("An", ("अं", "ं")), // Anusvara
+            ("H", ("अः", "ः")), ("ah", ("अः", "ः")), ("aH", ("अः", "ः")), // Visarga
+            ("~", ("अँ", "ँ")), ("N~", ("अँ", "ँ")), // Chandrabindu
+            ("~^", ("ऀ", "ऀ")), // Inverted Chandrabindu (Vedic)
+            
+            // Extended marks
+            ("e^", ("ए", "ॕ")), // Candra long e
         ].iter().cloned().collect();
 
         let symbols: HashMap<_, _> = [
-            (".", "।"), ("..", "।।"),
-            ("?", "?"), ("!", "!"), (",", ","), (";", ";"),
-            ("OM", "ॐ"), ("'", "ऽ"),
+            // Punctuation
+            (".", "।"), ("..", "।।"), ("...", "..."),
+            ("?", "?"), ("!", "!"), (",", ","), (";", ";"), (":", ":"),
+            
+            // Special symbols
+            ("OM", "ॐ"), ("Om", "ॐ"), ("AUM", "ॐ"),
+            ("'", "ऽ"), ("@", "ॐ"),
+            
+            // Devanagari digits
             ("0", "०"), ("1", "१"), ("2", "२"), ("3", "३"), ("4", "४"),
             ("5", "५"), ("6", "६"), ("7", "७"), ("8", "८"), ("9", "९"),
+            
+            // Additional marks
+            ("|", "।"), ("||", "।।"),
+            ("_", "\u{094D}"), // Explicit virama/halanta
         ].iter().cloned().collect();
 
         let max_token_len = consonants.keys()
@@ -100,7 +153,7 @@ impl RomanizationEngine {
             .chain(symbols.keys())
             .map(|s| s.len())
             .max()
-            .unwrap_or(3);
+            .unwrap_or(4);
 
         Self { consonants, vowels, symbols, max_token_len }
     }
