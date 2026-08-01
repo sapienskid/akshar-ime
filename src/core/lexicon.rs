@@ -89,6 +89,18 @@ impl RomanLexicon {
         out
     }
 
+    /// True if this exact (roman, devanagari) pair occurs in the lexicon.
+    pub fn has_pair(&self, roman: &str, dev: &str) -> bool {
+        let key = roman.to_ascii_lowercase();
+        let (lo, hi) = self.range(key.as_bytes());
+        for i in lo..hi {
+            if self.roman_at(i) == key.as_bytes() && self.dev_at(i) == dev {
+                return true;
+            }
+        }
+        false
+    }
+
     /// Distinct Devanagari words whose roman spelling starts with `prefix`,
     /// ranked by the number of matching roman spellings, capped at `limit`.
     pub fn prefix_matches(&self, prefix: &str, limit: usize) -> Vec<(String, u32)> {

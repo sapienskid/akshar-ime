@@ -59,8 +59,22 @@ struct BeamState {
     pos: usize,
     prev: Option<u32>, // last akshara (None = word start)
     prev2: Option<u32>, // second-to-last akshara
-    score: f64,
+    score: f64,         // total = emit + lm_weight * lm (for beam ordering)
+    emit: f64,          // accumulated emission -log weight
+    lm: f64,            // accumulated LM -log weight (unscaled)
     path: Vec<u32>,
+}
+
+/// A decoded candidate with its decomposed scores, for discriminative reranking.
+#[derive(Debug, Clone)]
+pub struct DecodedCandidate {
+    pub dev: String,
+    /// Sum of emission weights (-log P(R | aksharas), best alignment).
+    pub emit: f64,
+    /// Sum of LM weights (word-start + bigram + trigram), unscaled.
+    pub lm: f64,
+    /// Number of aksharas in the candidate.
+    pub akshara_count: usize,
 }
 
 impl ModelDecoder {
@@ -105,6 +119,14 @@ impl ModelDecoder {
 
     /// Decode a roman string into `k` ranked (devanagari, -log score) pairs.
     pub fn decode(&self, roman: &str, k: usize) -> Vec<(String, f64)> {
+        self.decode_detailed(roman, k)
+            .into_iter()
+            .map(|c| (c.dev, c.emit + c.lm * self.config.lm_weight))
+            .collect()
+    }
+
+    /// Decode into decomposed candidates (emission + LM separately) for reranking.
+    pub fn decode_detailed(&self, roman: &str, k: usize) -> Vec<DecodedCandidate> {
         let roman = roman.to_ascii_lowercase();
         let edges_by_pos = self.build_edges(&roman);
         let m = roman.len();
@@ -113,9 +135,17 @@ impl ModelDecoder {
         }
         let k = k.max(1);
 
-        let mut beam: Vec<BeamState> = vec![BeamState { pos: 0, prev: None, prev2: None, score: 0.0, path: Vec::new() }];
-        // Complete paths: path -> score (kept min across steps).
-        let mut seen: HashMap<Vec<u32>, f64> = HashMap::new();
+        let mut beam: Vec<BeamState> = vec![BeamState {
+            pos: 0,
+            prev: None,
+            prev2: None,
+            score: 0.0,
+            emit: 0.0,
+            lm: 0.0,
+            path: Vec::new(),
+        }];
+        // Complete paths: path -> (score, emit, lm), kept min by score.
+        let mut seen: HashMap<Vec<u32>, (f64, f64, f64)> = HashMap::new();
 
         for _step in 0..MAX_STEPS {
             if beam.is_empty() {
@@ -127,11 +157,11 @@ impl ModelDecoder {
                 if st.pos == m {
                     seen.entry(st.path.clone())
                         .and_modify(|best| {
-                            if st.score < *best {
-                                *best = st.score;
+                            if st.score < best.0 {
+                                *best = (st.score, st.emit, st.lm);
                             }
                         })
-                        .or_insert(st.score);
+                        .or_insert((st.score, st.emit, st.lm));
                     continue;
                 }
                 for &e in &edges_by_pos[st.pos] {
@@ -140,7 +170,9 @@ impl ModelDecoder {
                         (None, Some(b)) => self.model.bigram_weight(b, e.a),
                         (Some(a), Some(b)) => self.model.trigram_weight(a, b, e.a),
                     };
-                    let score = st.score + e.w as f64 + fluency * self.config.lm_weight;
+                    let emit = st.emit + e.w as f64;
+                    let lm = st.lm + fluency;
+                    let score = emit + lm * self.config.lm_weight;
                     let mut path = st.path.clone();
                     path.push(e.a);
                     next.push(BeamState {
@@ -148,29 +180,31 @@ impl ModelDecoder {
                         prev: Some(e.a),
                         prev2: st.prev,
                         score,
+                        emit,
+                        lm,
                         path,
                     });
                 }
             }
 
             // Dedup by (pos, path) keeping best score.
-            let mut best_by_key: HashMap<(usize, Vec<u32>), f64> = HashMap::new();
+            let mut best_by_key: HashMap<(usize, Vec<u32>), (f64, f64, f64)> = HashMap::new();
             for cand in next {
                 best_by_key
                     .entry((cand.pos, cand.path.clone()))
                     .and_modify(|best| {
-                        if cand.score < *best {
-                            *best = cand.score;
+                        if cand.score < best.0 {
+                            *best = (cand.score, cand.emit, cand.lm);
                         }
                     })
-                    .or_insert(cand.score);
+                    .or_insert((cand.score, cand.emit, cand.lm));
             }
             let mut deduped: Vec<BeamState> = best_by_key
                 .into_iter()
-                .map(|((pos, path), score)| {
+                .map(|((pos, path), (score, emit, lm))| {
                     let prev = path.last().copied();
                     let prev2 = path.len().checked_sub(2).and_then(|i| path.get(i)).copied();
-                    BeamState { pos, prev, prev2, score, path }
+                    BeamState { pos, prev, prev2, score, emit, lm, path }
                 })
                 .collect();
             deduped.sort_by(|a, b| a.score.total_cmp(&b.score));
@@ -178,11 +212,20 @@ impl ModelDecoder {
             beam = deduped;
         }
 
-        let mut results: Vec<(String, f64)> = seen
+        let mut results: Vec<DecodedCandidate> = seen
             .into_iter()
-            .map(|(path, score)| (self.path_to_string(&path), score))
+            .map(|(path, (_, emit, lm))| DecodedCandidate {
+                dev: self.path_to_string(&path),
+                emit,
+                lm,
+                akshara_count: path.len(),
+            })
             .collect();
-        results.sort_by(|a, b| a.1.total_cmp(&b.1));
+        results.sort_by(|a, b| {
+            let at = a.emit + a.lm * self.config.lm_weight;
+            let bt = b.emit + b.lm * self.config.lm_weight;
+            at.total_cmp(&bt)
+        });
         results.truncate(k);
         results
     }

@@ -7,6 +7,7 @@ pub mod em_trainer;
 pub mod engine;
 pub mod lexicon;
 pub mod normalizer;
+pub mod reranker;
 pub mod translit_model;
 pub mod trie;
 pub mod types;

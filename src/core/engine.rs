@@ -18,6 +18,7 @@ use crate::core::{
     decoder::{DecoderConfig, ModelDecoder},
     lexicon::RomanLexicon,
     normalizer::expand_query_variants,
+    reranker::{Reranker, NUM_FEATURES},
     translit_model::TranslitModel,
     trie::Trie,
     types::{TransliterationModel, WordId},
@@ -34,7 +35,7 @@ const QUERY_VARIANT_LIMIT: usize = 6;
 
 /// Decoder beam for the IME (accuracy/speed sweet spot, see M2 eval).
 const DECODER_BEAM: usize = 128;
-/// Scale converting a decoder -log weight into a higher-better u64 score.
+/// Scale converting a reranker log-score into the engine's higher-better u64 score.
 const FRESH_SCALE: f64 = 800.0;
 /// A word in the corpus lexicon whose roman matches the typed prefix exactly.
 const LEXICON_EXACT_SCORE: u64 = 300;
@@ -46,6 +47,7 @@ const FUZZY_DISTANCE_PENALTY_SCALE: u64 = 12;
 
 pub struct ImeEngine {
     pub decoder: ModelDecoder,
+    pub reranker: Reranker,
     pub lexicon: Option<RomanLexicon>,
     pub trie: Trie,
     pub context_model: ContextModel,
@@ -66,8 +68,10 @@ impl ImeEngine {
             },
         );
         let lexicon = load_lexicon();
+        let reranker = load_reranker(lexicon.clone());
         Self {
             decoder,
+            reranker,
             lexicon,
             trie: Trie::new(),
             context_model: ContextModel::new(CONTEXT_WINDOW_SIZE),
@@ -99,11 +103,8 @@ impl ImeEngine {
                 .or_insert(score);
         };
 
-        // 1. Fresh transliterations from the generative decoder.  We decode the
-        //    base roman plus the few lowest-penalty soft variants (e.g. bhaai
-        //    for bhai) because long-vowel alternants surface intended forms the
-        //    base roman leaves ambiguous.  Capping avoids the 10x latency cost
-        //    of re-decoding every variant.
+        // 1. Fresh transliterations from the generative decoder, re-ranked by
+        //    the discriminative reranker (MERT-tuned feature weights).
         let mut decodes: Vec<&str> = Vec::new();
         for qv in &query_variants {
             if decodes.len() >= 3 {
@@ -114,8 +115,13 @@ impl ImeEngine {
             }
         }
         for roman in decodes {
-            for (dev, weight) in self.decoder.decode(roman, count * 3) {
-                let score = (FRESH_SCALE / (1.0 + weight)).round().max(1.0) as u64;
+            let cands = self.decoder.decode_detailed(roman, count * 4);
+            for (dev, rscore) in self.reranker.rerank(roman, cands) {
+                // Convert the reranker log-score back to the engine's u64 scale,
+                // keeping fresh candidates below the lexicon-exact score so the
+                // corpus-word boost still outranks plain transliterations.
+                let cost = (-rscore).max(0.0);
+                let score = (FRESH_SCALE / (1.0 + cost)).round().max(1.0) as u64;
                 add(dev, score);
             }
         }
@@ -288,6 +294,25 @@ fn load_lexicon() -> Option<RomanLexicon> {
     RomanLexicon::load(Path::new("data/roman_lexicon.bin")).ok()
 }
 
+fn load_reranker(lexicon: Option<RomanLexicon>) -> Reranker {
+    let mut weights = [1.0f64; NUM_FEATURES];
+    weights[0] = 1.0;
+    weights[1] = 1.0;
+    if let Ok(file) = std::fs::File::open(Path::new("data/reranker_weights.json")) {
+        if let Ok(v) = serde_json::from_reader::<_, serde_json::Value>(file) {
+            if let Some(w) = v.get("weights") {
+                let names = crate::core::reranker::feature_names();
+                for (i, name) in names.iter().enumerate() {
+                    if let Some(val) = w.get(*name).and_then(|x| x.as_f64()) {
+                        weights[i] = val;
+                    }
+                }
+            }
+        }
+    }
+    Reranker::new(weights, lexicon)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -346,6 +371,7 @@ mod tests {
         );
         ImeEngine {
             decoder,
+            reranker: Reranker::default(),
             lexicon,
             trie: Trie::new(),
             context_model: ContextModel::new(3),
