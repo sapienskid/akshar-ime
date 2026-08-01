@@ -57,8 +57,10 @@ install:  ## Compile (if needed) and install the engine to system directories.
 	@sudo mkdir -p $(IBUS_COMPONENT_DIR)
 	@sudo mkdir -p $(DATA_DIR)
 	@echo "  > Installing engine binary and library..."
-	@sudo cp $(TARGET_DIR)/$(C_ENGINE_NAME) $(IBUS_ENGINE_DIR)/
-	@sudo cp $(TARGET_DIR)/$(RUST_LIB_NAME) $(LIB_DIR)/
+	@sudo install -m 755 $(TARGET_DIR)/$(C_ENGINE_NAME) $(IBUS_ENGINE_DIR)/$(C_ENGINE_NAME).new
+	@sudo mv -f $(IBUS_ENGINE_DIR)/$(C_ENGINE_NAME).new $(IBUS_ENGINE_DIR)/$(C_ENGINE_NAME)
+	@sudo install -m 755 $(TARGET_DIR)/$(RUST_LIB_NAME) $(LIB_DIR)/$(RUST_LIB_NAME).new
+	@sudo mv -f $(LIB_DIR)/$(RUST_LIB_NAME).new $(LIB_DIR)/$(RUST_LIB_NAME)
 	@echo "  > Installing IBus component file..."
 	@sudo cp devanagari-smart.xml $(IBUS_COMPONENT_DIR)/
 	@echo "  > Installing model artifacts..."
