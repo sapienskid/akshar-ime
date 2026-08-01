@@ -98,8 +98,14 @@ make
 sudo make install
 ```
 
-`make install` compiles the Rust core, builds the C engine, installs the engine
-binary + library + IBus component, and restarts the IBus daemon.
+`make` compiles the Rust core and the C engine. `make install` installs the
+engine binary + library + IBus component + model artifacts, and restarts the
+IBus daemon. It only re-runs `make` if the artifacts aren't built yet, so you
+don't need a Rust toolchain under `sudo`.
+
+> If you ever build inside `sudo make install` on a rustup-managed system, pass
+> the rustup home explicitly:
+> `sudo env RUSTUP_HOME=$HOME/.rustup make install`
 
 ### Step 4 — Enable the input source
 

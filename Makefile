@@ -46,7 +46,11 @@ c_engine: rust_lib
 		-L$(TARGET_DIR) -lakshar_ime $(LDFLAGS) -Wl,-rpath,$(LIB_DIR)
 
 
-install: release  ## Compile and install the engine to system directories.
+install:  ## Compile (if needed) and install the engine to system directories.
+	@if [ ! -f $(TARGET_DIR)/libakshar_ime.so ] || [ ! -f $(TARGET_DIR)/$(C_ENGINE_NAME) ]; then \
+		echo "  > Building release artifacts first..."; \
+		$(MAKE) release; \
+	fi
 	@echo "Installing Akshar Devanagari IME..."
 	@echo "  > Stopping IBus daemon..."
 	@-ibus exit 2>/dev/null || true
