@@ -1,0 +1,20 @@
+target/
+target/
+Cargo.lock
+*.rs.bk
+*.log
+.vscode
+.idea
+.DS_Store
+node_modules
+dist
+.env
+*.swp
+*.tmp
+*.bak
+
+# Generated transliteration model + downloaded Aksharantar corpus
+data/nepali_model.bin
+data/aksharantar/
+data/translit_model.bin
+data/roman_lexicon.bin

@@ -1,0 +1,12 @@
+// File: src/core/mod.rs
+pub mod akshara;
+pub mod alignment;
+pub mod context;
+pub mod decoder;
+pub mod em_trainer;
+pub mod engine;
+pub mod lexicon;
+pub mod normalizer;
+pub mod translit_model;
+pub mod trie;
+pub mod types;
