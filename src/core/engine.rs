@@ -34,7 +34,7 @@ const MAX_EDIT_DISTANCE: usize = 2;
 const QUERY_VARIANT_LIMIT: usize = 6;
 
 /// Decoder beam for the IME (accuracy/speed sweet spot, see M2 eval).
-const DECODER_BEAM: usize = 128;
+const DECODER_BEAM: usize = 64;
 /// Scale converting a reranker log-score into the engine's higher-better u64 score.
 const FRESH_SCALE: f64 = 800.0;
 /// A word in the corpus lexicon whose roman matches the typed prefix exactly.
@@ -104,17 +104,11 @@ impl ImeEngine {
         };
 
         // 1. Fresh transliterations from the generative decoder, re-ranked by
-        //    the discriminative reranker (MERT-tuned feature weights).
-        let mut decodes: Vec<&str> = Vec::new();
-        for qv in &query_variants {
-            if decodes.len() >= 3 {
-                break;
-            }
-            if !decodes.contains(&qv.roman.as_str()) {
-                decodes.push(qv.roman.as_str());
-            }
-        }
-        for roman in decodes {
+        //    the discriminative reranker.  We decode the base roman only: the
+        //    model's learned emissions already absorb v/w and vowel-length
+        //    spelling variants, so re-decoding soft variants is pure latency.
+        if let Some(qv) = query_variants.first() {
+            let roman = qv.roman.as_str();
             let cands = self.decoder.decode_detailed(roman, count * 4);
             for (dev, rscore) in self.reranker.rerank(roman, cands) {
                 // Convert the reranker log-score back to the engine's u64 scale,

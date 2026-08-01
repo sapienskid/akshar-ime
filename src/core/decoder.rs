@@ -57,12 +57,34 @@ pub struct ModelDecoder {
 #[derive(Debug, Clone)]
 struct BeamState {
     pos: usize,
-    prev: Option<u32>, // last akshara (None = word start)
+    prev: Option<u32>,  // last akshara (None = word start)
     prev2: Option<u32>, // second-to-last akshara
     score: f64,         // total = emit + lm_weight * lm (for beam ordering)
     emit: f64,          // accumulated emission -log weight
     lm: f64,            // accumulated LM -log weight (unscaled)
-    path: Vec<u32>,
+    phash: u64,         // cheap hash of the path (dedup key)
+    path: Option<u32>,  // index of the last cons cell in the path arena
+}
+
+/// One cell of a persistent (immutable) path in the arena.
+struct PathCell {
+    parent: Option<u32>,
+    akshara: u32,
+}
+
+/// splitmix64 finaliser — cheap avalanche mixing for path hashing.
+#[inline]
+fn mix(mut x: u64) -> u64 {
+    x ^= x >> 30;
+    x = x.wrapping_mul(0xbf58476d1ce4e5b9);
+    x ^= x >> 27;
+    x = x.wrapping_mul(0x94d049bb133111eb);
+    x ^ x >> 31
+}
+
+#[inline]
+fn path_hash(parent: u64, a: u32) -> u64 {
+    mix(parent ^ (a as u64).wrapping_add(0x9e3779b97f4a7c15))
 }
 
 /// A decoded candidate with its decomposed scores, for discriminative reranking.
@@ -135,6 +157,10 @@ impl ModelDecoder {
         }
         let k = k.max(1);
 
+        // Persistent path arena: extending a path is O(1) (push one cons cell),
+        // so the beam never clones full paths.
+        let mut arena: Vec<PathCell> = Vec::with_capacity(1024);
+
         let mut beam: Vec<BeamState> = vec![BeamState {
             pos: 0,
             prev: None,
@@ -142,10 +168,11 @@ impl ModelDecoder {
             score: 0.0,
             emit: 0.0,
             lm: 0.0,
-            path: Vec::new(),
+            phash: 0,
+            path: None,
         }];
-        // Complete paths: path -> (score, emit, lm), kept min by score.
-        let mut seen: HashMap<Vec<u32>, (f64, f64, f64)> = HashMap::new();
+        // Complete paths: dev string -> (score, emit, lm, akshara_count).
+        let mut seen: HashMap<String, (f64, f64, f64, usize)> = HashMap::new();
 
         for _step in 0..MAX_STEPS {
             if beam.is_empty() {
@@ -155,13 +182,14 @@ impl ModelDecoder {
 
             for st in &beam {
                 if st.pos == m {
-                    seen.entry(st.path.clone())
+                    let (dev, count) = self.reconstruct(&arena, st.path);
+                    seen.entry(dev)
                         .and_modify(|best| {
                             if st.score < best.0 {
-                                *best = (st.score, st.emit, st.lm);
+                                *best = (st.score, st.emit, st.lm, count);
                             }
                         })
-                        .or_insert((st.score, st.emit, st.lm));
+                        .or_insert((st.score, st.emit, st.lm, count));
                     continue;
                 }
                 for &e in &edges_by_pos[st.pos] {
@@ -173,8 +201,9 @@ impl ModelDecoder {
                     let emit = st.emit + e.w as f64;
                     let lm = st.lm + fluency;
                     let score = emit + lm * self.config.lm_weight;
-                    let mut path = st.path.clone();
-                    path.push(e.a);
+                    let cell = PathCell { parent: st.path, akshara: e.a };
+                    let idx = arena.len() as u32;
+                    arena.push(cell);
                     next.push(BeamState {
                         pos: st.pos + e.len,
                         prev: Some(e.a),
@@ -182,30 +211,42 @@ impl ModelDecoder {
                         score,
                         emit,
                         lm,
-                        path,
+                        phash: path_hash(st.phash, e.a),
+                        path: Some(idx),
                     });
                 }
             }
 
-            // Dedup by (pos, path) keeping best score.
-            let mut best_by_key: HashMap<(usize, Vec<u32>), (f64, f64, f64)> = HashMap::new();
+            // Dedup beam states by (pos, prev2, prev, path-hash) keeping the
+            // best score.  u64 keys are cheap; the hash preserves distinct paths.
+            let mut best_by_key: HashMap<
+                (usize, Option<u32>, Option<u32>, u64),
+                (f64, f64, f64, Option<u32>),
+            > = HashMap::new();
             for cand in next {
                 best_by_key
-                    .entry((cand.pos, cand.path.clone()))
+                    .entry((cand.pos, cand.prev2, cand.prev, cand.phash))
                     .and_modify(|best| {
                         if cand.score < best.0 {
-                            *best = (cand.score, cand.emit, cand.lm);
+                            *best = (cand.score, cand.emit, cand.lm, cand.path);
                         }
                     })
-                    .or_insert((cand.score, cand.emit, cand.lm));
+                    .or_insert((cand.score, cand.emit, cand.lm, cand.path));
             }
             let mut deduped: Vec<BeamState> = best_by_key
                 .into_iter()
-                .map(|((pos, path), (score, emit, lm))| {
-                    let prev = path.last().copied();
-                    let prev2 = path.len().checked_sub(2).and_then(|i| path.get(i)).copied();
-                    BeamState { pos, prev, prev2, score, emit, lm, path }
-                })
+                .map(
+                    |((pos, prev2, prev, phash), (score, emit, lm, path))| BeamState {
+                        pos,
+                        prev,
+                        prev2,
+                        score,
+                        emit,
+                        lm,
+                        phash,
+                        path,
+                    },
+                )
                 .collect();
             deduped.sort_by(|a, b| a.score.total_cmp(&b.score));
             deduped.truncate(self.config.beam_width);
@@ -214,11 +255,11 @@ impl ModelDecoder {
 
         let mut results: Vec<DecodedCandidate> = seen
             .into_iter()
-            .map(|(path, (_, emit, lm))| DecodedCandidate {
-                dev: self.path_to_string(&path),
+            .map(|(dev, (_, emit, lm, akshara_count))| DecodedCandidate {
+                dev,
                 emit,
                 lm,
-                akshara_count: path.len(),
+                akshara_count,
             })
             .collect();
         results.sort_by(|a, b| {
@@ -228,6 +269,27 @@ impl ModelDecoder {
         });
         results.truncate(k);
         results
+    }
+
+    /// Walk a persistent path in the arena back to the root, producing the
+    /// Devanagari string and its akshara count.
+    fn reconstruct(&self, arena: &[PathCell], path: Option<u32>) -> (String, usize) {
+        let mut aks = Vec::with_capacity(12);
+        let mut cur = path;
+        while let Some(i) = cur {
+            let cell = &arena[i as usize];
+            aks.push(cell.akshara);
+            cur = cell.parent;
+        }
+        aks.reverse();
+        let count = aks.len();
+        let mut s = String::with_capacity(count * 3);
+        for a in aks {
+            if let Some(ak) = self.model.aksharas.get(a as usize) {
+                s.push_str(ak);
+            }
+        }
+        (s, count)
     }
 
     fn build_edges(&self, roman: &str) -> Vec<Vec<Edge>> {
@@ -244,16 +306,6 @@ impl ModelDecoder {
             }
         }
         edges
-    }
-
-    fn path_to_string(&self, path: &[u32]) -> String {
-        let mut out = String::with_capacity(path.len() * 3);
-        for &a in path {
-            if let Some(s) = self.model.aksharas.get(a as usize) {
-                out.push_str(s);
-            }
-        }
-        out
     }
 }
 
