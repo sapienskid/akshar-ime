@@ -16,6 +16,7 @@ PREFIX            ?= /usr
 LIB_DIR           := $(PREFIX)/lib
 IBUS_ENGINE_DIR   := $(PREFIX)/lib/ibus/engines
 IBUS_COMPONENT_DIR:= $(PREFIX)/share/ibus/component
+DATA_DIR          := $(PREFIX)/share/akshar-ime
 
 .PHONY: all release debug install uninstall reinstall clean reset-learning help
 
@@ -52,11 +53,14 @@ install: release  ## Compile and install the engine to system directories.
 	@echo "  > Creating system directories..."
 	@sudo mkdir -p $(IBUS_ENGINE_DIR)
 	@sudo mkdir -p $(IBUS_COMPONENT_DIR)
+	@sudo mkdir -p $(DATA_DIR)
 	@echo "  > Installing engine binary and library..."
 	@sudo cp $(TARGET_DIR)/$(C_ENGINE_NAME) $(IBUS_ENGINE_DIR)/
 	@sudo cp $(TARGET_DIR)/$(RUST_LIB_NAME) $(LIB_DIR)/
 	@echo "  > Installing IBus component file..."
 	@sudo cp devanagari-smart.xml $(IBUS_COMPONENT_DIR)/
+	@echo "  > Installing model artifacts..."
+	@sudo cp data/translit_model.bin data/roman_lexicon.bin data/reranker_weights.json $(DATA_DIR)/
 	@echo "  > Updating linker cache..."
 	@sudo ldconfig
 	@echo "  > Clearing IBus cache and restarting daemon..."
@@ -73,6 +77,7 @@ uninstall:  ## Remove the engine from the system.
 	@sudo rm -f $(IBUS_ENGINE_DIR)/$(C_ENGINE_NAME)
 	@sudo rm -f $(LIB_DIR)/$(RUST_LIB_NAME)
 	@sudo rm -f $(IBUS_COMPONENT_DIR)/devanagari-smart.xml
+	@sudo rm -rf $(DATA_DIR)
 	@echo "  > Updating linker cache..."
 	@sudo ldconfig
 	@echo "  > Restarting IBus daemon..."

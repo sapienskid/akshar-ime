@@ -27,7 +27,7 @@ use crate::fuzzy::symspell::SymSpell;
 use crate::learning::{LearningEngine, WordConfirmation};
 use crate::persistence::{load_from_disk, save_to_disk};
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 const CONTEXT_WINDOW_SIZE: usize = 3;
 const MAX_EDIT_DISTANCE: usize = 2;
@@ -276,23 +276,48 @@ impl Default for ImeEngine {
     }
 }
 
+/// Resolve the path to a data artifact (model / lexicon / weights).
+///
+/// Search order: `AKSHAR_DATA_DIR` override, the repo's `data/` (development),
+/// the user-local install dir, then the system install dir.  This lets the
+/// engine run from a checked-out repo *and* when launched by IBus from an
+/// arbitrary working directory.
+fn data_path(file: &str) -> PathBuf {
+    if let Ok(dir) = std::env::var("AKSHAR_DATA_DIR") {
+        let p = Path::new(&dir).join(file);
+        if p.exists() {
+            return p;
+        }
+    }
+    let repo = Path::new("data").join(file);
+    if repo.exists() {
+        return repo;
+    }
+    if let Some(home) = dirs::home_dir() {
+        let p = home.join(".local/share/akshar-ime").join(file);
+        if p.exists() {
+            return p;
+        }
+    }
+    Path::new("/usr/share/akshar-ime").join(file)
+}
+
 fn load_model_or_default() -> TranslitModel {
-    let path = Path::new("data/translit_model.bin");
-    match TranslitModel::load(path) {
+    match TranslitModel::load(&data_path("translit_model.bin")) {
         Ok(m) if m.validate() => m,
         _ => TranslitModel::default(),
     }
 }
 
 fn load_lexicon() -> Option<RomanLexicon> {
-    RomanLexicon::load(Path::new("data/roman_lexicon.bin")).ok()
+    RomanLexicon::load(&data_path("roman_lexicon.bin")).ok()
 }
 
 fn load_reranker(lexicon: Option<RomanLexicon>) -> Reranker {
     let mut weights = [1.0f64; NUM_FEATURES];
     weights[0] = 1.0;
     weights[1] = 1.0;
-    if let Ok(file) = std::fs::File::open(Path::new("data/reranker_weights.json")) {
+    if let Ok(file) = std::fs::File::open(data_path("reranker_weights.json")) {
         if let Ok(v) = serde_json::from_reader::<_, serde_json::Value>(file) {
             if let Some(w) = v.get("weights") {
                 let names = crate::core::reranker::feature_names();
