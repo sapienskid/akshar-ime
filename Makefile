@@ -17,7 +17,7 @@ LIB_DIR           := $(PREFIX)/lib
 IBUS_ENGINE_DIR   := $(PREFIX)/lib/ibus/engines
 IBUS_COMPONENT_DIR:= $(PREFIX)/share/ibus/component
 
-.PHONY: all release debug install uninstall reinstall clean help
+.PHONY: all release debug install uninstall reinstall clean reset-learning help
 
 # --- Main Targets ---
 
@@ -85,8 +85,14 @@ clean:  ## Remove all build artifacts.
 	@echo "Cleaning build artifacts..."
 	@cargo clean
 
+reset-learning:  ## Delete the user's learned dictionary (start fresh).
+	@echo "Removing user learning data..."
+	@rm -f $${XDG_CONFIG_HOME:-$$HOME/.config}/akshar-devanagari/user_dictionary.bin
+	@echo "Done."
+
 # --- Help ---
 
+help:  ## Show this help.
 	@echo "Akshar Devanagari IME Makefile"
 	@echo "-------------------------"
 	@echo "Usage: make [target]"
