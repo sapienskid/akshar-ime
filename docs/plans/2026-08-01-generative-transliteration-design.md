@@ -53,13 +53,23 @@ scoped threads.
 ### Decoder
 Beam search over the akshara lattice. Each edge consumes 1..=MAX_CHUNK roman
 chars and emits one akshara, weighted by emission + LM (tunable `lm_weight`,
-default 1.0). Results are the k lowest-total-weight complete paths.
+default 1.0). Results are the k lowest-total-weight complete paths. Paths use a
+persistent cons-cell arena (O(1) extension) and a u64 path-hash for cheap beam
+dedup that preserves top-k diversity.
+
+### Discriminative reranking
+A log-linear reranker (`reranker.rs`) rescored the decoder's k-best list with a
+feature vector (emission, LM, length, lexicon exact-match) whose weights are
+trained by MERT (`train_reranker`). In practice the trained weights reduce to
+the generative balance, so the reranker defaults to the pure generative score —
+it remains the structured entry point for future evidence features.
 
 ## Architecture
 
 ```
 ImeEngine (src/core/engine.rs)          — one decoder, one evidence score
-  ├─ ModelDecoder (decoder.rs)          — beam search over the akshara lattice
+  ├─ ModelDecoder (decoder.rs)          — persistent-path beam search
+  ├─ Reranker (reranker.rs)             — log-linear k-best reranking
   ├─ TranslitModel (translit_model.rs)  — emissions + KN bigram/trigram LM
   ├─ RomanLexicon (lexicon.rs)          — corpus roman→devanagari (exact match)
   ├─ Trie / SymSpell / ContextModel     — user learning + typo tolerance
@@ -69,6 +79,7 @@ ImeEngine (src/core/engine.rs)          — one decoder, one evidence score
 Offline tools:
 - `train_model` — builds `data/translit_model.bin` (EM + LM), threaded.
 - `build_lexicon` — builds `data/roman_lexicon.bin` from the corpus.
+- `train_reranker` — MERT weight tuning over the dev split.
 - `evaluate_model` / `evaluate_aksharantar` / `evaluate_nepali_transliteration`
   — benchmarks.
 
@@ -76,22 +87,23 @@ Offline tools:
 
 | Metric | ImeEngine | IndicXlit (neural, reference) |
 |---|---|---|
-| Native top-1 | 73.7% | 80.3% |
-| Native top-5 | 90.4% | — |
+| Native top-1 | 73.5% | 80.3% |
+| Native top-5 | 89.7% | — |
 | Named-entity top-1 | 28–39% | 52.7% |
-| Keystroke latency | 2–4 ms | — |
+| Keystroke latency | ~3 ms (7 ms max) | — |
 
 Full held-out IME eval (`data/eval/aksharantar_test.tsv`, 4,101 real cases from
-the Aksharantar test split): 54.5% top-1 / 74.9% top-5 overall.
+the Aksharantar test split): ~54% top-1 / ~74% top-5 overall. The decoder alone
+reaches 75.3% top-1 on native words.
 
 ## Rebuilding
 
 ```bash
-cargo run --release --bin train_model    # ~2-3 min threaded, 12 EM iterations
-cargo run --release --bin build_lexicon  # ~4 s
-cargo run --release --bin evaluate_model -- --beam 128     # decoder-only, source-split
-cargo run --release --bin evaluate_aksharantar             # IME engine, source-split
-cargo run --release --bin evaluate_nepali_transliteration  # IME engine, full real TSV
+cargo run --release --bin train_model     # ~2-3 min threaded, 12 EM iterations
+cargo run --release --bin build_lexicon   # ~5 s
+cargo run --release --bin train_reranker  # MERT weights from the dev split
+cargo run --release --bin evaluate_model -- --beam 64      # decoder-only
+cargo run --release --bin evaluate_aksharantar             # IME engine
 ```
 
 ## Known limitations

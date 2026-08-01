@@ -9,11 +9,11 @@ Akshar Devanagari IME is a next-generation input method built from the ground up
 
 ## Key Features
 
-- **Fast:** ~2-4ms keystroke latency, single generative decoder.
+- **Fast:** ~3 ms keystroke latency (7 ms worst case), single generative decoder.
 - **Generative transliteration core:** a source-channel model (EM-trained
   `P(roman | akshara)` over a 2.4M-pair corpus) with a Kneser-Ney akshara
   bigram/trigram language model. All probabilities are estimated by EM from the
-  corpus.
+  corpus — no neural network, no ML dependencies.
 - **Adaptive Learning:** the IME learns your vocabulary and spelling variants
   in real time; the words you use most frequently appear first.
 - **Fuzzy Search:** finds the correct words even with spelling mistakes in
@@ -34,7 +34,8 @@ IBus input framework on Linux.
                                   | (FFI: C-API)
 +---------------------------------v---------------------------------+
 |                        IME Engine (Rust Core)                     |
-|  decoder.rs      — beam search over the akshara lattice           |
+|  decoder.rs      — persistent-path beam search over akshara lattice|
+|  reranker.rs     — discriminative reranking of the k-best list    |
 |  translit_model  — EM emissions + Kneser-Ney LM                   |
 |  lexicon.rs      — corpus roman→devanagari dictionary             |
 |  trie/symspell   — user learning + typo tolerance                 |
@@ -54,6 +55,7 @@ The engine is designed for Linux systems using the IBus input framework.
 - A Rust toolchain (`rustc`, `cargo`)
 - A C compiler (`gcc`)
 - `ibus-1.0` and `jansson` development libraries.
+- The Aksharantar Nepali corpus (`data/aksharantar/nep_{train,valid,test}.json`).
 
 **On Debian/Ubuntu:**
 ```bash
@@ -67,30 +69,60 @@ sudo dnf groupinstall "Development Tools" "Development Libraries"
 sudo dnf install rust cargo ibus-devel jansson-devel
 ```
 
-### Installation
-
-Clone the repository and use the provided `Makefile`:
+### Step 1 — Clone and get the corpus
 
 ```bash
-git clone https://github.com/sapienskid/akshar-devanagari-ime.git
-cd akshar-devanagari-ime
-make install
+git clone https://github.com/sapienskid/akshar-ime.git
+cd akshar-ime
 ```
 
-The `make install` command will compile the Rust core, build the C engine, and install all necessary files into the system directories. It will also restart the IBus daemon to load the new engine.
+Download the Aksharantar Nepali split (train/valid/test) into `data/aksharantar/`.
+The dataset is published by AI4Bharat on
+[Hugging Face](https://huggingface.co/datasets/ai4bharat/Aksharantar) (Nepali
+files: `nep_train.json`, `nep_valid.json`, `nep_test.json`).
 
-After installation, you need to add the IME to your system's input sources:
-1. Go to `Settings` > `Keyboard` > `Input Sources`.
-2. Click `+` to add a new source.
-3. Search for "Devanagari (Akshar)" and add it.
-4. (Optional) Log out and log back in to ensure all changes are applied.
+### Step 2 — Build the model artifacts
+
+The transliteration model and lexicon are generated from the corpus (they are
+gitignored), so build them once:
+
+```bash
+cargo run --release --bin train_model      # ~2-3 min (threaded), EM + Kneser-Ney LM
+cargo run --release --bin build_lexicon    # ~5 s, roman → Devanagari dictionary
+```
+
+### Step 3 — Build and install
+
+```bash
+make
+sudo make install
+```
+
+`make install` compiles the Rust core, builds the C engine, installs the engine
+binary + library + IBus component, and restarts the IBus daemon.
+
+### Step 4 — Enable the input source
+
+1. Open `Settings` → `Keyboard` → `Input Sources`.
+2. Click `+`, search for **"Devanagari (Akshar)"**, and add it.
+3. (Optional) Log out and back in so the input source list refreshes.
+
+### Resetting the learned dictionary
+
+```bash
+make reset-learning
+```
+
+Removes `~/.config/akshar-devanagari/user_dictionary.bin` so the engine starts
+with a clean learning history.
 
 ## Project Structure
 
 - `src/`: The Rust source code for the core IME.
   - `core/`: The generative transliteration core.
     - `engine.rs`: The IME engine (decoder + lexicon + learning + context).
-    - `decoder.rs`: Beam search over the akshara lattice.
+    - `decoder.rs`: Persistent-path beam search over the akshara lattice.
+    - `reranker.rs`: Discriminative reranking of the decoder's k-best list.
     - `em_trainer.rs`: EM alignment trainer over the Aksharantar corpus.
     - `translit_model.rs`: Learned emissions + Kneser-Ney bigram/trigram LM.
     - `lexicon.rs`: Roman → Devanagari dictionary from the corpus.
@@ -100,7 +132,8 @@ After installation, you need to add the IME to your system's input sources:
   - `persistence/`: Logic for saving/loading the user dictionary.
   - `c_api.rs`: The Foreign Function Interface (FFI) for the C layer.
 - `src/bin/`: Training and evaluation tools (`train_model`, `build_lexicon`,
-  `evaluate_model`, `evaluate_aksharantar`, `evaluate_nepali_transliteration`).
+  `train_reranker`, `evaluate_model`, `evaluate_aksharantar`,
+  `evaluate_nepali_transliteration`, `probe_model`).
 - `data/`: Aksharantar corpus (`aksharantar/`) and built artifacts.
 - `src/ibus_engine.c`: The C code that integrates the Rust library with IBus.
 - `Makefile`: The build and installation script.
