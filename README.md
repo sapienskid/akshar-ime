@@ -96,15 +96,17 @@ cargo run --release --bin build_lexicon    # ~5 s, roman → Devanagari dictiona
 ```bash
 make
 sudo make install
+make restart-ibus
 ```
 
-`make` compiles the Rust core and the C engine. `make install` installs the
-engine binary + library + IBus component + model artifacts, and restarts the
-IBus daemon. It only re-runs `make` if the artifacts aren't built yet, so you
-don't need a Rust toolchain under `sudo`.
+`make` compiles the Rust core and the C engine. `sudo make install` copies the
+engine binary + library + IBus component + model artifacts into the system
+directories (it only re-runs `make` if the artifacts aren't built, so you don't
+need a Rust toolchain under `sudo`). `make restart-ibus` (no sudo) reloads your
+IBus session.
 
-> If you ever build inside `sudo make install` on a rustup-managed system, pass
-> the rustup home explicitly:
+> If `make install` ever needs to build under `sudo` on a rustup-managed
+> system, pass the rustup home explicitly:
 > `sudo env RUSTUP_HOME=$HOME/.rustup make install`
 
 ### Step 4 — Enable the input source

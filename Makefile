@@ -18,7 +18,7 @@ IBUS_ENGINE_DIR   := $(PREFIX)/lib/ibus/engines
 IBUS_COMPONENT_DIR:= $(PREFIX)/share/ibus/component
 DATA_DIR          := $(PREFIX)/share/akshar-ime
 
-.PHONY: all release debug install uninstall reinstall clean reset-learning help
+.PHONY: all release debug install uninstall reinstall clean reset-learning restart-ibus help
 
 # --- Main Targets ---
 
@@ -52,8 +52,6 @@ install:  ## Compile (if needed) and install the engine to system directories.
 		$(MAKE) release; \
 	fi
 	@echo "Installing Akshar Devanagari IME..."
-	@echo "  > Stopping IBus daemon..."
-	@-ibus exit 2>/dev/null || true
 	@echo "  > Creating system directories..."
 	@sudo mkdir -p $(IBUS_ENGINE_DIR)
 	@sudo mkdir -p $(IBUS_COMPONENT_DIR)
@@ -67,16 +65,18 @@ install:  ## Compile (if needed) and install the engine to system directories.
 	@sudo cp data/translit_model.bin data/roman_lexicon.bin data/reranker_weights.json $(DATA_DIR)/
 	@echo "  > Updating linker cache..."
 	@sudo ldconfig
-	@echo "  > Clearing IBus cache and restarting daemon..."
+	@echo "\nInstallation complete. Run 'make restart-ibus' (no sudo) to reload IBus,"
+	@echo "then add 'Devanagari (Akshar)' in Settings > Keyboard > Input Sources."
+
+restart-ibus:  ## Restart the user's IBus daemon (run WITHOUT sudo).
+	@echo "Restarting IBus..."
+	@-timeout 5 ibus restart 2>/dev/null || true
 	@rm -f ~/.cache/ibus/bus/* 2>/dev/null || true
-	@ibus-daemon --daemonize --replace --xim
-	@echo "\nInstallation complete. Please add 'Devanagari (Akshar)' in your system's keyboard settings."
+	@echo "Done. If the input source still doesn't appear, log out and back in."
 
 
 uninstall:  ## Remove the engine from the system.
 	@echo "Uninstalling Akshar Devanagari IME..."
-	@echo "  > Stopping IBus daemon..."
-	@-ibus exit 2>/dev/null || true
 	@echo "  > Removing system files..."
 	@sudo rm -f $(IBUS_ENGINE_DIR)/$(C_ENGINE_NAME)
 	@sudo rm -f $(LIB_DIR)/$(RUST_LIB_NAME)
@@ -84,9 +84,7 @@ uninstall:  ## Remove the engine from the system.
 	@sudo rm -rf $(DATA_DIR)
 	@echo "  > Updating linker cache..."
 	@sudo ldconfig
-	@echo "  > Restarting IBus daemon..."
-	@ibus-daemon --daemonize --replace --xim
-	@echo "\nUninstallation complete."
+	@echo "\nUninstallation complete. Run 'make restart-ibus' (no sudo) to reload IBus."
 
 reinstall: uninstall install  ## Run uninstall and then install.
 
