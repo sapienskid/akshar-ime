@@ -109,7 +109,7 @@ fn ingest(path: &PathBuf, trainer: &mut Trainer, skipped: &mut usize) {
         };
         trainer.add_pair(rec.english, rec.native);
         count += 1;
-        if count % 500_000 == 0 {
+        if count.is_multiple_of(500_000) {
             eprintln!(
                 "  [{}] {count} lines ({:.1}s)",
                 path.file_name().and_then(|f| f.to_str()).unwrap_or("?"),
@@ -142,8 +142,12 @@ fn model_summary(model: &TranslitModel, top_n: usize) -> String {
     ));
 
     if top_n > 0 {
-        let mut by_size: Vec<(usize, usize)> =
-            model.emissions.iter().map(|l| l.len()).enumerate().collect();
+        let mut by_size: Vec<(usize, usize)> = model
+            .emissions
+            .iter()
+            .map(|l| l.len())
+            .enumerate()
+            .collect();
         by_size.sort_by_key(|(_, n)| std::cmp::Reverse(*n));
         out.push_str(&format!("Top {top_n} aksharas by emission count:\n"));
         for (i, n) in by_size.iter().take(top_n) {
@@ -176,7 +180,9 @@ fn parse_args() -> Args {
             "--out" => out = PathBuf::from(next_value(&arg, args.next())),
             "--limit" => limit = Some(next_value(&arg, args.next()).parse().expect("--limit <n>")),
             "--iterations" => {
-                iterations = next_value(&arg, args.next()).parse().expect("--iterations <n>")
+                iterations = next_value(&arg, args.next())
+                    .parse()
+                    .expect("--iterations <n>")
             }
             "--no-seed" => seed = false,
             "--sample" => sample = next_value(&arg, args.next()).parse().expect("--sample <n>"),
@@ -191,7 +197,15 @@ fn parse_args() -> Args {
             }
         }
     }
-    Args { train, extra, out, limit, iterations, seed, sample }
+    Args {
+        train,
+        extra,
+        out,
+        limit,
+        iterations,
+        seed,
+        sample,
+    }
 }
 
 fn next_value(flag: &str, val: Option<String>) -> String {

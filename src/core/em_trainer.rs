@@ -18,7 +18,9 @@
 
 use crate::core::akshara::segment;
 use crate::core::alignment::align_emissive;
-use crate::core::translit_model::{pack_chunk, pack_chunk_bytes, unpack_chunk, TranslitModel, MAX_CHUNK};
+use crate::core::translit_model::{
+    pack_chunk, pack_chunk_bytes, unpack_chunk, TranslitModel, MAX_CHUNK,
+};
 use std::collections::{BTreeSet, HashMap};
 
 /// A single training pair held in memory: roman bytes + akshara id sequence.
@@ -138,7 +140,10 @@ impl Trainer {
             return;
         }
 
-        let aks: Vec<u32> = segment(dev).iter().map(|a| self.intern_akshara(a)).collect();
+        let aks: Vec<u32> = segment(dev)
+            .iter()
+            .map(|a| self.intern_akshara(a))
+            .collect();
         if aks.is_empty() {
             self.skipped += 1;
             return;
@@ -216,9 +221,15 @@ impl Trainer {
 
         let id = self.ingested;
         if self.pairs.len() <= id {
-            self.pairs.push(Pair { roman: roman.as_bytes().to_vec(), aks });
+            self.pairs.push(Pair {
+                roman: roman.as_bytes().to_vec(),
+                aks,
+            });
         } else {
-            self.pairs[id] = Pair { roman: roman.as_bytes().to_vec(), aks };
+            self.pairs[id] = Pair {
+                roman: roman.as_bytes().to_vec(),
+                aks,
+            };
         }
         self.ingested += 1;
     }
@@ -306,11 +317,11 @@ impl Trainer {
         let n = self.akshara_list.len();
         let distinct = self.distinct_bigrams as f64;
         let mut unigram_kn = vec![0.0f32; n];
-        for a in 0..n {
+        for (a, w) in unigram_kn.iter_mut().enumerate() {
             let cont = self.continuation[a] as f64;
             // Floor so word-initial-only aksharas keep a finite log-prob.
             let p = (cont + 0.5) / (distinct + 0.5 * n as f64);
-            unigram_kn[a] = -p.ln() as f32;
+            *w = -p.ln() as f32;
         }
 
         let mut by_left: HashMap<u32, Vec<(u32, u64)>> = HashMap::new();
@@ -339,7 +350,7 @@ impl Trainer {
                 v.push((c, w as f32));
             }
             v.sort_by_key(|(id, _)| *id);
-            bigrams[a as usize] = v;
+            bigrams[a] = v;
         }
         model.bigrams = bigrams;
         model.backoff = backoff;
@@ -347,11 +358,11 @@ impl Trainer {
 
         // Word-start prior: P(a | word start) from corpus word-initial counts.
         let mut word_start = vec![0.0f32; n];
-        for a in 0..n {
+        for (a, w) in word_start.iter_mut().enumerate() {
             let c = self.word_initial[a] as f64;
             // Floor keeps log finite for aksharas that never start words.
             let p = (c + 0.5) / (self.total_words as f64 + 0.5 * n as f64);
-            word_start[a] = -p.ln() as f32;
+            *w = -p.ln() as f32;
         }
         model.word_start = word_start;
 
@@ -415,14 +426,19 @@ impl Trainer {
         let pairs = &self.pairs;
         let emission = &self.emission;
         if !pairs.is_empty() && threads > 1 {
-            let chunk_size = (pairs.len() + threads - 1) / threads;
+            let chunk_size = pairs.len().div_ceil(threads);
             std::thread::scope(|s| {
                 let mut handles = Vec::with_capacity(threads);
                 for chunk in pairs.chunks(chunk_size) {
                     handles.push(s.spawn(move || e_step_chunk(chunk, emission, n_aksharas)));
                 }
                 for h in handles {
-                    for (a, map) in h.join().expect("e-step thread panicked").into_iter().enumerate() {
+                    for (a, map) in h
+                        .join()
+                        .expect("e-step thread panicked")
+                        .into_iter()
+                        .enumerate()
+                    {
                         let ca = &mut counts[a];
                         for (k, v) in map {
                             *ca.entry(k).or_insert(0.0) += v;
@@ -661,7 +677,10 @@ mod tests {
 
     #[test]
     fn pack_helpers_agree() {
-        assert_eq!(pack_chunk_bytes(b"ka"), crate::core::translit_model::pack_chunk("ka"));
+        assert_eq!(
+            pack_chunk_bytes(b"ka"),
+            crate::core::translit_model::pack_chunk("ka")
+        );
         assert_eq!(pack_chunk_bytes(b""), 0);
     }
 }

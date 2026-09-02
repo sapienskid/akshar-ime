@@ -63,12 +63,20 @@ impl TranslitModel {
     /// Return (akshara_id, chunk_id) maps and helper lookup methods.
     pub fn akshara_id(&self, akshara: &str) -> Option<u32> {
         // Linear scan is fine for the IME-sized vocab; callers cache results.
-        self.aksharas.iter().position(|a| a == akshara).map(|i| i as u32)
+        self.aksharas
+            .iter()
+            .position(|a| a == akshara)
+            .map(|i| i as u32)
     }
 
     /// Emission weight of akshara emitting `chunk` (-log P), +inf if unseen.
     pub fn emission_weight(&self, akshara_id: u32, chunk: &str) -> f64 {
-        let Some(chunk_id) = self.chunks.iter().position(|c| c == chunk).map(|i| i as u32) else {
+        let Some(chunk_id) = self
+            .chunks
+            .iter()
+            .position(|c| c == chunk)
+            .map(|i| i as u32)
+        else {
             return f64::INFINITY;
         };
         self.emissions
@@ -96,7 +104,9 @@ impl TranslitModel {
                 let mut v: Vec<(String, f64)> = list
                     .iter()
                     .filter_map(|(cid, w)| {
-                        self.chunks.get(*cid as usize).map(|c| (c.clone(), *w as f64))
+                        self.chunks
+                            .get(*cid as usize)
+                            .map(|c| (c.clone(), *w as f64))
                     })
                     .collect();
                 v.sort_by(|a, b| a.1.total_cmp(&b.1));
@@ -152,10 +162,7 @@ impl TranslitModel {
 
     /// Word-start prior weight for an akshara (-log P(a | word start)).
     pub fn start_weight(&self, a: u32) -> f64 {
-        self.word_start
-            .get(a as usize)
-            .copied()
-            .unwrap_or(12.0) as f64
+        self.word_start.get(a as usize).copied().unwrap_or(12.0) as f64
     }
 
     /// Serialise to `path` with bincode.
@@ -221,7 +228,11 @@ pub(crate) fn pack_chunk(chunk: &str) -> u32 {
 pub(crate) fn pack_chunk_bytes(bytes: &[u8]) -> u32 {
     let mut v = 0u32;
     for (i, &b) in bytes.iter().enumerate().take(MAX_CHUNK) {
-        let code = if b.is_ascii_lowercase() { (b - b'a') as u32 } else { 26 };
+        let code = if b.is_ascii_lowercase() {
+            (b - b'a') as u32
+        } else {
+            26
+        };
         v |= code << (i * 5);
     }
     v | ((bytes.len().min(MAX_CHUNK) as u32) << LEN_SHIFT)

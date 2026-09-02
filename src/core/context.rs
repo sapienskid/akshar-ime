@@ -35,7 +35,7 @@ impl ContextModel {
 
     /// Re-ranks a list of suggestions based on the current context.
     /// Suggestions that form common bigrams with the previous word get a score boost.
-    pub fn rerank_suggestions(&self, suggestions: &mut Vec<(WordId, u64)>) {
+    pub fn rerank_suggestions(&self, suggestions: &mut [(WordId, u64)]) {
         if let Some(&prev_word_id) = self.history.back() {
             for (word_id, score) in suggestions.iter_mut() {
                 if let Some(&bigram_count) = self.bigrams.get(&(prev_word_id, *word_id)) {

@@ -144,7 +144,8 @@ impl ImeEngine {
             // 4. Fuzzy matches over user-learned roman variants (typo tolerance).
             for word_id in self.symspell.lookup(roman) {
                 if let Some(meta) = self.trie.metadata_store.get(word_id) {
-                    if let Some(min_dist) = self.min_roman_distance(roman, meta, MAX_EDIT_DISTANCE) {
+                    if let Some(min_dist) = self.min_roman_distance(roman, meta, MAX_EDIT_DISTANCE)
+                    {
                         let dist_penalty = (min_dist as u64) * FUZZY_DISTANCE_PENALTY_SCALE;
                         let score = FUZZY_BASE.saturating_sub(dist_penalty);
                         add(meta.devanagari.clone(), score);
@@ -335,24 +336,27 @@ fn load_reranker(lexicon: Option<RomanLexicon>) -> Reranker {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::types::WordMetadata;
-    use std::collections::HashSet;
 
     // A decoder built from a tiny hand-built model, so tests don't depend on
     // the on-disk model file.
     fn tiny_decoder() -> ModelDecoder {
-        let mut m = TranslitModel::default();
-        m.version = crate::core::translit_model::MODEL_VERSION;
+        let mut m = TranslitModel {
+            version: crate::core::translit_model::MODEL_VERSION,
+            ..TranslitModel::default()
+        };
         // aksharas: 0=क 1=कि 2=न 3=म 4=मा 5=स्ते 6=ने 7=प 8=आल 9=र
-        for a in ["क", "कि", "न", "म", "मा", "स्ते", "ने", "प", "आल", "र"] {
+        for a in ["क", "कि", "न", "म", "मा", "स्ते", "ने", "प", "आल", "र"]
+        {
             m.aksharas.push(a.to_string());
         }
-        for chunk in ["ka", "ki", "na", "ma", "maa", "ste", "ne", "pa", "aal", "ra"] {
+        for chunk in [
+            "ka", "ki", "na", "ma", "maa", "ste", "ne", "pa", "aal", "ra",
+        ] {
             m.chunks.push(chunk.to_string());
         }
         // emissions: chunk id -> akshara id
         let chunk = |s: &str| m.chunks.iter().position(|c| c == s).unwrap() as u32;
-        let emit = |a: u32, c: &str, w: f32| vec![(chunk(c), w)];
+        let emit = |_a: u32, c: &str, w: f32| vec![(chunk(c), w)];
         m.emissions = vec![
             emit(0, "ka", 0.1),  // क -> ka
             emit(1, "ki", 0.1),  // कि -> ki

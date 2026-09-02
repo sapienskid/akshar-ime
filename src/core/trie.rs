@@ -26,6 +26,12 @@ pub struct Trie {
     pub metadata_store: Vec<WordMetadata>,
 }
 
+impl Default for Trie {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Trie {
     pub fn new() -> Self {
         Self {
@@ -54,16 +60,13 @@ impl Trie {
         }
     }
 
-    // Corrected the unused variable warning
     pub fn insert(&mut self, key: &str, word_id: WordId, _frequency: u64) {
         let mut node_idx = 0;
         let mut path = vec![0];
 
         for &byte in key.as_bytes() {
-            // --- BORROW CHECKER FIX IS HERE ---
-            // The original code held a mutable borrow on a node while trying to modify the
-            // parent `nodes` vector, which is not allowed. This new structure performs
-            // the check and the modification in separate steps, respecting the borrow checker.
+            // Check and modify in separate steps to avoid holding a mutable
+            // borrow of a node while touching the parent `nodes` vector.
             let next_idx = if let Some(&child_idx) = self.nodes[node_idx].children.get(&byte) {
                 child_idx
             } else {

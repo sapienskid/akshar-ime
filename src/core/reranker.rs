@@ -53,10 +53,10 @@ impl Reranker {
             .map(|lx| lx.has_pair(roman, &cand.dev))
             .unwrap_or(false);
         [
-            -cand.emit,                       // lower emission cost = better
-            -cand.lm,                         // lower LM cost = better
-            -(cand.akshara_count as f64),     // prefer fewer aksharas (sign tunable)
-            if in_lex { 1.0 } else { 0.0 },  // exact corpus word
+            -cand.emit,                     // lower emission cost = better
+            -cand.lm,                       // lower LM cost = better
+            -(cand.akshara_count as f64),   // prefer fewer aksharas (sign tunable)
+            if in_lex { 1.0 } else { 0.0 }, // exact corpus word
         ]
     }
 

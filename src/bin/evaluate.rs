@@ -109,24 +109,45 @@ fn main() {
 
     for case in &cases {
         let t0 = Instant::now();
-        let suggestions: Vec<String> =
-            engine.get_suggestions(&case.roman, n_suggest).into_iter().map(|(s, _)| s).collect();
+        let suggestions: Vec<String> = engine
+            .get_suggestions(&case.roman, n_suggest)
+            .into_iter()
+            .map(|(s, _)| s)
+            .collect();
         total_latency_us += t0.elapsed().as_micros();
 
         let outcome = score(&suggestions, &case.targets);
-        if args.show_misses > 0 && !outcome.top10 {
-            if misses.len() < args.show_misses {
-                misses.push((case.clone(), suggestions));
-            }
+        if args.show_misses > 0 && !outcome.top10 && misses.len() < args.show_misses {
+            misses.push((case.clone(), suggestions));
         }
         outcomes.push(outcome);
     }
 
     let n = outcomes.len();
-    let top1 = mean(&outcomes.iter().map(|o| o.top1 as u8 as f64).collect::<Vec<_>>());
-    let top5 = mean(&outcomes.iter().map(|o| o.top5 as u8 as f64).collect::<Vec<_>>());
-    let top10 = mean(&outcomes.iter().map(|o| o.top10 as u8 as f64).collect::<Vec<_>>());
-    let mrr = mean(&outcomes.iter().map(|o| o.reciprocal_rank).collect::<Vec<_>>());
+    let top1 = mean(
+        &outcomes
+            .iter()
+            .map(|o| o.top1 as u8 as f64)
+            .collect::<Vec<_>>(),
+    );
+    let top5 = mean(
+        &outcomes
+            .iter()
+            .map(|o| o.top5 as u8 as f64)
+            .collect::<Vec<_>>(),
+    );
+    let top10 = mean(
+        &outcomes
+            .iter()
+            .map(|o| o.top10 as u8 as f64)
+            .collect::<Vec<_>>(),
+    );
+    let mrr = mean(
+        &outcomes
+            .iter()
+            .map(|o| o.reciprocal_rank)
+            .collect::<Vec<_>>(),
+    );
 
     let avg_latency_ms = total_latency_us as f64 / n as f64 / 1000.0;
 
@@ -138,17 +159,38 @@ fn main() {
     println!("Cases   : {n}");
     println!("Engine  : ImeEngine (generative decoder)");
     println!("------------------------------------------------------------");
-    println!("Top-1  accuracy : {:.2}%  CI95 [{:.2}%, {:.2}%]", top1 * 100.0, top1_ci.0 * 100.0, top1_ci.1 * 100.0);
-    println!("Top-5  accuracy : {:.2}%  CI95 [{:.2}%, {:.2}%]", top5 * 100.0, top5_ci.0 * 100.0, top5_ci.1 * 100.0);
-    println!("Top-10 accuracy : {:.2}%  CI95 [{:.2}%, {:.2}%]", top10 * 100.0, top10_ci.0 * 100.0, top10_ci.1 * 100.0);
-    println!("MRR             : {:.4}    CI95 [{:.4}, {:.4}]", mrr, mrr_ci.0, mrr_ci.1);
+    println!(
+        "Top-1  accuracy : {:.2}%  CI95 [{:.2}%, {:.2}%]",
+        top1 * 100.0,
+        top1_ci.0 * 100.0,
+        top1_ci.1 * 100.0
+    );
+    println!(
+        "Top-5  accuracy : {:.2}%  CI95 [{:.2}%, {:.2}%]",
+        top5 * 100.0,
+        top5_ci.0 * 100.0,
+        top5_ci.1 * 100.0
+    );
+    println!(
+        "Top-10 accuracy : {:.2}%  CI95 [{:.2}%, {:.2}%]",
+        top10 * 100.0,
+        top10_ci.0 * 100.0,
+        top10_ci.1 * 100.0
+    );
+    println!(
+        "MRR             : {:.4}    CI95 [{:.4}, {:.4}]",
+        mrr, mrr_ci.0, mrr_ci.1
+    );
     println!("Avg latency/query : {:.3} ms", avg_latency_ms);
 
     if !misses.is_empty() {
         println!("\nMisses ({} shown):", misses.len());
         for (case, sug) in &misses {
             let shown: Vec<String> = sug.iter().take(args.topk).cloned().collect();
-            println!("  roman=`{}` targets={:?} top={:?}", case.roman, case.targets, shown);
+            println!(
+                "  roman=`{}` targets={:?} top={:?}",
+                case.roman, case.targets, shown
+            );
         }
     }
 }
@@ -177,9 +219,12 @@ fn mean(xs: &[f64]) -> f64 {
     xs.iter().sum::<f64>() / xs.len() as f64
 }
 
+/// A (low, high) confidence-interval pair.
+type Ci = (f64, f64);
+
 /// Bootstrap resampling for 95% confidence intervals on all four metrics.
 /// Returns (top1, top5, top10, mrr) CIs as (low, high) tuples.
-fn bootstrap(outcomes: &[CaseOutcome], resamples: usize, seed: u64) -> ((f64, f64), (f64, f64), (f64, f64), (f64, f64)) {
+fn bootstrap(outcomes: &[CaseOutcome], resamples: usize, seed: u64) -> (Ci, Ci, Ci, Ci) {
     let n = outcomes.len();
     if n == 0 || resamples == 0 {
         return ((0.0, 0.0), (0.0, 0.0), (0.0, 0.0), (0.0, 0.0));
@@ -240,7 +285,9 @@ struct Rng {
 }
 impl Rng {
     fn new(seed: u64) -> Self {
-        Self { state: seed.wrapping_add(0x9E3779B97F4A7C15) }
+        Self {
+            state: seed.wrapping_add(0x9E3779B97F4A7C15),
+        }
     }
     fn next(&mut self) -> u64 {
         let mut z = self.state.wrapping_add(0x9E3779B97F4A7C15);
@@ -273,14 +320,17 @@ fn parse_jsonl(path: &PathBuf) -> Result<Vec<EvalCase>, String> {
         if trimmed.is_empty() {
             continue;
         }
-        let rec: Record = serde_json::from_str(trimmed)
-            .map_err(|e| format!("line {}: {e}", i + 1))?;
+        let rec: Record =
+            serde_json::from_str(trimmed).map_err(|e| format!("line {}: {e}", i + 1))?;
         let roman = rec.english.trim().to_string();
         let native = rec.native.trim().to_string();
         if roman.is_empty() || native.is_empty() {
             continue;
         }
-        cases.push(EvalCase { roman, targets: vec![native] });
+        cases.push(EvalCase {
+            roman,
+            targets: vec![native],
+        });
     }
     Ok(cases)
 }
@@ -332,11 +382,23 @@ fn parse_args() -> Args {
         match arg.as_str() {
             "--dataset" => dataset = PathBuf::from(next_value(&arg, args.next())),
             "--topk" => topk = next_value(&arg, args.next()).parse().expect("--topk <n>"),
-            "--suggestions" => suggestions = next_value(&arg, args.next()).parse().expect("--suggestions <n>"),
-            "--resamples" => resamples = next_value(&arg, args.next()).parse().expect("--resamples <n>"),
+            "--suggestions" => {
+                suggestions = next_value(&arg, args.next())
+                    .parse()
+                    .expect("--suggestions <n>")
+            }
+            "--resamples" => {
+                resamples = next_value(&arg, args.next())
+                    .parse()
+                    .expect("--resamples <n>")
+            }
             "--seed" => seed = next_value(&arg, args.next()).parse().expect("--seed <n>"),
             "--limit" => limit = Some(next_value(&arg, args.next()).parse().expect("--limit <n>")),
-            "--show-misses" => show_misses = next_value(&arg, args.next()).parse().expect("--show-misses <n>"),
+            "--show-misses" => {
+                show_misses = next_value(&arg, args.next())
+                    .parse()
+                    .expect("--show-misses <n>")
+            }
             "--full-case" => full_case = true,
             "--help" | "-h" => {
                 print_help();
@@ -350,7 +412,16 @@ fn parse_args() -> Args {
         }
     }
     let suggestions = if suggestions == 0 { topk } else { suggestions };
-    Args { dataset, topk, suggestions, resamples, seed, limit, show_misses, full_case }
+    Args {
+        dataset,
+        topk,
+        suggestions,
+        resamples,
+        seed,
+        limit,
+        show_misses,
+        full_case,
+    }
 }
 
 fn next_value(flag: &str, val: Option<String>) -> String {
@@ -409,7 +480,12 @@ mod tests {
     #[test]
     fn bootstrap_ci_brackets_point_estimate() {
         let outcomes: Vec<CaseOutcome> = (0..200)
-            .map(|i| CaseOutcome { top1: i % 2 == 0, top5: i % 3 != 0, top10: true, reciprocal_rank: 0.5 })
+            .map(|i| CaseOutcome {
+                top1: i % 2 == 0,
+                top5: i % 3 != 0,
+                top10: true,
+                reciprocal_rank: 0.5,
+            })
             .collect();
         let (t1, _, _, _) = bootstrap(&outcomes, 500, 12345);
         assert!(t1.0 <= t1.1);

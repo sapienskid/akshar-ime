@@ -52,7 +52,11 @@ fn main() {
     if let Some(extra) = &extra {
         ingest(extra, &mut pairs);
     }
-    eprintln!("Collected {} pairs in {:.1}s", pairs.len(), t.elapsed().as_secs_f64());
+    eprintln!(
+        "Collected {} pairs in {:.1}s",
+        pairs.len(),
+        t.elapsed().as_secs_f64()
+    );
 
     let lexicon = RomanLexicon::build(pairs);
     eprintln!("Lexicon entries: {}", lexicon.len());

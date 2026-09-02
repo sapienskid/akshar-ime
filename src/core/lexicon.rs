@@ -50,8 +50,10 @@ impl RomanLexicon {
         entries.dedup();
 
         let mut lx = Self::default();
-        lx.romans.reserve(entries.iter().map(|(r, _)| r.len() + 1).sum());
-        lx.devs.reserve(entries.iter().map(|(_, d)| d.len() + 1).sum());
+        lx.romans
+            .reserve(entries.iter().map(|(r, _)| r.len() + 1).sum());
+        lx.devs
+            .reserve(entries.iter().map(|(_, d)| d.len() + 1).sum());
         for (r, d) in entries {
             lx.roman_off.push(lx.romans.len() as u32);
             lx.roman_len.push(r.len() as u8);
@@ -129,6 +131,11 @@ impl RomanLexicon {
     /// Size of the lexicon.
     pub fn len(&self) -> usize {
         self.roman_off.len()
+    }
+
+    /// Whether the lexicon has no entries.
+    pub fn is_empty(&self) -> bool {
+        self.roman_off.is_empty()
     }
 
     /// Binary-search the range of entries whose roman starts with `key`.

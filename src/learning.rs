@@ -11,6 +11,12 @@ pub struct WordConfirmation {
     pub devanagari: String,
 }
 
+impl Default for LearningEngine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl LearningEngine {
     pub fn new() -> Self {
         Self {

@@ -66,6 +66,11 @@ struct BeamState {
     path: Option<u32>,  // index of the last cons cell in the path arena
 }
 
+/// Beam dedup key: position, last two aksharas, and the path hash.
+type BeamKey = (usize, Option<u32>, Option<u32>, u64);
+/// Best (score, emit, lm, path) kept per dedup key.
+type BeamBest = (f64, f64, f64, Option<u32>);
+
 /// One cell of a persistent (immutable) path in the arena.
 struct PathCell {
     parent: Option<u32>,
@@ -116,7 +121,7 @@ impl ModelDecoder {
                 if let Some(chunk) = model.chunks.get(cid as usize) {
                     reverse
                         .entry(chunk.clone())
-                        .or_insert_with(Vec::new)
+                        .or_default()
                         .push((a as u32, w));
                 }
             }
@@ -125,7 +130,11 @@ impl ModelDecoder {
             v.sort_by(|a, b| a.1.total_cmp(&b.1));
             v.truncate(config.max_aksharas_per_chunk);
         }
-        Self { model, reverse, config }
+        Self {
+            model,
+            reverse,
+            config,
+        }
     }
 
     /// Configure the LM weight relative to emission weights (default 1.0).
@@ -201,7 +210,10 @@ impl ModelDecoder {
                     let emit = st.emit + e.w as f64;
                     let lm = st.lm + fluency;
                     let score = emit + lm * self.config.lm_weight;
-                    let cell = PathCell { parent: st.path, akshara: e.a };
+                    let cell = PathCell {
+                        parent: st.path,
+                        akshara: e.a,
+                    };
                     let idx = arena.len() as u32;
                     arena.push(cell);
                     next.push(BeamState {
@@ -219,10 +231,7 @@ impl ModelDecoder {
 
             // Dedup beam states by (pos, prev2, prev, path-hash) keeping the
             // best score.  u64 keys are cheap; the hash preserves distinct paths.
-            let mut best_by_key: HashMap<
-                (usize, Option<u32>, Option<u32>, u64),
-                (f64, f64, f64, Option<u32>),
-            > = HashMap::new();
+            let mut best_by_key: HashMap<BeamKey, BeamBest> = HashMap::new();
             for cand in next {
                 best_by_key
                     .entry((cand.pos, cand.prev2, cand.prev, cand.phash))
@@ -319,7 +328,10 @@ mod tests {
         for (r, d) in pairs {
             t.add_pair(r, d);
         }
-        t.finalize(&TrainerConfig { iterations: 6, ..Default::default() })
+        t.finalize(&TrainerConfig {
+            iterations: 6,
+            ..Default::default()
+        })
     }
 
     #[test]

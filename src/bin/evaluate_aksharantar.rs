@@ -97,9 +97,16 @@ fn main() {
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--dataset" => dataset_path = next_value(&arg, args.next()),
-            "--topk" => topk = next_value(&arg, args.next()).parse::<usize>().expect("--topk <n>").max(1),
+            "--topk" => {
+                topk = next_value(&arg, args.next())
+                    .parse::<usize>()
+                    .expect("--topk <n>")
+                    .max(1)
+            }
             "--show-misses" => {
-                show_misses = next_value(&arg, args.next()).parse().expect("--show-misses <n>")
+                show_misses = next_value(&arg, args.next())
+                    .parse()
+                    .expect("--show-misses <n>")
             }
             "--help" | "-h" => {
                 print_help();
@@ -117,7 +124,11 @@ fn main() {
 
     let engine = ImeEngine::new();
 
-    let mut report = Report { name: "ImeEngine.get_suggestions", stats: HashMap::new(), misses: Vec::new() };
+    let mut report = Report {
+        name: "ImeEngine.get_suggestions",
+        stats: HashMap::new(),
+        misses: Vec::new(),
+    };
     for case in &cases {
         let suggestions = engine.get_suggestions(&case.roman, topk.max(8));
         let top: Vec<String> = suggestions.into_iter().map(|(d, _)| d).collect();
@@ -126,7 +137,9 @@ fn main() {
             top.iter().take(topk).any(|t| t == &case.target),
         );
         if !top.iter().take(topk).any(|t| t == &case.target) {
-            report.misses.push((case.roman.clone(), case.target.clone(), top));
+            report
+                .misses
+                .push((case.roman.clone(), case.target.clone(), top));
         }
     }
 
@@ -153,7 +166,11 @@ fn load_cases(path: &str) -> Vec<EvalCase> {
         if roman.is_empty() || target.is_empty() {
             continue;
         }
-        cases.push(EvalCase { roman, target, source: rec.source.to_string() });
+        cases.push(EvalCase {
+            roman,
+            target,
+            source: rec.source.to_string(),
+        });
     }
     cases
 }

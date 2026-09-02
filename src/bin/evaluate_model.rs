@@ -70,11 +70,34 @@ fn main() {
         match arg.as_str() {
             "--model" => model_path = next_value(&arg, args.next()),
             "--dataset" => dataset_path = next_value(&arg, args.next()),
-            "--topk" => topk = next_value(&arg, args.next()).parse::<usize>().expect("--topk <n>").max(1),
-            "--show-misses" => show_misses = next_value(&arg, args.next()).parse().expect("--show-misses <n>"),
-            "--lm-weight" => lm_weight = next_value(&arg, args.next()).parse().expect("--lm-weight <f>"),
-            "--beam" => beam = next_value(&arg, args.next()).parse::<usize>().expect("--beam <n>").max(1),
-            "--per-chunk" => per_chunk = next_value(&arg, args.next()).parse::<usize>().expect("--per-chunk <n>").max(1),
+            "--topk" => {
+                topk = next_value(&arg, args.next())
+                    .parse::<usize>()
+                    .expect("--topk <n>")
+                    .max(1)
+            }
+            "--show-misses" => {
+                show_misses = next_value(&arg, args.next())
+                    .parse()
+                    .expect("--show-misses <n>")
+            }
+            "--lm-weight" => {
+                lm_weight = next_value(&arg, args.next())
+                    .parse()
+                    .expect("--lm-weight <f>")
+            }
+            "--beam" => {
+                beam = next_value(&arg, args.next())
+                    .parse::<usize>()
+                    .expect("--beam <n>")
+                    .max(1)
+            }
+            "--per-chunk" => {
+                per_chunk = next_value(&arg, args.next())
+                    .parse::<usize>()
+                    .expect("--per-chunk <n>")
+                    .max(1)
+            }
             "--help" | "-h" => {
                 print_help();
                 return;
@@ -116,16 +139,25 @@ fn main() {
         let top: Vec<String> = scored.into_iter().map(|(d, _)| d).collect();
         let top1_hit = top.first().is_some_and(|d| d == &case.target);
         let topk_hit = top.iter().take(topk).any(|d| d == &case.target);
-        by_source.entry(case.source.clone()).or_default().add(top1_hit, topk_hit);
+        by_source
+            .entry(case.source.clone())
+            .or_default()
+            .add(top1_hit, topk_hit);
         total_stats.add(top1_hit, topk_hit);
         if !topk_hit {
             misses.push((case.roman.clone(), case.target.clone(), top));
         }
     }
 
-    println!("Generative decoder on Aksharantar Nepali test: {} cases", cases.len());
+    println!(
+        "Generative decoder on Aksharantar Nepali test: {} cases",
+        cases.len()
+    );
     println!("IndicXlit (neural, top-1) reference: native=80.25%, named-entities=52.67%");
-    println!("Average decode time per word: {:.2} ms", decode_time / cases.len() as f64 * 1000.0);
+    println!(
+        "Average decode time per word: {:.2} ms",
+        decode_time / cases.len() as f64 * 1000.0
+    );
     print_stats("ALL", &total_stats, topk);
     let mut sources: Vec<(&String, &Stats)> = by_source.iter().collect();
     sources.sort_by_key(|(k, _)| *k);
@@ -171,7 +203,11 @@ fn load_cases(path: &str) -> Vec<EvalCase> {
         if roman.is_empty() || target.is_empty() {
             continue;
         }
-        cases.push(EvalCase { roman, target, source: rec.source.to_string() });
+        cases.push(EvalCase {
+            roman,
+            target,
+            source: rec.source.to_string(),
+        });
     }
     cases
 }

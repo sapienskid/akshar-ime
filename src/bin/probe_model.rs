@@ -39,7 +39,8 @@ fn main() {
                 .take(8)
                 .map(|(a, w)| format!("{}({:.2})", dec.model.aksharas[*a as usize], w))
                 .collect();
-            println!("pos {i} chunk `{chunk}` -> {}", shown.join(" "));        }
+            println!("pos {i} chunk `{chunk}` -> {}", shown.join(" "));
+        }
     }
 
     println!("\nTop 10 decodings:");
@@ -56,9 +57,7 @@ fn main() {
         let uni = dec.model.unigram_kn[aid as usize];
         let backoff = dec.model.backoff[aid as usize];
         let n_bi = dec.model.bigrams[aid as usize].len();
-        println!(
-            "  {aks}: id={aid} unigram_kn={uni:.3} backoff={backoff:.3} bigrams={n_bi}"
-        );
+        println!("  {aks}: id={aid} unigram_kn={uni:.3} backoff={backoff:.3} bigrams={n_bi}");
     }
     let _ = bytes;
 }

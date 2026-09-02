@@ -61,7 +61,13 @@ pub fn align(roman: &str, dev: &str) -> Vec<AlignedPair> {
     }
     if m == 0 {
         // Every Devanagari char is an insertion.
-        return d.iter().map(|&c| AlignedPair { roman: String::new(), dev_char: c }).collect();
+        return d
+            .iter()
+            .map(|&c| AlignedPair {
+                roman: String::new(),
+                dev_char: c,
+            })
+            .collect();
     }
 
     // dp[i][j] = minimum cost to align r[..i] with d[..j].
@@ -112,7 +118,10 @@ pub fn align(roman: &str, dev: &str) -> Vec<AlignedPair> {
     while i > 0 || j > 0 {
         match bp[i][j] {
             Op::Sub => {
-                pairs.push(AlignedPair { roman: r[i - 1].to_string(), dev_char: d[j - 1] });
+                pairs.push(AlignedPair {
+                    roman: r[i - 1].to_string(),
+                    dev_char: d[j - 1],
+                });
                 i -= 1;
                 j -= 1;
             }
@@ -121,12 +130,18 @@ pub fn align(roman: &str, dev: &str) -> Vec<AlignedPair> {
                 i -= 1;
             }
             Op::InsDev => {
-                pairs.push(AlignedPair { roman: String::new(), dev_char: d[j - 1] });
+                pairs.push(AlignedPair {
+                    roman: String::new(),
+                    dev_char: d[j - 1],
+                });
                 j -= 1;
             }
             Op::Merge => {
                 let bigram: String = r[i - 2..i].iter().collect();
-                pairs.push(AlignedPair { roman: bigram, dev_char: d[j - 1] });
+                pairs.push(AlignedPair {
+                    roman: bigram,
+                    dev_char: d[j - 1],
+                });
                 i -= 2;
                 j -= 1;
             }

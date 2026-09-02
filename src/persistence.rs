@@ -4,7 +4,7 @@ use crate::core::trie::Trie;
 use crate::core::types::TransliterationModel;
 use crate::fuzzy::symspell::SymSpell;
 use std::fs::{self, File};
-use std::io::{BufReader, BufWriter, Error, ErrorKind};
+use std::io::{BufReader, BufWriter, Error};
 use std::path::Path;
 use tempfile::NamedTempFile;
 
@@ -31,7 +31,7 @@ pub fn save_to_disk(engine: &ImeEngine, path: &Path) -> Result<(), Error> {
     let temp_file = NamedTempFile::new_in(parent_dir)?;
     let writer = BufWriter::new(&temp_file);
 
-    bincode::serialize_into(writer, &state).map_err(|e| Error::new(ErrorKind::Other, e))?;
+    bincode::serialize_into(writer, &state).map_err(std::io::Error::other)?;
 
     temp_file.persist(path)?;
     Ok(())

@@ -200,9 +200,7 @@ fn parse_dataset_line(line: &str, line_no: usize) -> Result<Option<EvalCase>, St
 fn print_help() {
     println!("Usage: cargo run --bin evaluate_nepali_transliteration -- [options]");
     println!("Options:");
-    println!(
-        "  --dataset <path>       Dataset TSV path (default: data/eval/aksharantar_test.tsv)"
-    );
+    println!("  --dataset <path>       Dataset TSV path (default: data/eval/aksharantar_test.tsv)");
     println!("  --topk <n>             Top-k for hit metric (default: 5)");
     println!("  --show-misses <n>      Number of misses to print (default: 20)");
     println!("  -h, --help             Show help");

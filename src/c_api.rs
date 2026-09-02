@@ -56,8 +56,14 @@ unsafe fn get_engine<'a>() -> Option<&'a ImeEngine> {
     IME_ENGINE.as_ref()
 }
 
+/// Returns JSON-encoded Devanagari suggestions for the given roman prefix.
+///
+/// # Safety
+///
+/// `prefix` must be a valid NUL-terminated UTF-8 C string. The returned
+/// pointer must be released with [`akshar_ime_free_string`].
 #[no_mangle]
-pub extern "C" fn akshar_ime_get_suggestions(prefix: *const c_char) -> *mut c_char {
+pub unsafe extern "C" fn akshar_ime_get_suggestions(prefix: *const c_char) -> *mut c_char {
     let c_str = unsafe { CStr::from_ptr(prefix) };
     let roman_prefix = c_str.to_str().unwrap_or("");
     let result = catch_unwind(AssertUnwindSafe(|| {
@@ -76,8 +82,14 @@ pub extern "C" fn akshar_ime_get_suggestions(prefix: *const c_char) -> *mut c_ch
     CString::new(json_string).unwrap().into_raw()
 }
 
+/// Records a confirmed roman → Devanagari pair so the engine learns it.
+///
+/// # Safety
+///
+/// `roman` and `devanagari` must each be a valid NUL-terminated UTF-8 C
+/// string, or NULL (which is treated as an empty string).
 #[no_mangle]
-pub extern "C" fn akshar_ime_confirm_word(roman: *const c_char, devanagari: *const c_char) {
+pub unsafe extern "C" fn akshar_ime_confirm_word(roman: *const c_char, devanagari: *const c_char) {
     let roman_str = unsafe { CStr::from_ptr(roman) }.to_str().unwrap_or("");
     let devanagari_str = unsafe { CStr::from_ptr(devanagari) }.to_str().unwrap_or("");
     if !roman_str.is_empty() && !devanagari_str.is_empty() {
@@ -89,8 +101,14 @@ pub extern "C" fn akshar_ime_confirm_word(roman: *const c_char, devanagari: *con
     }
 }
 
+/// Frees a string previously returned by [`akshar_ime_get_suggestions`].
+///
+/// # Safety
+///
+/// `s` must be a pointer returned by [`akshar_ime_get_suggestions`] that has
+/// not been freed already, or NULL.
 #[no_mangle]
-pub extern "C" fn akshar_ime_free_string(s: *mut c_char) {
+pub unsafe extern "C" fn akshar_ime_free_string(s: *mut c_char) {
     if !s.is_null() {
         unsafe {
             let _ = CString::from_raw(s);

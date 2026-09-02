@@ -132,11 +132,7 @@ fn main() {
     eprintln!("saved weights to {out_path}");
 }
 
-fn build_dev_cases(
-    path: &str,
-    decoder: &ModelDecoder,
-    featurizer: &Reranker,
-) -> Vec<DevCase> {
+fn build_dev_cases(path: &str, decoder: &ModelDecoder, featurizer: &Reranker) -> Vec<DevCase> {
     let f = File::open(path).expect("open dev");
     let mut cases = Vec::new();
     for line in BufReader::new(f).lines().map_while(Result::ok) {
@@ -168,7 +164,7 @@ fn evaluate(weights: &[f64; NUM_FEATURES], cases: &[DevCase]) -> usize {
     cases
         .iter()
         .filter(|case| {
-            case.target_pos.map_or(false, |tp| {
+            case.target_pos.is_some_and(|tp| {
                 let mut best_i = 0usize;
                 let mut best_s = f64::NEG_INFINITY;
                 for (i, feat) in case.cands.iter().enumerate() {
