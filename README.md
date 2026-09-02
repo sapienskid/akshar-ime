@@ -4,7 +4,7 @@
 
 Akshar Devanagari IME is a next-generation input method built from the ground up for speed, efficiency, and intelligence. It learns from your typing patterns to provide incredibly accurate and fast suggestions, all while maintaining a minimal memory and CPU footprint.
 
-![Build Status](https://img.shields.io/badge/build-passing-brightgreen)
+![CI](https://github.com/sapienskid/akshar-ime/actions/workflows/ci.yml/badge.svg)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
 ## Key Features
@@ -140,12 +140,25 @@ with a clean learning history.
   - `persistence/`: Logic for saving/loading the user dictionary.
   - `c_api.rs`: The Foreign Function Interface (FFI) for the C layer.
 - `src/bin/`: Training and evaluation tools (`train_model`, `build_lexicon`,
-  `train_reranker`, `evaluate_model`, `evaluate_aksharantar`,
+  `train_reranker`, `evaluate`, `evaluate_model`, `evaluate_aksharantar`,
   `evaluate_nepali_transliteration`, `probe_model`).
 - `data/`: Aksharantar corpus (`aksharantar/`) and built artifacts.
 - `src/ibus_engine.c`: The C code that integrates the Rust library with IBus.
 - `Makefile`: The build and installation script.
 - `devanagari-smart.xml`: The IBus component registration file.
+
+## Data & Attribution
+
+The transliteration model is trained on the **[Aksharantar](https://huggingface.co/datasets/ai4bharat/Aksharantar)**
+corpus published by [AI4Bharat](https://ai4bharat.iitm.ac.in/) (IIT Madras), described in
+*IndicXlit: A Transliteration Model for Indic Languages* (arXiv:2205.03018). Aksharantar's
+mined data is released under [CC0](https://creativecommons.org/publicdomain/zero/1.0/), with
+some portions under CC-BY; see the dataset card for details.
+
+- The corpus itself is **not** included in this repository — download it separately
+  (see Step 1 above).
+- `data/eval/aksharantar_test.tsv` is a small derived evaluation subset of the Aksharantar
+  Nepali test split (roman/Devanagari pairs), included here under the terms of CC0.
 
 ## License
 

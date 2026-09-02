@@ -1,6 +1,4 @@
-target/
-target/
-Cargo.lock
+/target
 *.rs.bk
 *.log
 .vscode
@@ -12,6 +10,7 @@ dist
 *.swp
 *.tmp
 *.bak
+.zcode/
 
 # Generated transliteration model + downloaded Aksharantar corpus
 data/nepali_model.bin
