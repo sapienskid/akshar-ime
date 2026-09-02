@@ -36,14 +36,20 @@ const QUERY_VARIANT_LIMIT: usize = 6;
 /// Decoder beam for the IME (accuracy/speed sweet spot, see M2 eval).
 const DECODER_BEAM: usize = 64;
 /// Scale converting a reranker log-score into the engine's higher-better u64 score.
-const FRESH_SCALE: f64 = 800.0;
-/// A word in the corpus lexicon whose roman matches the typed prefix exactly.
-const LEXICON_EXACT_SCORE: u64 = 300;
-/// User-confirmed word from the learned trie.
-const USER_TRIE_BASE: u64 = 180;
+const FRESH_SCALE: f64 = 800_000.0;
+/// Bonus for a candidate that is both decoder-generated AND an exact corpus
+/// word.  Additive on top of the fresh score so the decoder's ranking among
+/// corpus words is preserved (a flat absolute score made arbitrary-order
+/// lexicon entries outrank better decoder candidates; E0 measured -2.1 pts).
+const LEXICON_EXACT_BONUS: u64 = 0;
+/// A corpus word the decoder did not generate itself.
+const LEXICON_ONLY_SCORE: u64 = 5_000;
+/// User-confirmed word from the learned trie.  Above any fresh+lexicon score
+/// so a word the user picked before always wins.
+const USER_TRIE_BASE: u64 = 500_000;
 /// Fuzzy (edit-distance) match over user-learned roman variants.
-const FUZZY_BASE: u64 = 50;
-const FUZZY_DISTANCE_PENALTY_SCALE: u64 = 12;
+const FUZZY_BASE: u64 = 50_000;
+const FUZZY_DISTANCE_PENALTY_SCALE: u64 = 12_000;
 
 pub struct ImeEngine {
     pub decoder: ModelDecoder,
@@ -107,15 +113,15 @@ impl ImeEngine {
         //    the discriminative reranker.  We decode the base roman only: the
         //    model's learned emissions already absorb v/w and vowel-length
         //    spelling variants, so re-decoding soft variants is pure latency.
+        let mut fresh_scores: HashMap<String, u64> = HashMap::new();
         if let Some(qv) = query_variants.first() {
             let roman = qv.roman.as_str();
             let cands = self.decoder.decode_detailed(roman, count * 4);
             for (dev, rscore) in self.reranker.rerank(roman, cands) {
-                // Convert the reranker log-score back to the engine's u64 scale,
-                // keeping fresh candidates below the lexicon-exact score so the
-                // corpus-word boost still outranks plain transliterations.
+                // Convert the reranker log-score back to the engine's u64 scale.
                 let cost = (-rscore).max(0.0);
                 let score = (FRESH_SCALE / (1.0 + cost)).round().max(1.0) as u64;
+                fresh_scores.insert(dev.clone(), score);
                 add(dev, score);
             }
         }
@@ -127,10 +133,16 @@ impl ImeEngine {
             //    The Aksharantar lexicon is mined from news and mostly holds
             //    long compound words, so prefix matching would flood the list
             //    with compounds like नेपालअधिराज्य; the decoder already covers
-            //    prefix transliteration.
+            //    prefix transliteration.  The bonus is additive on the fresh
+            //    score when the decoder also produced the word, so decoder
+            //    ranking survives; corpus-only words get a standalone score.
             if let Some(lx) = &self.lexicon {
                 for dev in lx.lookup_exact(roman) {
-                    add(dev, LEXICON_EXACT_SCORE.saturating_sub(qv.penalty));
+                    let bonus = LEXICON_EXACT_BONUS.saturating_sub(qv.penalty);
+                    match fresh_scores.get(&dev) {
+                        Some(s) => add(dev, s.saturating_add(bonus)),
+                        None => add(dev, LEXICON_ONLY_SCORE.saturating_sub(qv.penalty)),
+                    }
                 }
             }
 

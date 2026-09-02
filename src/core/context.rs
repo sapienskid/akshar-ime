@@ -39,9 +39,9 @@ impl ContextModel {
         if let Some(&prev_word_id) = self.history.back() {
             for (word_id, score) in suggestions.iter_mut() {
                 if let Some(&bigram_count) = self.bigrams.get(&(prev_word_id, *word_id)) {
-                    // Simple boost: add a factor of the bigram count.
-                    // A more advanced model might use logarithms or smoothed probabilities.
-                    let boost = (bigram_count as f64).log2() * 10.0;
+                    // Simple boost: add a factor of the bigram count, scaled to
+                    // the engine's u64 score range (FRESH_SCALE ~ 1e6).
+                    let boost = (bigram_count as f64).log2() * 10_000.0;
                     *score += boost as u64;
                 }
             }
