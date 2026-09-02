@@ -162,34 +162,34 @@ fn main() {
             let agg = &mut aggs[idx];
             agg.total += 1;
             for (i, k) in KS.iter().enumerate() {
-                if dec.get(..*k).map_or(false, |p| p.contains(&case.target)) {
+                if dec.get(..*k).is_some_and(|p| p.contains(&case.target)) {
                     agg.dec_hits[i] += 1;
                 }
-                if dec.get(..*k).map_or(false, |p| p.iter().any(|c| case.refs.contains(c))) {
+                if dec.get(..*k).is_some_and(|p| p.iter().any(|c| case.refs.contains(c))) {
                     agg.dec_hits_mr[i] += 1;
                 }
-                if eng.get(..*k).map_or(false, |p| p.contains(&case.target)) {
+                if eng.get(..*k).is_some_and(|p| p.contains(&case.target)) {
                     agg.eng_hits[i] += 1;
                 }
             }
-            if dec.first().map_or(false, |c| *c == case.target) {
+            if dec.first().is_some_and(|c| *c == case.target) {
                 agg.dec_top1 += 1;
             }
-            if dec.first().map_or(false, |c| case.refs.contains(c)) {
+            if dec.first().is_some_and(|c| case.refs.contains(c)) {
                 agg.dec_top1_mr += 1;
             }
-            if eng.first().map_or(false, |c| *c == case.target) {
+            if eng.first().is_some_and(|c| *c == case.target) {
                 agg.eng_top1 += 1;
             }
-            if eng.first().map_or(false, |c| case.refs.contains(c)) {
+            if eng.first().is_some_and(|c| case.refs.contains(c)) {
                 agg.eng_top1_mr += 1;
             }
             // Disagreement analysis.
             let dt = dec.first();
             let et = eng.first();
             if dt != et {
-                let d_right = dt.map_or(false, |c| case.refs.contains(c));
-                let e_right = et.map_or(false, |c| case.refs.contains(c));
+                let d_right = dt.is_some_and(|c| case.refs.contains(c));
+                let e_right = et.is_some_and(|c| case.refs.contains(c));
                 if d_right && !e_right {
                     agg.dis_dec_right += 1;
                 } else if e_right && !d_right {
@@ -199,7 +199,7 @@ fn main() {
                 }
             }
             // Taxonomy + CER on decoder top-1 misses (strict).
-            let miss = dec.first().map_or(true, |c| *c != case.target);
+            let miss = dec.first().is_none_or(|c| *c != case.target);
             if miss {
                 if let Some(pred) = dec.first() {
                     match classify(pred, &case.target) {
