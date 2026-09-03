@@ -50,3 +50,26 @@ No change adopted.
 Next: E3 (word-frequency prior + reranker v2) — targets the 52% matra-miss
 class and the 85.2% top-2 → top-1 ranking headroom.
 
+
+## E2/E3 results (2026-09-03)
+
+**E3 — frequency feature (5-feature MERT reranker): NEGATIVE on this corpus.**
+Valid top-1 65.3% -> 89.8% looked spectacular but was leakage: valid targets are
+in the word-freq map by construction. On test: AK-Freq top-1 **70.26% (-5.1)**.
+Root cause: Aksharantar natives are ~all unique (2.40M unique / 2.40M tokens),
+so the map is a membership flag, and test natives are absent — the feature
+promotes wrong corpus words over the correct unseen native. Weights reverted to
+generative ([1,1,0,0,0]); infrastructure kept (F_FREQ) pending a REAL frequency
+corpus (IndicCorp-Nepali word counts), where this becomes the key lever.
+Note: build_wordfreq output is 98.9 MB — do not ship without pruning.
+
+**E2 — multilingual pooling (hin_train + nep_train): NEGATIVE.**
+Decoder AK-Freq top-1 75.33 -> 74.95, engine 75.19 -> 74.86; top-5 +0.1;
+latency 3.06 -> 4.97 ms (model 22 -> 32 MB). Hindi romanization conventions
+(schwa, long-vowel spelling) differ enough to dilute Nepali emissions. Model
+reverted to nep-only. (IndicXlit gains from multilinguality at 26M-pair scale
+with per-language balancing; single-pass naive pooling does not transfer.)
+
+**Running total: 73.24% -> 75.33% (+2.09) native top-1; NE bucket unchanged
+(~33%). Next levers that remain credible: E4 position-conditioned emissions,
+E5 self-training, E6 sentence context; E3 retry with IndicCorp frequencies.**

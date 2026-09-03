@@ -66,7 +66,15 @@ fn main() {
         },
     );
     let lexicon = RomanLexicon::load(Path::new("data/roman_lexicon.bin")).ok();
-    let featurizer = Reranker::default().with_lexicon(lexicon);
+    // E3: word-frequency evidence from the native side of the corpus.
+    let freq = load_freq("data/word_freq.bin");
+    eprintln!(
+        "word-freq map: {} entries",
+        freq.as_ref().map_or(0, std::collections::HashMap::len)
+    );
+    let featurizer = Reranker::default()
+        .with_lexicon(lexicon)
+        .with_freq(freq);
     // Precompute candidate feature vectors over the dev split.
     let cases = build_dev_cases(&dev_path, &decoder, &featurizer);
     let total = cases.len();
@@ -90,6 +98,7 @@ fn main() {
         vec![0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0, 4.0],
         vec![-1.0, -0.5, -0.25, -0.1, 0.0, 0.1, 0.25, 0.5, 1.0],
         vec![0.0, 2.0, 5.0, 10.0, 20.0, 40.0, 80.0, 160.0],
+        vec![0.0, 0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0],
     ];
 
     let mut best_acc = evaluate(&weights, &cases);
@@ -130,6 +139,12 @@ fn main() {
     .unwrap();
     std::fs::write(&out_path, &obj).expect("write weights");
     eprintln!("saved weights to {out_path}");
+}
+
+fn load_freq(path: &str) -> Option<std::collections::HashMap<String, u32>> {
+    std::fs::read(path)
+        .ok()
+        .and_then(|bytes| bincode::deserialize(&bytes).ok())
 }
 
 fn build_dev_cases(path: &str, decoder: &ModelDecoder, featurizer: &Reranker) -> Vec<DevCase> {
