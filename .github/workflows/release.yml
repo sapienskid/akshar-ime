@@ -41,41 +41,34 @@ jobs:
       - name: Download Aksharantar Nepali corpus (Hugging Face)
         run: |
           mkdir -p data/aksharantar
-          # ai4bharat/Aksharantar — files are under data/ in the repo; try both URL schemes
-          # Use huggingface_hub python helper (pip) for authenticated/resumable download
           pip install -q huggingface_hub
           python3 << 'PY'
           from huggingface_hub import hf_hub_download
-          import shutil, os
+          import shutil, os, zipfile, pathlib, sys
           repo = "ai4bharat/Aksharantar"
-          # Nepali files are named nep_train.json etc at repo root (see README)
-          # Try hf_hub_download; fallback to direct wget if missing
-          for fname in ["nep_train.json", "nep_valid.json", "nep_test.json"]:
-              try:
-                  path = hf_hub_download(repo_id=repo, filename=fname, repo_type="dataset")
-                  print(f"hf_hub_download {fname} -> {path}")
-                  shutil.copy(path, f"data/aksharantar/{fname}")
-              except Exception as e:
-                  print(f"hf_hub_download failed for {fname}: {e}, trying wget")
-                  import subprocess, sys
-                  urls = [
-                      f"https://huggingface.co/datasets/{repo}/resolve/main/{fname}",
-                      f"https://huggingface.co/datasets/{repo}/resolve/main/data/{fname}",
-                  ]
-                  ok=False
-                  for url in urls:
-                      rc = subprocess.call(["wget", "-q", "-O", f"data/aksharantar/{fname}", url])
-                      if rc==0 and os.path.getsize(f"data/aksharantar/{fname}")>1000:
-                          print(f"wget ok {url}")
-                          ok=True
-                          break
-                  if not ok:
-                      print(f"FAILED to fetch {fname}", file=sys.stderr)
-                      sys.exit(1)
+          # Dataset stores per-language zips (nep.zip contains nep_{train,valid,test}.json)
+          try:
+              zip_path = hf_hub_download(repo_id=repo, filename="nep.zip", repo_type="dataset")
+              print(f"hf_hub_download nep.zip -> {zip_path} ({os.path.getsize(zip_path)} bytes)")
+          except Exception as e:
+              print(f"hf_hub_download failed for nep.zip: {e}, trying wget", file=sys.stderr)
+              import subprocess
+              url = f"https://huggingface.co/datasets/{repo}/resolve/main/nep.zip"
+              rc = subprocess.call(["wget", "-q", "-O", "nep.zip", url])
+              if rc != 0 or not os.path.exists("nep.zip"):
+                  print(f"wget failed for {url}", file=sys.stderr)
+                  sys.exit(1)
+              zip_path = "nep.zip"
+              print(f"wget nep.zip ({os.path.getsize(zip_path)} bytes)")
+          # Unzip
+          with zipfile.ZipFile(zip_path) as z:
+              print("zip contents:", z.namelist())
+              z.extractall("data/aksharantar")
           print("corpus ready:")
-          import pathlib
           for p in pathlib.Path("data/aksharantar").glob("*"):
               print(p, p.stat().st_size)
+          # sanity: train should be ~2.4M lines
+          assert (pathlib.Path("data/aksharantar/nep_train.json").exists()), "nep_train.json missing after unzip"
           PY
           ls -lh data/aksharantar/
 
