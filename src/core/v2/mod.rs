@@ -45,6 +45,8 @@ pub struct PairModel {
     pub bi: HashMap<(u64, u64), f32>,
     /// -log P(cur | prev akshara): intermediate backoff level.
     pub bi_ak: HashMap<(u32, u64), f32>,
+    /// -log P(cur | prev two pairs): CTW-style deepest context level.
+    pub tri: HashMap<((u64, u64), u64), f32>,
     /// -log P(a | word start) (kept for the engine's word-initial handling).
     pub word_start: Vec<f32>,
     /// Dense akshara n-gram LM (word_start prior + KN bigram/trigram over
@@ -116,16 +118,21 @@ impl PairModel {
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
     }
 
-    /// Transition weight: -log P(cur | prev) over the 3-level backoff
-    /// hierarchy (pair-bigram -> akshara-pair-bigram -> joint pair unigram).
-    /// `emit_out` receives the pure emission part -log P(s | a).
+    /// Transition weight: -log P(cur | prev) over the 4-level backoff
+    /// hierarchy (pair-trigram -> pair-bigram -> akshara-pair-bigram ->
+    /// joint pair unigram).  `emit_out` receives the emission -log P(s | a).
     #[inline]
-    pub fn transition(&self, prev: u64, cur: u64, emit_out: &mut f32) -> f32 {
+    pub fn transition(&self, prev2: u64, prev: u64, cur: u64, emit_out: &mut f32) -> f32 {
         let a = pair_akshara(cur) as usize;
         let emission = self.emit_w.get(&cur).copied().unwrap_or(12.0);
         *emit_out = emission;
         if prev == 0 {
             return emission;
+        }
+        if prev2 != 0 {
+            if let Some(&w) = self.tri.get(&((prev2, prev), cur)) {
+                return w;
+            }
         }
         if let Some(&w) = self.bi.get(&(prev, cur)) {
             return w;
@@ -192,6 +199,7 @@ impl PairModel {
 struct State {
     pos: usize,
     prev: u64,
+    prev2: u64,
     /// Previous akshara id (for the dense akshara LM) and the one before it.
     prev_ak: Option<u32>,
     prev2_ak: Option<u32>,
@@ -242,7 +250,7 @@ impl PairDecoder {
             reverse,
             lm_weight: 1.0,
             pair_weight: 0.5,
-            beam_width: 512,
+            beam_width: 64,
         }
     }
 
@@ -258,6 +266,7 @@ impl PairDecoder {
         let mut beam = vec![State {
             pos: 0,
             prev: 0,
+            prev2: 0,
             prev_ak: None,
             prev2_ak: None,
             emit: 0.0,
@@ -282,7 +291,8 @@ impl PairDecoder {
                     for &(a, emit_w0) in cands {
                         let cur = pair_key(a, chunk);
                         let mut emit_w = 0.0f32;
-                        let pair_w = self.model.transition(st.prev, cur, &mut emit_w) as f64;
+                        let pair_w =
+                            self.model.transition(st.prev2, st.prev, cur, &mut emit_w) as f64;
                         // Dense akshara-LM fluency (v1-style), on top of the
                         // pair-grammar context term.
                         let fluency = match (st.prev2_ak, st.prev_ak) {
@@ -293,6 +303,7 @@ impl PairDecoder {
                         next.push(State {
                             pos: st.pos + l,
                             prev: cur,
+                            prev2: st.prev,
                             prev_ak: Some(a),
                             prev2_ak: st.prev_ak,
                             emit: st.emit + emit_w as f64,

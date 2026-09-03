@@ -590,8 +590,10 @@ fn pair_transitions(
     pairs: &[Pair],
     emission: &[HashMap<u32, f64>],
     _n_aksharas: usize,
-) -> Vec<(u64, u64, u32, f64)> {
+) -> (Vec<(u64, u64, u32, f64)>, Vec<((u64, u64), u64, f64)>) {
     let mut out: Vec<(u64, u64, u32, f64)> = Vec::new();
+    // Depth-2 pair context: ((pair_{j-2}, pair_{j-1}) -> pair_j) posteriors.
+    let mut out2: Vec<((u64, u64), u64, f64)> = Vec::new();
     let mut f: Vec<Vec<f64>> = Vec::new();
     let mut b: Vec<Vec<f64>> = Vec::new();
 
@@ -693,14 +695,48 @@ fn pair_transitions(
                         // A true posterior is <= 1; degenerate words (tiny z)
                         // can numerically violate this and poison counts.
                         if post >= 1e-6 {
-                            out.push((pair_key(a1, key1), pair_key(a2, key2), a1, post.min(1.0)));
+                            let prev1 = pair_key(a1, key1);
+                            let cur = pair_key(a2, key2);
+                            out.push((prev1, cur, a1, post.min(1.0)));
+                            // Depth-2: enumerate the split of akshara j-2's chunk.
+                            if j >= 2 {
+                                let a0 = pair.aks[j - 2];
+                                let em0 = &emission[a0 as usize];
+                                let f0 = f[j - 2][i1 - l1];
+                                if f0 > 0.0 {
+                                    for l0 in 1..=MAX_CHUNK.min(i1 - l1) {
+                                        let key0 =
+                                            pack_chunk_bytes(&pair.roman[i1 - l1 - l0..i1 - l1]);
+                                        if let Some(&p0) = em0.get(&key0) {
+                                            if p0 > 0.0 {
+                                                let post2 = f[j - 2][i1 - l1 - l0]
+                                                    * p0
+                                                    * p1
+                                                    * p2
+                                                    * bval
+                                                    * inv_z;
+                                                if post2 >= 1e-6 {
+                                                    out2.push((
+                                                        (
+                                                            pair_key(a0, key0),
+                                                            prev1,
+                                                        ),
+                                                        cur,
+                                                        post2.min(1.0),
+                                                    ));
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
             }
         }
     }
-    out
+    (out, out2)
 }
 
 impl Trainer {
@@ -725,6 +761,8 @@ impl Trainer {
         // Intermediate backoff level: (prev akshara, cur pair) — much denser
         // than full pair context, carries genuine akshara bigram structure.
         let mut bi_ak: HashMap<(u32, u64), f64> = HashMap::new();
+        // Depth-2 pair context (CTW-style deepest level), flat 3-tuple keys.
+        let mut tri: HashMap<((u64, u64), u64), f64> = HashMap::new();
         if !pairs.is_empty() && threads > 1 {
             let chunk_size = pairs.len().div_ceil(threads);
             std::thread::scope(|s| {
@@ -733,23 +771,40 @@ impl Trainer {
                     handles.push(s.spawn(move || pair_transitions(chunk, emission, n_aksharas)));
                 }
                 for h in handles {
-                    for (prev, cur, a1, v) in h.join().expect("pair e-step panicked") {
+                    let (out, out2) = h.join().expect("pair e-step panicked");
+                    for (prev, cur, a1, v) in out {
                         if v >= 1e-4 {
                             *bi.entry((prev, cur)).or_insert(0.0) += v;
                             *bi_ak.entry((a1, cur)).or_insert(0.0) += v;
                         }
                     }
+                    for (ctx2, cur, v) in out2 {
+                        if v >= 1e-4 {
+                            *tri.entry((ctx2, cur)).or_insert(0.0) += v;
+                        }
+                    }
                 }
             });
         } else {
-            for (prev, cur, a1, v) in pair_transitions(pairs, emission, n_aksharas) {
+            let (out, out2) = pair_transitions(pairs, emission, n_aksharas);
+            for (prev, cur, a1, v) in out {
                 if v >= 1e-4 {
                     *bi.entry((prev, cur)).or_insert(0.0) += v;
                     *bi_ak.entry((a1, cur)).or_insert(0.0) += v;
                 }
             }
+            for (ctx2, cur, v) in out2 {
+                if v >= 1e-4 {
+                    *tri.entry((ctx2, cur)).or_insert(0.0) += v;
+                }
+            }
         }
-        eprintln!("  [v2] {} transitions, {} ak-level", bi.len(), bi_ak.len());
+        eprintln!(
+            "  [v2] {} transitions, {} ak-level, {} tri",
+            bi.len(),
+            bi_ak.len(),
+            tri.len()
+        );
 
         // Debug: inspect counts for known transitions (na->ma->ste).
         if std::env::var("AKSHAR_V2_DEBUG").is_ok() {
@@ -866,6 +921,37 @@ impl Trainer {
             }
         }
 
+        // Depth-2 level: P(cur | ctx2) with the pair-bigram as lower order.
+        let p_bi = |prev: u64, cur: u64| -> f64 {
+            bi_out
+                .get(&(prev, cur))
+                .map(|&w| (-w as f64).exp())
+                .unwrap_or_else(|| {
+                    // Hard fallback mirrors the decoder's chain.
+                    p_ak(pair_akshara(prev), cur)
+                })
+        };
+        let mut tri_totals: HashMap<(u64, u64), f64> = HashMap::new();
+        let mut tri_distinct: HashMap<(u64, u64), u64> = HashMap::new();
+        for (&(ctx2, _), &c) in &tri {
+            *tri_totals.entry(ctx2).or_insert(0.0) += c;
+            *tri_distinct.entry(ctx2).or_insert(0) += 1;
+        }
+        let mut tri_out: HashMap<((u64, u64), u64), f32> = HashMap::with_capacity(tri.len());
+        for (&(ctx2, cur), _) in &tri {
+            let c = tri.get(&(ctx2, cur)).copied().unwrap_or(0.0);
+            let c_total = tri_totals.get(&ctx2).copied().unwrap_or(0.0);
+            let lam = if c_total > 0.0 {
+                (d * tri_distinct.get(&ctx2).copied().unwrap_or(0) as f64) / c_total
+            } else {
+                1.0
+            };
+            let p = (c - d).max(0.0) / c_total.max(1e-12) + lam * p_bi(ctx2.1, cur);
+            if p > 1e-12 {
+                tri_out.insert((ctx2, cur), -p.ln() as f32);
+            }
+        }
+
         // Word-start prior from the same corpus counts as the v1 LM.
         let word_start = self
             .word_initial
@@ -896,10 +982,11 @@ impl Trainer {
         ak_lm.build_index();
 
         eprintln!(
-            "  [v2] {} emit pairs, {} bi, {} bi_ak",
+            "  [v2] {} emit pairs, {} bi, {} bi_ak, {} tri",
             emit_w.len(),
             bi_out.len(),
-            bi_ak_out.len()
+            bi_ak_out.len(),
+            tri_out.len()
         );
         PairModel {
             aksharas: self.akshara_list.clone(),
@@ -907,6 +994,7 @@ impl Trainer {
             emit_w,
             bi: bi_out,
             bi_ak: bi_ak_out,
+            tri: tri_out,
             word_start,
             ak_lm,
         }

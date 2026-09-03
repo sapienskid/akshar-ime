@@ -99,3 +99,25 @@ akshara LM backbone carries the score. Remaining 12-point parity gap is in
 decode dynamics (not beam width; likely a scoring asymmetry vs v1) — next step
 is a side-by-side per-state score diff of v1 vs v2 on a few words, then M2
 quantized-trie compression (current artifact 33MB uncompressed).
+
+## v2 + depth-2 pair context (CTW step, 2026-09-03)
+
+Added depth-2 (trigram over pairs) to the hierarchy: 328k tri transitions
+collected in the same forward-backward pass (O(L^3) per position), KN-smoothed
+against the pair-bigram level, wired into the decoder (4-level chain:
+tri -> bi -> bi_ak -> joint uni).
+
+Result: tri helps the pair term slightly (pw=0.5: 61.0% vs 59.1%) but the pair
+term STILL loses to the pure akshara-LM backbone at pw=0 (63.3% @ beam 512).
+Latency at beam 512 is 85 ms/word (beam 64: ~6 ms).
+
+**Mathematical conclusion:** adding scores (backbone + grammar*w) is the wrong
+composition. The pair grammar is EM-diluted (posteriors prefer frequent
+misalignments like ना+मा over the gold न+म of rare words), so any positive
+weight injects that bias. The principled fix — per the CTW framing — is ONE
+estimator: the KT/HPY node mixture should sit INSIDE the emission+context
+chain (each lattice edge's weight = posterior predictive from the context
+tree), not be a separate added term. That is the v3 scoring core, ~150 lines
+of change to v2: replace `transition() + fluency` with a single recursive
+node mixture W = 1/2 P_KT(edge|ctx) + 1/2 W(child-context). The decoder,
+trainer, trie, and harness all stay.
