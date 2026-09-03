@@ -1,0 +1,50 @@
+name: WASM
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  wasm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install wasm-bindgen-cli
+        run: cargo install wasm-bindgen-cli --version 0.2.100 --locked
+
+      - name: Build WASM package
+        run: bash wasm/build.sh
+
+      - name: Check WASM demo builds
+        run: test -f wasm/pkg/akshar_ime_bg.wasm && test -f wasm/pkg/akshar_ime.js
+
+      - name: Upload WASM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wasm-pkg
+          path: |
+            wasm/pkg/
+            js/akshar-ime.js
+            web/index.html
+
+      - name: Attach WASM to release (on tag)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            wasm/pkg/akshar_ime_bg.wasm
+            wasm/pkg/akshar_ime.js
+            wasm/pkg/akshar_ime.d.ts

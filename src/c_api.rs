@@ -1,6 +1,7 @@
 // File: src/c_api.rs
+#![cfg(not(target_arch = "wasm32"))]
 use crate::ImeEngine;
-use libc::c_char;
+use std::ffi::c_char;
 use std::ffi::{CStr, CString};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::PathBuf;

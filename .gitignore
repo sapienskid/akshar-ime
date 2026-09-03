@@ -17,3 +17,7 @@ data/nepali_model.bin
 data/aksharantar/
 data/translit_model.bin
 data/roman_lexicon.bin
+# WASM build output is committed for npm, but local dev may rebuild
+# Uncomment to ignore if you prefer not to commit:
+# wasm/pkg/
+# js uses no build step — keep committed

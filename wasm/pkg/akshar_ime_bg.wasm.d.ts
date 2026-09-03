@@ -1,0 +1,33 @@
+/* tslint:disable */
+/* eslint-disable */
+export const memory: WebAssembly.Memory;
+export const __wbg_wasmengine_free: (a: number, b: number) => void;
+export const createEngine: (a: number, b: number, c: number, d: number, e: number, f: number) => any;
+export const createEngineFromModelUrl: (a: number, b: number) => any;
+export const getVersion: () => [number, number];
+export const quickTransliterate: (a: number, b: number) => [number, number];
+export const wasmengine_confirm: (a: number, b: number, c: number, d: number, e: number) => void;
+export const wasmengine_empty: () => number;
+export const wasmengine_exportState: (a: number) => [number, number, number, number];
+export const wasmengine_from_bytes: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
+export const wasmengine_getSuggestions: (a: number, b: number, c: number, d: number) => [number, number];
+export const wasmengine_getSuggestionsWithScores: (a: number, b: number, c: number, d: number) => [number, number];
+export const wasmengine_importState: (a: number, b: number, c: number) => [number, number];
+export const wasmengine_isReady: (a: number) => number;
+export const wasmengine_learnedCount: (a: number) => number;
+export const wasmengine_resetLearning: (a: number) => [number, number];
+export const wasmengine_transliterate: (a: number, b: number, c: number) => [number, number];
+export const wasmengine_vocabSize: (a: number) => number;
+export const init_panic_hook: () => void;
+export const __wbindgen_exn_store: (a: number) => void;
+export const __externref_table_alloc: () => number;
+export const __wbindgen_export_2: WebAssembly.Table;
+export const __wbindgen_malloc: (a: number, b: number) => number;
+export const __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
+export const __wbindgen_export_5: WebAssembly.Table;
+export const __externref_table_dealloc: (a: number) => void;
+export const __wbindgen_free: (a: number, b: number, c: number) => void;
+export const __externref_drop_slice: (a: number, b: number) => void;
+export const closure73_externref_shim: (a: number, b: number, c: any) => void;
+export const closure87_externref_shim: (a: number, b: number, c: any, d: any) => void;
+export const __wbindgen_start: () => void;

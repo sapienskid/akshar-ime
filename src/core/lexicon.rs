@@ -180,6 +180,17 @@ impl RomanLexicon {
         let l: Self = bincode::deserialize_from(r)?;
         Ok(l)
     }
+
+    /// Load from raw bytes (WASM-friendly).
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, Box<dyn std::error::Error>> {
+        let l: Self = bincode::deserialize(bytes)?;
+        Ok(l)
+    }
+
+    /// Serialise to bytes.
+    pub fn to_bytes(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+        Ok(bincode::serialize(self)?)
+    }
 }
 
 #[cfg(test)]

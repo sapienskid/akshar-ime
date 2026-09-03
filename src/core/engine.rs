@@ -25,9 +25,10 @@ use crate::core::{
 };
 use crate::fuzzy::symspell::SymSpell;
 use crate::learning::{LearningEngine, WordConfirmation};
+#[cfg(not(target_arch = "wasm32"))]
 use crate::persistence::{load_from_disk, save_to_disk};
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 const CONTEXT_WINDOW_SIZE: usize = 3;
 const MAX_EDIT_DISTANCE: usize = 2;
@@ -60,6 +61,7 @@ pub struct ImeEngine {
     pub symspell: SymSpell,
     pub(crate) transliteration_model: TransliterationModel,
     learning_engine: LearningEngine,
+    #[allow(dead_code)]
     dictionary_path: Option<String>,
 }
 
@@ -89,9 +91,101 @@ impl ImeEngine {
     }
 
     pub fn from_file_or_new(path: &str) -> Self {
-        let mut engine = load_from_disk(Path::new(path)).unwrap_or_else(|_| Self::new());
-        engine.dictionary_path = Some(path.to_string());
-        engine
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let mut engine = load_from_disk(std::path::Path::new(path)).unwrap_or_else(|_| Self::new());
+            engine.dictionary_path = Some(path.to_string());
+            return engine;
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = path;
+            Self::new()
+        }
+    }
+
+    /// Create engine from raw model bytes (no filesystem).
+    pub fn from_bytes(
+        model_bytes: &[u8],
+        lexicon_bytes: Option<&[u8]>,
+        reranker_json: Option<&str>,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        Self::from_bytes_with_weights(model_bytes, lexicon_bytes, reranker_json)
+    }
+
+    /// Build from bytes, allowing caller to supply already-parsed model.
+    pub fn from_model(model: TranslitModel, lexicon: Option<RomanLexicon>, reranker: Option<Reranker>) -> Self {
+        let decoder = ModelDecoder::with_config(
+            model,
+            DecoderConfig {
+                beam_width: DECODER_BEAM,
+                ..DecoderConfig::default()
+            },
+        );
+        let reranker = reranker.unwrap_or_else(|| load_reranker(lexicon.clone()));
+        Self {
+            decoder,
+            reranker,
+            lexicon,
+            trie: Trie::new(),
+            context_model: ContextModel::new(CONTEXT_WINDOW_SIZE),
+            symspell: SymSpell::new(MAX_EDIT_DISTANCE),
+            transliteration_model: HashMap::new(),
+            learning_engine: LearningEngine::new(),
+            dictionary_path: None,
+        }
+    }
+
+    pub fn from_bytes_with_weights(
+        model_bytes: &[u8],
+        lexicon_bytes: Option<&[u8]>,
+        reranker_json: Option<&str>,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        let mut model = TranslitModel::from_bytes(model_bytes)?;
+        if !model.validate() {
+            return Err("invalid translit model".into());
+        }
+        // from_bytes already builds trigram index
+        let _ = &mut model; // keep
+        let lexicon = if let Some(b) = lexicon_bytes {
+            if b.is_empty() { None } else { RomanLexicon::from_bytes(b).ok() }
+        } else { None };
+        let reranker = if let Some(json) = reranker_json {
+            Self::parse_reranker_json(json, lexicon.clone())
+        } else {
+            load_reranker(lexicon.clone())
+        };
+        Ok(Self::from_model(model, lexicon, Some(reranker)))
+    }
+
+    fn parse_reranker_json(json_str: &str, lexicon: Option<RomanLexicon>) -> Reranker {
+        let mut weights = [1.0f64; NUM_FEATURES];
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(json_str) {
+            if let Some(w) = v.get("weights") {
+                let names = crate::core::reranker::feature_names();
+                for (i, name) in names.iter().enumerate() {
+                    if let Some(val) = w.get(*name).and_then(|x| x.as_f64()) {
+                        weights[i] = val;
+                    }
+                }
+            } else if let Ok(arr) = serde_json::from_str::<[f64; NUM_FEATURES]>(json_str) {
+                weights = arr;
+            }
+        }
+        Reranker::new(weights, lexicon)
+    }
+
+    /// Serialise learned state (trie + context + symspell) to bytes for persistence.
+    pub fn learned_state_to_bytes(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+        let state = crate::persistence::SerializableState::from_engine(self);
+        state.to_bytes()
+    }
+
+    /// Load learned state from bytes (e.g. from localStorage).
+    pub fn load_learned_state_from_bytes(&mut self, bytes: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
+        let state = crate::persistence::SerializableState::from_bytes(bytes)?;
+        state.apply_to_engine(self);
+        Ok(())
     }
 
     pub fn get_suggestions(&self, prefix: &str, count: usize) -> Vec<(String, u64)> {
@@ -274,12 +368,17 @@ impl ImeEngine {
         out
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn save_dictionary(&self) -> Result<(), std::io::Error> {
         if let Some(path) = &self.dictionary_path {
-            save_to_disk(self, Path::new(path))
+            save_to_disk(self, std::path::Path::new(path))
         } else {
             Ok(())
         }
+    }
+    #[cfg(target_arch = "wasm32")]
+    pub fn save_dictionary(&self) -> Result<(), std::io::Error> {
+        Ok(())
     }
 }
 
@@ -289,20 +388,15 @@ impl Default for ImeEngine {
     }
 }
 
-/// Resolve the path to a data artifact (model / lexicon / weights).
-///
-/// Search order: `AKSHAR_DATA_DIR` override, the repo's `data/` (development),
-/// the user-local install dir, then the system install dir.  This lets the
-/// engine run from a checked-out repo *and* when launched by IBus from an
-/// arbitrary working directory.
+#[cfg(not(target_arch = "wasm32"))]
 fn data_path(file: &str) -> PathBuf {
     if let Ok(dir) = std::env::var("AKSHAR_DATA_DIR") {
-        let p = Path::new(&dir).join(file);
+        let p = std::path::Path::new(&dir).join(file);
         if p.exists() {
             return p;
         }
     }
-    let repo = Path::new("data").join(file);
+    let repo = std::path::Path::new("data").join(file);
     if repo.exists() {
         return repo;
     }
@@ -312,31 +406,50 @@ fn data_path(file: &str) -> PathBuf {
             return p;
         }
     }
-    Path::new("/usr/share/akshar-ime").join(file)
+    std::path::Path::new("/usr/share/akshar-ime").join(file)
 }
 
+#[cfg(target_arch = "wasm32")]
+#[allow(dead_code)]
+fn data_path(_file: &str) -> PathBuf {
+    PathBuf::new()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn load_model_or_default() -> TranslitModel {
     match TranslitModel::load(&data_path("translit_model.bin")) {
         Ok(m) if m.validate() => m,
         _ => TranslitModel::default(),
     }
 }
+#[cfg(target_arch = "wasm32")]
+fn load_model_or_default() -> TranslitModel {
+    TranslitModel::default()
+}
 
+#[cfg(not(target_arch = "wasm32"))]
 fn load_lexicon() -> Option<RomanLexicon> {
     RomanLexicon::load(&data_path("roman_lexicon.bin")).ok()
+}
+#[cfg(target_arch = "wasm32")]
+fn load_lexicon() -> Option<RomanLexicon> {
+    None
 }
 
 fn load_reranker(lexicon: Option<RomanLexicon>) -> Reranker {
     let mut weights = [1.0f64; NUM_FEATURES];
     weights[0] = 1.0;
     weights[1] = 1.0;
-    if let Ok(file) = std::fs::File::open(data_path("reranker_weights.json")) {
-        if let Ok(v) = serde_json::from_reader::<_, serde_json::Value>(file) {
-            if let Some(w) = v.get("weights") {
-                let names = crate::core::reranker::feature_names();
-                for (i, name) in names.iter().enumerate() {
-                    if let Some(val) = w.get(*name).and_then(|x| x.as_f64()) {
-                        weights[i] = val;
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        if let Ok(file) = std::fs::File::open(data_path("reranker_weights.json")) {
+            if let Ok(v) = serde_json::from_reader::<_, serde_json::Value>(file) {
+                if let Some(w) = v.get("weights") {
+                    let names = crate::core::reranker::feature_names();
+                    for (i, name) in names.iter().enumerate() {
+                        if let Some(val) = w.get(*name).and_then(|x| x.as_f64()) {
+                            weights[i] = val;
+                        }
                     }
                 }
             }

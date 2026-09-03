@@ -124,6 +124,26 @@ make reset-learning
 Removes `~/.config/akshar-devanagari/user_dictionary.bin` so the engine starts
 with a clean learning history.
 
+## WASM / Browser (any website, any `<input>`)
+
+The engine also compiles to **WebAssembly** for use on any website — no server, fully offline, ~3 ms per keystroke.
+
+```html
+<input data-akshar placeholder="type: namaste" />
+<script type="module">
+  import { AksharIME } from './js/akshar-ime.js';
+  await AksharIME.init({ modelUrl: '/data/translit_model.bin' });
+  AksharIME.autoAttach(); // enhances all [data-akshar]
+</script>
+```
+
+Type `namaste` → popup `नमस्ते` → `Enter`/`Tab`/`1`. Learned words persist in `localStorage`.
+
+- **Build:** `make wasm` (or `./wasm/build.sh`) — outputs `wasm/pkg/` (377 KB wasm, 139 KB gzip / 111 KB brotli; +39 KB JS glue).
+- **Demo:** `make wasm-serve` then open `http://localhost:8000/web/` (auto-picks free port if 8000 busy; override with `PORT=9000 make wasm-serve`).
+- **Host:** serve `translit_model.bin` (21 MB → 11.1 MB gzip → 9.1 MB brotli) with `Cache-Control: immutable` + `Content-Encoding: br`. Lexicon is optional (118 MB → 24.4 MB gzip; lite mode saves transfer and is still 90%+ accurate).
+- **Docs:** [`docs/WASM.md`](docs/WASM.md) (API, React/Vue examples, CDN, performance) · [`web/index.html`](web/index.html) live demo · [`js/akshar-ime.js`](js/akshar-ime.js) drop-in wrapper.
+
 ## Project Structure
 
 - `src/`: The Rust source code for the core IME.
@@ -138,7 +158,11 @@ with a clean learning history.
   - `fuzzy/`: Fuzzy search implementation (SymSpell).
   - `learning/`: The real-time learning module.
   - `persistence/`: Logic for saving/loading the user dictionary.
-  - `c_api.rs`: The Foreign Function Interface (FFI) for the C layer.
+  - `c_api.rs`: The Foreign Function Interface (FFI) for the C layer (native only).
+  - `wasm.rs`: WASM bindings (`WasmEngine`, `createEngine`, localStorage persistence).
+- `js/akshar-ime.js`: Drop-in browser helper — `AksharIME.attach(input)` / `autoAttach()`.
+- `wasm/`: WASM package build (`wasm/build.sh` → `wasm/pkg/`, `wasm/package.json` for npm).
+- `web/index.html`: Local demo page for the WASM IME.
 - `src/bin/`: Training and evaluation tools (`train_model`, `build_lexicon`,
   `train_reranker`, `evaluate`, `evaluate_model`, `evaluate_aksharantar`,
   `evaluate_nepali_transliteration`, `probe_model`).

@@ -18,7 +18,7 @@ IBUS_ENGINE_DIR   := $(PREFIX)/lib/ibus/engines
 IBUS_COMPONENT_DIR:= $(PREFIX)/share/ibus/component
 DATA_DIR          := $(PREFIX)/share/akshar-ime
 
-.PHONY: all release debug install uninstall reinstall clean reset-learning restart-ibus help
+.PHONY: all release debug install uninstall reinstall clean reset-learning restart-ibus help wasm wasm-clean wasm-serve
 
 # --- Main Targets ---
 
@@ -98,6 +98,25 @@ reset-learning:  ## Delete the user's learned dictionary (start fresh).
 	@echo "Removing user learning data..."
 	@rm -f $${XDG_CONFIG_HOME:-$$HOME/.config}/akshar-devanagari/user_dictionary.bin
 	@echo "Done."
+
+wasm:  ## Build WASM package (wasm/pkg + JS wrapper).
+	@echo "Building WASM package..."
+	@bash wasm/build.sh
+
+wasm-clean:  ## Remove WASM build artifacts.
+	@echo "Cleaning WASM artifacts..."
+	@rm -rf wasm/pkg
+
+wasm-serve: wasm  ## Build WASM and serve demo at http://localhost:PORT/web/ (default 8000)
+	@PORT=$${PORT:-8000}; \
+	ORIG=$$PORT; \
+	for p in $$PORT 8001 8002 8003 8004 8005 8006 8007 8008 8009 8010; do \
+	  if ! ss -tln 2>/dev/null | grep -q ":$$p " && ! ss -tln6 2>/dev/null | grep -q ":$$p "; then PORT=$$p; break; fi; \
+	done; \
+	if [ "$$PORT" != "$$ORIG" ]; then echo "Port $$ORIG in use, using $$PORT instead"; fi; \
+	echo "Serving demo at http://localhost:$$PORT/web/ (Ctrl+C to stop)"; \
+	echo "  (override with: make wasm-serve PORT=9000)"; \
+	python3 -m http.server $$PORT
 
 # --- Help ---
 

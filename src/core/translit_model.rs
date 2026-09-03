@@ -184,6 +184,18 @@ impl TranslitModel {
         Ok(m)
     }
 
+    /// Load from raw bytes (WASM-friendly, no filesystem).
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, Box<dyn std::error::Error>> {
+        let mut m: Self = bincode::deserialize(bytes)?;
+        m.build_trigram_index();
+        Ok(m)
+    }
+
+    /// Serialise to bytes.
+    pub fn to_bytes(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+        Ok(bincode::serialize(self)?)
+    }
+
     /// Rebuild the runtime trigram index (called after load / finalise).
     pub fn build_trigram_index(&mut self) {
         self.trigram_index = self

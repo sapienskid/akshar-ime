@@ -1,0 +1,27 @@
+{
+  "name": "akshar-ime",
+  "version": "1.0.0",
+  "description": "Akshar Devanagari IME — WASM + JS for browsers. Type Roman, get Devanagari. Offline, fast, adaptive.",
+  "type": "module",
+  "main": "./pkg/akshar_ime.js",
+  "types": "./pkg/akshar_ime.d.ts",
+  "files": [
+    "pkg/",
+    "../js/akshar-ime.js",
+    "../web/index.html",
+    "../docs/WASM.md",
+    "../README.md"
+  ],
+  "keywords": ["devanagari", "nepali", "hindi", "ime", "transliteration", "wasm", "input-method"],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sapienskid/akshar-ime"
+  },
+  "scripts": {
+    "build": "./build.sh",
+    "build:wasm": "cargo build --target wasm32-unknown-unknown --features wasm --release && wasm-bindgen --target web --out-dir pkg --out-name akshar_ime ../../target/wasm32-unknown-unknown/release/akshar_ime.wasm",
+    "demo": "python -m http.server 8000"
+  },
+  "sideEffects": false
+}

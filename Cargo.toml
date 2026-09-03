@@ -12,6 +12,22 @@ tempfile = "3.10"
 libc = "0.2"
 dirs = "5.0"
 serde_json = "1.0"
+wasm-bindgen = { version = "=0.2.100", optional = true }
+js-sys = { version = "0.3", optional = true }
+wasm-bindgen-futures = { version = "0.4", optional = true }
+getrandom = { version = "0.2", features = ["js"], optional = true }
+web-sys = { version = "=0.3.77", optional = true, features = [
+  "Window",
+  "Storage",
+  "Response",
+  "Request",
+  "Headers",
+  "console",
+] }
+
+[features]
+default = []
+wasm = ["wasm-bindgen", "js-sys", "wasm-bindgen-futures", "getrandom", "web-sys"]
 
 [lib]
 name = "akshar_ime"
