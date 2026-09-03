@@ -1,0 +1,121 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to release (e.g. v1.0.0, leave empty for manual run without release)'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    # allow 30 min for EM training + wasm build
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libibus-1.0-dev libjansson-dev brotli
+
+      - name: Install wasm-bindgen-cli
+        run: cargo install wasm-bindgen-cli --version 0.2.100 --locked
+
+      - name: Download Aksharantar Nepali corpus (Hugging Face)
+        run: |
+          mkdir -p data/aksharantar
+          # ai4bharat/Aksharantar — files are under data/ in the repo; try both URL schemes
+          # Use huggingface_hub python helper (pip) for authenticated/resumable download
+          pip install -q huggingface_hub
+          python3 << 'PY'
+          from huggingface_hub import hf_hub_download
+          import shutil, os
+          repo = "ai4bharat/Aksharantar"
+          # Nepali files are named nep_train.json etc at repo root (see README)
+          # Try hf_hub_download; fallback to direct wget if missing
+          for fname in ["nep_train.json", "nep_valid.json", "nep_test.json"]:
+              try:
+                  path = hf_hub_download(repo_id=repo, filename=fname, repo_type="dataset")
+                  print(f"hf_hub_download {fname} -> {path}")
+                  shutil.copy(path, f"data/aksharantar/{fname}")
+              except Exception as e:
+                  print(f"hf_hub_download failed for {fname}: {e}, trying wget")
+                  import subprocess, sys
+                  urls = [
+                      f"https://huggingface.co/datasets/{repo}/resolve/main/{fname}",
+                      f"https://huggingface.co/datasets/{repo}/resolve/main/data/{fname}",
+                  ]
+                  ok=False
+                  for url in urls:
+                      rc = subprocess.call(["wget", "-q", "-O", f"data/aksharantar/{fname}", url])
+                      if rc==0 and os.path.getsize(f"data/aksharantar/{fname}")>1000:
+                          print(f"wget ok {url}")
+                          ok=True
+                          break
+                  if not ok:
+                      print(f"FAILED to fetch {fname}", file=sys.stderr)
+                      sys.exit(1)
+          print("corpus ready:")
+          import pathlib
+          for p in pathlib.Path("data/aksharantar").glob("*"):
+              print(p, p.stat().st_size)
+          PY
+          ls -lh data/aksharantar/
+
+      - name: Build model artifacts (EM + lexicon + reranker)
+        run: |
+          cargo run --release --bin train_model -- --train data/aksharantar/nep_train.json --extra data/aksharantar/nep_valid.json --out data/translit_model.bin
+          cargo run --release --bin build_lexicon
+          cargo run --release --bin train_reranker || echo "train_reranker optional, continue"
+          ls -lh data/translit_model.bin data/roman_lexicon.bin data/reranker_weights.json
+          echo "Model gzip:"
+          gzip -c data/translit_model.bin | wc -c | awk '{printf "%d bytes %.1f MB\n",$1,$1/1024/1024}'
+          brotli -c data/translit_model.bin | wc -c | awk '{printf "brotli %d bytes %.1f MB\n",$1,$1/1024/1024}'
+
+      - name: Build WASM package
+        run: bash wasm/build.sh
+
+      - name: Package artifacts
+        run: |
+          ls -lh wasm/pkg/ js/akshar-ime.js web/index.html data/
+          # keep lexicon optional — upload if present (24 MB gzip, slow but GitHub infra fast)
+          echo "wasm/pkg sizes:"
+          du -sh wasm/pkg/*
+          gzip -c wasm/pkg/akshar_ime_bg.wasm | wc -c | awk '{printf "wasm gzip %d KB\n",$1/1024}'
+
+      - name: Create / update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
+          name: ${{ inputs.tag || github.ref_name }} — WASM + model
+          generate_release_notes: true
+          files: |
+            wasm/pkg/akshar_ime_bg.wasm
+            wasm/pkg/akshar_ime.js
+            wasm/pkg/akshar_ime.d.ts
+            wasm/pkg/akshar_ime_bg.wasm.d.ts
+            js/akshar-ime.js
+            web/index.html
+            data/translit_model.bin
+            data/roman_lexicon.bin
+            data/reranker_weights.json
+          fail_on_unmatched_files: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
