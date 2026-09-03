@@ -73,3 +73,29 @@ with per-language balancing; single-pass naive pooling does not transfer.)
 **Running total: 73.24% -> 75.33% (+2.09) native top-1; NE bucket unchanged
 (~33%). Next levers that remain credible: E4 position-conditioned emissions,
 E5 self-training, E6 sentence context; E3 retry with IndicCorp frequencies.**
+
+## v2 WFST core (M1, 2026-09-03) — in progress
+
+Built `src/core/v2/`: pair-bigram grammar over aligned (akshara, chunk) pairs,
+3-level KN backoff (pair-bigram -> akshara-pair-bigram -> joint pair unigram),
+plus v1's dense akshara trigram LM as backbone. `train_model_v2` +
+`evaluate_model_v2` (probe flags: --probe, --trans, AKSHAR_V2_DEBUG).
+
+**Three real bugs found and fixed on the way (each was fatal):**
+1. *State merging by (pos, prev-pair) is invalid*: paths with the same pair
+   context spell different strings (न vs ना both consume "na") — the cheaper
+   spelling replaced the correct one and candidates were never generated.
+   Fixed with v1-style path-hash dedup.
+2. *Per-akshara-normalized unigram backoff*: junk aksharas with peaked
+   emissions (P(s|a)=0.99) cost nothing; fixed to the JOINT P(a)·P(s|a).
+3. *Backward-index error + floating-point poisoning in transition collection*:
+   suffix index b[j] -> b[j+2], and words with tiny total probability (z~1e-14)
+   made inv_z explode, inflating accumulated "posteriors" to 2e14. Guard +
+   per-instance clamp. This one moved native top-1 from 6.5% to 18.4%.
+
+**Current status: 63.3% native top-1 (beam 512, pair-weight 0) vs v1's 75.3%.**
+The pair-grammar term *hurts* at any weight (EM-diluted transitions), the dense
+akshara LM backbone carries the score. Remaining 12-point parity gap is in
+decode dynamics (not beam width; likely a scoring asymmetry vs v1) — next step
+is a side-by-side per-state score diff of v1 vs v2 on a few words, then M2
+quantized-trie compression (current artifact 33MB uncompressed).

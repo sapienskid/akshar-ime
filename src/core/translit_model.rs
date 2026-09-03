@@ -237,7 +237,7 @@ pub(crate) fn pack_chunk(chunk: &str) -> u32 {
 
 /// Pack up to MAX_CHUNK lowercase ASCII bytes into a u32 (5 bits each + length).
 #[inline]
-pub(crate) fn pack_chunk_bytes(bytes: &[u8]) -> u32 {
+pub fn pack_chunk_bytes(bytes: &[u8]) -> u32 {
     let mut v = 0u32;
     for (i, &b) in bytes.iter().enumerate().take(MAX_CHUNK) {
         let code = if b.is_ascii_lowercase() {
