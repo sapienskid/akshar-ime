@@ -235,11 +235,11 @@ export function createEngine(model_url, lexicon_url, reranker_url) {
 }
 
 function __wbg_adapter_22(arg0, arg1, arg2) {
-    wasm.closure73_externref_shim(arg0, arg1, arg2);
+    wasm.closure77_externref_shim(arg0, arg1, arg2);
 }
 
 function __wbg_adapter_78(arg0, arg1, arg2, arg3) {
-    wasm.closure87_externref_shim(arg0, arg1, arg2, arg3);
+    wasm.closure91_externref_shim(arg0, arg1, arg2, arg3);
 }
 
 const WasmEngineFinalization = (typeof FinalizationRegistry === 'undefined')
@@ -630,8 +630,8 @@ function __wbg_get_imports() {
         const ret = false;
         return ret;
     };
-    imports.wbg.__wbindgen_closure_wrapper415 = function(arg0, arg1, arg2) {
-        const ret = makeMutClosure(arg0, arg1, 74, __wbg_adapter_22);
+    imports.wbg.__wbindgen_closure_wrapper457 = function(arg0, arg1, arg2) {
+        const ret = makeMutClosure(arg0, arg1, 78, __wbg_adapter_22);
         return ret;
     };
     imports.wbg.__wbindgen_init_externref_table = function() {
