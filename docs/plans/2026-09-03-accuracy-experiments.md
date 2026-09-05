@@ -183,3 +183,22 @@ rank-1 is usually also a real word, so frequency can't overtake it.
 word-bigram CONTEXT from running text (E6) is the next and correct lever,
 then the v3 unified estimator for the size/parameter-free story. This is the
 paper's central claim, now with experimental proof.
+
+## LM-from-real-text experiments (2026-09-05) — negative for top-1
+
+Built `build_lm_from_text`: rebuild the akshara KN LM from running text
+(Nepali Wikipedia + CC100 = 75M tokens, 570k distinct words), optionally
+count-mixed with the Aksharantar corpus natives.
+
+| LM | native top-1 | native top-5 |
+|---|---|---|
+| Original (Aksharantar pairs only) + vocab | **78.84%** | 90.23% |
+| Wiki LM only | 73.01% | 85.91% |
+| Corpus+wiki counts (w=1) + vocab | 75.05% | 91.65% |
+| Table-interpolated (a=0.7) + vocab | 69.21% | 90.42% |
+
+Finding: real-text akshara statistics DILUTE the mined vocabulary's NE
+coverage (top-5 rises, top-1 falls). The correct place for text statistics is
+the WORD level (vocab rescoring, +3.5 already banked), not the akshara LM.
+Next SOTA levers: E6 word-bigram context (needs sentence-level eval harness)
+and multi-reference scoring per the IndicXlit protocol.
