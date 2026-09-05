@@ -248,3 +248,17 @@ BFS crawler over gorkhapatra/onlinekhabar/nayapatrikadaily running in
 background (relative-link bug fixed after first pass; kanunpatrika.com is
 serving a "coming soon" splash — site offline). News vocab feeds the next
 vocab rebuild + context layer.
+
+## Romanizer v2 — engine-native backward generation (2026-09-05)
+
+Replaced the crude Python sound-table with `src/bin/romanize.rs`: the trained
+emission table itself provides per-akshara roman candidates — argmax chunk =
+canonical spelling, runner-up chunks = *realistic* variants (they are
+spellings real users produced in the corpus). Variants combine per-akshara
+(capped, probability-weighted), so the segmenter's structure is invariant by
+construction. 2.575M pairs from 381k vocabulary words.
+
+Result: **80.69% native top-1** — same as the Python version's best, now with
+a reproducible, model-driven, in-repo implementation. Variant expansion is
+neutral at this scale (canonical signal dominates); superseded romanize_vocab.py
+retired to data-pipeline/ history.
