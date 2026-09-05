@@ -337,3 +337,24 @@ spellings, consistent by construction) is pending — merged-vocab conversion
 **Current best verified config:** model = nep_train+nep_valid (EM, defaults),
 vocab = merged 3-source (or wiki+CC100 for max benchmark), decode = beam 256,
 k=50, lm 0.85, vocab-weight 0.75 → **80.65–80.69% native top-1**.
+
+## Experiment C — engine-native synthetic, first real ingestion (2026-09-05, evening): FALSIFIED
+
+With the key-mismatch bug fixed, the E5 self-training hypothesis could finally be
+tested. Merged-vocab conversion (709k words → 2.42M weighted pairs via
+`romanize.rs`, cycle-consistency verified) trained as
+nep_train + nep_valid + synthetic (4.82M pairs, 0 skipped), SOTA decode config,
+merged vocab:
+
+| Model (all + merged vocab) | AK-Freq top-1 | AK-Freq top-50 |
+|---|---|---|
+| A: nep_train + nep_valid | **80.65%** | 93.55% |
+| B: A + 918k pipeline-synthetic (sound-table) | 79.51% | 92.55% |
+| C: A + 2.42M engine-native synthetic | 75.62% | 91.94% |
+
+**Self-training is falsified in both forms.** Mechanism: synthetic pairs are the
+model's own emission argmax — training on them reinforces existing biases and
+erases the human spelling diversity that is the corpus's actual information
+content (model collapse; worse at higher synthetic mass). The E5 entries above
+(+0.23 "sota") were artifacts of the ingestion bug. **Retire E5; the verified
+recipe is nep_train + nep_valid + real-text vocabulary rescoring.**
