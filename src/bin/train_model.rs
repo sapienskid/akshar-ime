@@ -41,6 +41,8 @@ struct Args {
     train: PathBuf,
     extra: Option<PathBuf>,
     out: PathBuf,
+    /// Files whose pairs also train the akshara LM (phonetic/LM split).
+    lm_from: Vec<String>,
     limit: Option<usize>,
     iterations: usize,
     seed: bool,
@@ -60,8 +62,14 @@ fn main() {
     let mut skipped = 0usize;
     let start = Instant::now();
 
+    // Phonetic/LM split: only files listed in --lm-from train the akshara LM;
+    // everything ingested trains the emissions.
+    let lm_all = args.lm_from.is_empty();
+    let lm_on = |path: &str| lm_all || args.lm_from.iter().any(|p| path.ends_with(p));
+    trainer.set_lm_ingestion(lm_on(&args.train.to_string_lossy()));
     ingest(&args.train, &mut trainer, &mut skipped);
     if let Some(extra) = &args.extra {
+        trainer.set_lm_ingestion(lm_on(&extra.to_string_lossy()));
         ingest(extra, &mut trainer, &mut skipped);
     }
 
@@ -175,6 +183,7 @@ fn parse_args() -> Args {
     let mut train = PathBuf::from("data/aksharantar/nep_train.json");
     let mut extra: Option<PathBuf> = None;
     let mut out = PathBuf::from("data/translit_model.bin");
+    let mut lm_from: Vec<String> = Vec::new();
     let mut limit: Option<usize> = None;
     let mut iterations = 12usize;
     let mut seed = true;
@@ -186,6 +195,12 @@ fn parse_args() -> Args {
             "--train" => train = PathBuf::from(next_value(&arg, args.next())),
             "--extra" => extra = Some(PathBuf::from(next_value(&arg, args.next()))),
             "--out" => out = PathBuf::from(next_value(&arg, args.next())),
+            "--lm-from" => {
+                lm_from = next_value(&arg, args.next())
+                    .split(',')
+                    .map(|s| s.to_string())
+                    .collect()
+            }
             "--limit" => limit = Some(next_value(&arg, args.next()).parse().expect("--limit <n>")),
             "--iterations" => {
                 iterations = next_value(&arg, args.next())
@@ -209,6 +224,7 @@ fn parse_args() -> Args {
         train,
         extra,
         out,
+        lm_from,
         limit,
         iterations,
         seed,

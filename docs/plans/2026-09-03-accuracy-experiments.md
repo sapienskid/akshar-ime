@@ -271,3 +271,30 @@ an optional `"weight"` field in JSONL; romanize.rs now emits DEDUPLICATED
 weighted rows (1.518M rows, 113MB — was 300MB+ of repeated lines).
 Functional equivalence verified: weighted-dedup model = **80.69%**, identical
 to the repetition-encoded version.
+
+## Phonetic/LM-split experiment (2026-09-05) — FAILED, reverted
+
+Design: emissions trained on ALL Devanagari pairs (2.7M nep + 3M hindi +
+1.5M weighted synthetic), akshara LM from Nepali only (`--lm-from`, new
+engine flag; Trainer::set_lm_ingestion gates LM counting).
+
+**Result: catastrophic — 0.05% top-1.** Decodes collapsed into long junk
+strings dominated by Hindi nukta aksharas (फ़, क़, ड़). Root cause: the
+decoder's reverse index (top-16 aksharas per chunk, ranked by emission
+weight alone) is flooded by thousands of peaked single-observation Hindi
+aksharas ($P(s|a) \approx 1$, weight $\approx 0$) — the correct Nepali
+aksharas fall out of the candidate lists entirely. `prune_model.rs` (drop
+aksharas absent from the Nepali vocabulary) removed 10k foreign aksharas
+but did not recover: the shared-akshara emissions were also shifted by the
+joint training.
+
+**Recovery:** retrained the known-good config (nep_train + nep_valid +
+romanize-v2 synthetic, no Hindi) → **79.51%** (top-50 93.55%). Note: 1.2
+points below the 80.69 record — the data rebuild changed both the synthetic
+pairs and the vocabulary file simultaneously; the delta needs diagnosis
+(next session).
+
+**Required repair for the phonetic design (before retry):** rank reverse
+index candidates by JOINT weight $P(a) \cdot P(s \mid a)$ (the v2 §5.2
+lesson — emission-only ranking lets peaked rare aksharas crowd out real
+ones), and/or prune foreign aksharas at training time, and retest.

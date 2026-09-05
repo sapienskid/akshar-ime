@@ -83,6 +83,10 @@ pub struct Trainer {
     total_chunk_obs: f64,
 
     distinct_bigrams: u64,
+    /// When false, ingested pairs train the emissions only — the LM counts
+    /// stay untouched (phonetic/LM split: emissions are language-independent,
+    /// the LM is language-specific).
+    count_lm: bool,
     pub ingested: usize,
     pub skipped: usize,
 }
@@ -106,6 +110,7 @@ impl Trainer {
             chunk_unigram: HashMap::new(),
             total_chunk_obs: 0.0,
             distinct_bigrams: 0,
+            count_lm: true,
             ingested: 0,
             skipped: 0,
         }
@@ -143,6 +148,11 @@ impl Trainer {
 
     /// Add a pair with an observation weight (e.g. corpus frequency of a
     /// synthetic pair).  Weight scales the LM counts and the EM posteriors.
+    /// Toggle whether ingested pairs contribute to the akshara LM counts.
+    pub fn set_lm_ingestion(&mut self, on: bool) {
+        self.count_lm = on;
+    }
+
     pub fn add_pair_weighted(&mut self, roman: &str, dev: &str, weight: f64) {
         if roman.is_empty() || dev.is_empty() {
             self.skipped += 1;
@@ -158,12 +168,14 @@ impl Trainer {
             return;
         }
 
-        // LM counts (independent of roman quality), scaled by weight.
+        // LM counts (independent of roman quality), scaled by weight and
+        // gated by the phonetic/LM split flag.
+        let lmw = if self.count_lm { weight as u64 } else { 0 };
         for &a in &aks {
-            self.unigram_counts[a as usize] += weight as u64;
+            self.unigram_counts[a as usize] += lmw;
         }
-        self.word_initial[aks[0] as usize] += weight as u64;
-        self.total_words += weight as u64;
+        self.word_initial[aks[0] as usize] += lmw;
+        self.total_words += lmw;
         for w in aks.windows(2) {
             let (b, c) = (w[0], w[1]);
             let e = self.bigram_counts.entry((b, c)).or_insert(0);
@@ -171,7 +183,7 @@ impl Trainer {
                 self.continuation[c as usize] += 1;
                 self.distinct_bigrams += 1;
             }
-            *e += weight as u64;
+            *e += lmw;
         }
         for w in aks.windows(3) {
             let (a, b, c) = (w[0], w[1], w[2]);
@@ -179,7 +191,7 @@ impl Trainer {
             if *e == 0 {
                 *self.trigram_successors.entry((a, b)).or_insert(0) += 1;
             }
-            *e += weight as u64;
+            *e += lmw;
         }
 
         // EM pairs: clean lowercase a-z roman, bounded lengths.
