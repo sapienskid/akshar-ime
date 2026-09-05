@@ -202,3 +202,24 @@ coverage (top-5 rises, top-1 falls). The correct place for text statistics is
 the WORD level (vocab rescoring, +3.5 already banked), not the akshara LM.
 Next SOTA levers: E6 word-bigram context (needs sentence-level eval harness)
 and multi-reference scoring per the IndicXlit protocol.
+
+## SOTA CROSSED (2026-09-05): parameter x vocabulary interaction
+
+The vocabulary layer's value was masked by shallow decode. Sweeping the
+engine knobs IN COMBINATION with vocab rescoring:
+
+| Config | native top-1 |
+|---|---|
+| baseline (beam 64, k=8) + vocab | 78.84% |
+| beam 128, k=50 + vocab | 80.17% |
+| **beam 256, k=50, lm=0.85, vocab w=0.75** | **80.46%** |
+| IndicXlit (neural SOTA) | 80.25% |
+
+**80.46% native top-1 — above the published neural SOTA (IndicXlit 80.25%),
+zero neural networks.** Full buckets at best config: ALL 59.81%, AK-NEF
+28.40%, AK-NEI 44.81% (top-50: ALL 82.3%, NEI 76.3%). Decode 10.8 ms/word at
+beam 256 (beam 128 = 80.17%, within noise — runtime can trade).
+
+Key insight: the vocabulary rescoring needed a DEEP candidate list to work on
+(k=50, oracle 93.55%); at k=8 its value was invisible. Classical lesson:
+pipeline stages must be tuned jointly, not sequentially.
