@@ -330,7 +330,16 @@ fn main() {
     let pack_t0 = Instant::now();
 
     // Context bigrams: optional
-    let bigrams = None;
+    let bigrams: Option<HashMap<String, Vec<(String, u32)>>> = {
+        let p = PathBuf::from("data/word_bigrams.bin");
+        if p.exists() {
+            println!("Bundling existing bigrams from {} ...", p.display());
+            let f = std::fs::File::open(&p).ok();
+            f.and_then(|r| bincode::deserialize_from(std::io::BufReader::new(r)).ok())
+        } else {
+            None
+        }
+    };
 
     let unified = UnifiedModel::new(translit_model, sparse_table, vocab_freq, bigrams);
     unified.save(&out_path).expect("save unified model");
