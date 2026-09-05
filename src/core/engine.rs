@@ -58,6 +58,9 @@ pub struct ImeEngine {
     pub decoder: ModelDecoder,
     pub reranker: Reranker,
     pub lexicon: Option<RomanLexicon>,
+    /// Corpus-vocabulary data for the v2 reranker (native builds with
+    /// word_freq_text.bin present; None on WASM-lite or missing file).
+    v2: Option<crate::core::reranker_v2::RerankerV2Data>,
     pub trie: Trie,
     pub context_model: ContextModel,
     pub symspell: SymSpell,
@@ -83,6 +86,7 @@ impl ImeEngine {
             decoder,
             reranker,
             lexicon,
+            v2: load_v2(),
             trie: Trie::new(),
             context_model: ContextModel::new(CONTEXT_WINDOW_SIZE),
             symspell: SymSpell::new(MAX_EDIT_DISTANCE),
@@ -129,6 +133,7 @@ impl ImeEngine {
             decoder,
             reranker,
             lexicon,
+            v2: load_v2(),
             trie: Trie::new(),
             context_model: ContextModel::new(CONTEXT_WINDOW_SIZE),
             symspell: SymSpell::new(MAX_EDIT_DISTANCE),
@@ -316,17 +321,26 @@ impl ImeEngine {
                 .or_insert(score);
         };
 
-        // 1. Fresh transliterations from the generative decoder, re-ranked by
-        //    the discriminative reranker.  We decode the base roman only: the
+        // 1. Fresh transliterations from the generative decoder.  With the
+        //    corpus vocabulary available, rank them with the trained v2
+        //    reranker (81.69% native top-1 offline); otherwise fall back to
+        //    the 5-feature MERT reranker.  We decode the base roman only: the
         //    model's learned emissions already absorb v/w and vowel-length
         //    spelling variants, so re-decoding soft variants is pure latency.
+        //    Depth 50 matches the depth the v2 model was trained on.
         let mut fresh_scores: HashMap<String, u64> = HashMap::new();
         if let Some(qv) = query_variants.first() {
             let roman = qv.roman.as_str();
-            let cands = self.decoder.decode_detailed(roman, count * 4);
-            for (dev, rscore) in self.reranker.rerank(roman, cands) {
-                // Convert the reranker log-score back to the engine's u64 scale.
-                let cost = (-rscore).max(0.0);
+            let cands = self.decoder.decode_detailed(roman, (count * 4).max(50));
+            let ranked: Vec<(String, f64)> = match &self.v2 {
+                Some(v2) => crate::core::reranker_v2::rerank(roman, &cands, &v2.freq, &v2.ranks),
+                None => self.reranker.rerank(roman, cands),
+            };
+            // Convert to the engine's higher-better u64 scale, preserving the
+            // reranked order exactly (relative cost from the winner).
+            let s_max = ranked.first().map(|(_, s)| *s).unwrap_or(0.0);
+            for (dev, s) in ranked {
+                let cost = (s_max - s).max(0.0);
                 let score = (FRESH_SCALE / (1.0 + cost)).round().max(1.0) as u64;
                 fresh_scores.insert(dev.clone(), score);
                 add(dev, score);
@@ -580,6 +594,19 @@ fn load_reranker(lexicon: Option<RomanLexicon>) -> Reranker {
     reranker
 }
 
+/// Reranker-v2 data: the corpus vocabulary plus its frequency-rank index.
+/// None when the vocabulary file is unavailable (WASM-lite, fresh clones).
+#[cfg(not(target_arch = "wasm32"))]
+fn load_v2() -> Option<crate::core::reranker_v2::RerankerV2Data> {
+    let bytes = std::fs::read(data_path("word_freq_text.bin")).ok()?;
+    crate::core::reranker_v2::RerankerV2Data::from_bin_bytes(&bytes)
+}
+
+#[cfg(target_arch = "wasm32")]
+fn load_v2() -> Option<crate::core::reranker_v2::RerankerV2Data> {
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -643,6 +670,7 @@ mod tests {
             decoder,
             reranker: Reranker::default(),
             lexicon,
+            v2: None,
             trie: Trie::new(),
             context_model: ContextModel::new(3),
             symspell: SymSpell::new(2),
