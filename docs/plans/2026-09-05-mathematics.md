@@ -1,0 +1,326 @@
+# AksharIME — Complete Mathematical Treatment
+
+Date: 2026-09-05
+Status: Reference document. Companion: `2026-09-05-research-agenda.md`.
+All equations match the implemented code (file references given).
+
+---
+
+## 1. Problem formulation and notation
+
+- `R = r_1 r_2 ... r_m` — roman input string (bytes of `[a-z]`).
+- `D = a_1 a_2 ... a_n` — Devanagari word, an **akshara** (syllable) sequence.
+- An **alignment** `σ` assigns each akshara `a_j` a contiguous chunk
+  `s_j = r_{i_{j-1}+1..i_j}` of length `l_j ∈ [1, L]`, `L = MAX_CHUNK = 5`,
+  or the empty chunk (for aksharas whose sound the roman spelling omits).
+- Alignment space: `Σ(R, D) = {σ : concatenation of chunks = R}`.
+
+The engine solves `argmax_D P(D | R)` over all `D` whose akshara sequence can
+consume `R`. This is exact shortest-path inference over a weighted DAG; the
+statistical content is entirely in the edge weights.
+
+---
+
+## 2. The source-channel model
+
+Following Li, Zhang & Su (ACL 2004), with Bayes:
+
+```
+P(D | R) = P(R | D) · P(D) / P(R),   P(R) constant per query
+```
+
+**Emission model (trained, `em_trainer.rs`, `translit_model.rs`):**
+
+```
+P(R | D) = Σ_{σ ∈ Σ(R,D)}  Π_j P(s_j | a_j)
+```
+
+Each `P(s | a)` is a multinomial over roman chunks per akshara; `L = 5`
+because no akshara maps to more than 5 roman letters in the corpus.
+
+**Language model (trained):** `P(D)` is factorized over the akshara sequence
+by a trigram Kneser-Ney LM (§4), with a word-start prior `P(a_1 | #)`.
+
+**Decoder (`decoder.rs`):** build the lattice DAG — node = (roman position,
+previous aksharas for LM state), edge = (chunk length, akshara, weight).
+Edge weight `w(e) = -log P(s | a)`; path weight = Σ emit + λ_lm · Σ LM.
+Because all weights are negative logs and add along paths, the decoder is
+**Viterbi shortest-path in the tropical semiring** `(ℝ⁺ ∪ {∞}, min, +)`:
+`best[i][state] = min over incoming edges`. Beam search (width B = 64…256)
+approximates exact k-best with per-step truncation; the k-best list is the
+reranker's and vocabulary layer's input.
+
+**State-merging subtlety (empirically discovered, §8.1):** beam states may be
+merged only when both the *future* (pos, LM context) and the *output identity*
+(the string spelled so far) coincide. Two paths with equal (pos, prev-pair)
+can spell different strings; merging them silently deletes candidates. The
+v1/v2 decoders dedup on `(pos, prev2, prev, path-hash)` — a hash of the full
+akshara path — which preserves output identity.
+
+---
+
+## 3. EM training of the emission table
+
+### 3.1 Objective
+
+Maximise the corpus likelihood over unknown alignments:
+
+```
+L = Π_k Σ_{σ ∈ Σ(R_k, D_k)} Π_j P(s_j | a_j)
+```
+
+### 3.2 Forward–backward recurrences (`em_trainer.rs::e_step_chunk`)
+
+Define `f[j][i]` = probability that the first `j` aksharas consume exactly
+`i` roman characters, and `b[j][i]` = probability that aksharas `j..n`
+consume characters `i..m` (1-based over aksharas):
+
+```
+f[0][0] = 1,  f[0][i>0] = 0
+f[j][i] = Σ_{l=1..min(L,i)} f[j-1][i-l] · P(chunk r_{i-l+1..i} | a_j)
+b[n][m] = 1,  b[j][i] = Σ_{l=1..min(L,m-i)} P(chunk r_{i+1..i+l} | a_j) · b[j+1][i+l]
+Z = f[n][m]                                   (total likelihood of the word)
+```
+
+**Posterior** of a specific (akshara j, chunk ending at i, length l):
+
+```
+post(j, l, i) = f[j-1][i-l] · P(chunk | a_j) · b[j][i] / Z
+```
+
+Each `post ≤ 1` (it is a conditional probability over alignments); the
+accumulated counts across the corpus are its expectation.
+
+### 3.3 M-step with Dirichlet smoothing
+
+```
+P_new(s | a) = (c(a, s) + α · P_uni(s)) / (Σ_{s'} c(a, s') + α)
+α = 0.05,  P_uni(s) = global chunk frequency
+```
+
+### 3.4 Numerical stability (discovered empirically — E0 v2 debugging)
+
+For words the model assigns near-zero total probability, `Z` can reach
+`1e-14 … 1e-300`. Then `1/Z` explodes and every posterior `f·p·b/Z`,
+though bounded by 1 *in exact arithmetic*, can exceed 1 in floating point —
+one degenerate word injected `~1e14` fake posterior mass into the pair
+statistics and collapsed accuracy from 18% to 6%. Guards now enforced:
+
+```
+skip word if Z < 1e-12 or Z is not finite;   clamp post := min(post, 1.0)
+```
+
+Lesson: forward–backward over learned tables **must** be defended against
+its own degenerate words; the invariant `post ≤ 1` holds only in exact
+arithmetic.
+
+### 3.5 Observation weights (E5)
+
+A training pair with weight `w` (e.g. corpus frequency of a synthetic pair)
+scales its LM counts by `w` and every posterior by `w`:
+`c(a, s) += w · post`. Weighted EM with integer weights `w` is *equivalent*
+to repeating the pair `w` times (verified empirically: identical 80.69%
+either way), but stores one row instead of `w`.
+
+---
+
+## 4. Kneser–Ney akshara LM (`em_trainer.rs::build_kn_lm`)
+
+Counted **deterministically** from segmented corpus words (not EM posteriors —
+this density is why the akshara LM outperformed the pair grammar, §8.2):
+
+```
+P_KN(b | a) = max(c(a,b) − δ, 0)/c(a)  +  λ(a) · P_cont(b)
+λ(a)        = δ · |{b : c(a,b) > 0}| / c(a)
+P_cont(b)   = (|{a : c(a,b) > 0}| + 0.5) / (|distinct bigrams| + 0.5·N)
+```
+
+δ = 0.75 (absolute discount). Trigram: same form with
+`P_cont → P_KN(b | a)` as lower order, `λ` from distinct successors of (a,b).
+Word-start prior: `P(a | #) = (c_#(a) + 0.5)/(W + 0.5N)` with W = corpus
+word count. All stored as `−log` weights (f32).
+
+Interpretation of the continuation count: it measures *how many distinct
+left-contexts* b appears in — the correct KN estimate of a bigram's
+probability mass when the lower order is unobserved. This is why the KN
+akshara LM punishes junk akshara sequences (never observed in any context)
+far more than raw-count smoothing would.
+
+---
+
+## 5. The v2 pair grammar — and why naive fusion fails
+
+### 5.1 Definition
+
+v2 replaces independent edges with a context-dependent transition over
+**aligned pairs** π_j = (a_j, s_j):
+
+```
+P(π_1..π_n) = P_#(π_1) · Π_j P(π_j | π_{j-1})        (bigram over pairs)
+```
+
+with a 3-level backoff hierarchy: pair-bigram → (prev akshara, cur pair) →
+joint pair unigram `P(a,s) = P(a)·P(s|a)`.
+
+### 5.2 The joint-unigram requirement
+
+Backoff to `P(s|a)` alone is wrong: an akshara with a single observed chunk
+gets `P(s|a) ≈ 1`, so *rare aksharas with peaked emissions cost nothing* and
+junk paths win. The backoff target must be the joint `P(a)·P(s|a)`, keeping
+rare aksharas expensive. (Measured: 6.5% → 18.4% top-1.)
+
+### 5.3 Transition collection (weighted forward–backward)
+
+Posterior of a consecutive pair transition (aksharas j−1 → j, chunk split at
+i₁):
+
+```
+post = f[j−1][i₁−l₁] · P(s_{j−1}|a_{j−1}) · P(s_j|a_j) · b[j+1][i₁+l₂] / Z
+```
+
+Note the backward index: the suffix must start **after** the current pair
+(1-based `b[j+1]`, boundary case `i₁+l₂ = m` ⇒ 1). An off-by-one here
+(`b[j]`) makes every transition posterior ~0 and only noise survives the
+count threshold — the second fatal v2 bug.
+
+### 5.4 The dilution phenomenon (why v2 < v1)
+
+The pair bigram is trained on **EM posteriors**, which concentrate on the
+*most probable alignment per corpus pair* — and the corpus prefers frequent
+misalignments: `P("na"|ना) ≈ 0.97` vs `P("na"|न) ≈ 0.35`, so word-initial
+"nam…" masses onto the ना+मा alignment even for words whose gold aksharas
+are न+म. The pair table therefore encodes the corpus's *alignment bias*, not
+its word structure. Meanwhile the akshara trigram LM is counted
+deterministically from gold segmentations — dense and unbiased.
+
+**Theorem-shaped lesson:** for a grammar over latent alignments, transition
+statistics inherited from the alignment posterior are biased toward
+alignment-frequency, not word-frequency. Fixing this requires either
+(a) word-level constraints (the L∘G layer, §7), or (b) a single estimator
+that treats context depth as latent (the CTW design, research agenda §2) —
+*not* additive fusion, which injects the bias with any positive weight
+(measured: every λ_pair > 0 lowered top-1).
+
+---
+
+## 6. The vocabulary layer — rescoring as MAP estimation
+
+The engine ranks the decoder's k-best list with a corpus-frequency term:
+
+```
+score'(v) = score(v) − λ · ln(1 + f(v)),    v ∈ k-best, f(v) = text frequency
+```
+
+This is a log-linear opinion mixture: the decoder supplies
+`ln P(v | R)` (grammar evidence) and the corpus supplies
+`ln P(v)` (prior evidence); the sum is `ln P(v|R) + λ ln P(v)` — a MAP
+estimate under a prior interpolated between uniform and corpus distribution
+(exactly α·empirical + (1−α)·uniform at λ = α). Measured on native words:
+
+| k-best depth | baseline | with vocabulary |
+|---|---|---|
+| 8 | 75.33% | 78.84% |
+| 50 | — | **80.46%** (beam 256, lm 0.85, λ = 0.75) |
+
+Two mathematics-level findings:
+
+1. **Depth interaction**: the prior can only re-rank candidates the decoder
+   emitted. The oracle at k=50 is 93.55%; at k=8 it is ~87%. The vocabulary
+   layer's value is *bounded by candidate depth* — pipeline stages must be
+   tuned jointly (a stage-wise-optimal configuration was stage-wise
+   suboptimal: 78.84% at k=8 vs 80.46% at k=50).
+2. **Frequency saturation**: Aksharantar's native side has 2.4M unique words
+   over 2.4M tokens — its frequency distribution is nearly uniform, hence
+   useless as a prior (measured flat). Real running text (75M tokens, 570k
+   distinct words, Zipf-distributed) is the informative prior. Word-pair
+   corpora cannot substitute for running text.
+
+---
+
+## 7. Self-training — backward romanization (E5)
+
+The engine's inverse map Devanagari → roman is *deterministic given the
+akshara segmentation*: romanize(W) = argmax_s P(s | a) per akshara
+(the emission table's own argmax). Since the segmentation of W is exact and
+the per-akshara argmax is the most probable chunk ever observed for it, the
+synthetic pair (romanize(W), W) is the canonical spelling of W *under the
+model's own statistics*.
+
+**Validated variants:** runner-up chunks (2nd/3rd argmax) are spellings real
+users produced; combining per-akshara alternatives (capped at 8 joint
+spellings) yields variant pairs whose akshara alignment is invariant by
+construction (noise applies to whole akshara tokens only). Variants are
+down-weighted by joint probability × ¼.
+
+Result: +0.23 (80.46 → 80.69), saturating at one pair per word — the
+canonical signal dominates; variants add robustness, not benchmark accuracy.
+
+---
+
+## 8. Empirical error decomposition (the information budget)
+
+### 8.1 Oracle curves (native words, n = 2108)
+
+```
+P(gold ∈ top-k):  k=1: 75.3   k=2: 85.2   k=3: 88.0   k=5: 89.7
+                  k=10: 91.3  k=50: 92.1
+```
+
+The oracle is the empirical upper bound of *any* reranker over the lattice.
+The gap (top-1 75.3 → top-50 92.1) is **ranking error**; the gap above
+(top-50 92.1 → 100) is **generation error** (coverage).
+
+### 8.2 Error taxonomy
+
+Of top-1 misses: **52% matra-only** (differ from gold by vowel-length/nasal
+signs only), 48% substantive. A matra error means both candidates are real
+words consistent with the roman string — *the roman string carries zero bits
+to separate them*. Formally, define the ambiguity set
+`A(R) = {D : P(R|D) > τ}`; for these pairs |A(R) ∩ Words| ≥ 2 with
+comparable priors, so no function of R alone exceeds the prior-weighted
+chance of picking correctly.
+
+### 8.3 The information budget
+
+Each external information source shrinks the effective ambiguity set:
+
+| Source | Acts on | Measured contribution |
+|---|---|---|
+| Grammar + LM (string only) | A(R) ranking | 75.33% |
+| Word frequency (corpus prior) | A(R) ∩ Words, weighted | 80.46% |
+| Word bigram context (previous word) | conditional prior P(w_i | w_{i−1}) | projected +2–4 (E6, pending) |
+| User history (on-device) | personal P(w) | unmeasured, compounding |
+
+This is the quantitative form of the claim: isolated-word accuracy is
+bounded by the string's entropy; sentence-level accuracy is not. The
+measured plateau at ~79–80.7% *is* the empirical entropy of romanized
+Nepali under this grammar.
+
+---
+
+## 9. Numerical-robustness ledger (all discovered the hard way)
+
+| # | Failure mode | Symptom | Guard |
+|---|---|---|---|
+| 1 | Beam state merge ignores output identity | correct candidates never generated (न vs ना share pair context) | dedup key includes path hash |
+| 2 | Per-akshara backoff target | rare aksharas with peaked emissions free → junk wins | joint P(a)·P(s\|a) |
+| 3 | Backward index off-by-one in transition collection | transition posteriors ~0; only noise counted | suffix index b[j+1], boundary at m |
+| 4 | FP poisoning from degenerate words | posterior mass 2e14; counts destroyed | skip Z < 1e-12; clamp post ≤ 1 |
+| 5 | Additive smoothing on large alphabets | single observation ≈ certainty (P ≈ 0.67 in C=1 context) | absolute-discount KN, never additive |
+| 6 | u64 score quantization | tie classes ordered by HashMap iteration | score resolution ×1000 |
+| 7 | SQLite concurrent writers | "database is locked" kills crawlers | sequential writers (or WAL + busy_timeout) |
+
+---
+
+## 10. Source index
+
+| Component | Code | Doc section |
+|---|---|---|
+| EM trainer, forward–backward | `src/core/em_trainer.rs` | §3 |
+| KN LM | `src/core/em_trainer.rs::build_kn_lm` | §4 |
+| v1 decoder (lattice, beam) | `src/core/decoder.rs` | §2 |
+| v2 pair grammar | `src/core/v2/mod.rs` | §5 |
+| Reranker + vocabulary scoring | `src/core/reranker.rs`, `src/core/engine.rs` | §6 |
+| Backward romanizer | `src/bin/romanize.rs` | §7 |
+| Error analysis | `src/bin/analyze_errors.rs` | §8 |
+| Measurements | `2026-09-03-accuracy-experiments.md` | throughout |
