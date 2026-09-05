@@ -12,7 +12,7 @@ Akshar Devanagari IME is a next-generation input method built from the ground up
 - **Nepali-native details:** digits map to Devanagari numerals (123 → १२३)
   and a trailing `.` offers purnabiram (namaste. → नमस्ते।).
 - **Fast:** Sub-millisecond keystroke latency (0.4–0.8 ms), single generative decoder.
-- **SOTA Transliteration Core:** Outperforms neural baselines (IndicXlit top-1: 80.25% vs AksharIME top-1: **81.02%**, top-5: **91.75%** on held-out Aksharantar native test). Combines an EM-trained source-channel model (`P(roman | akshara)` over 3.59M pairs) with a Kneser-Ney syllable trigram LM, candidate union decoding, and a canonical discriminative log-linear reranker (29 dense shape/frequency/morphology features + $2^{20}$-slot sparse lexicalized table). Zero neural network runtime dependencies, 100% classical and memory-safe.
+- **SOTA Transliteration Core:** Outperforms neural baselines (IndicXlit top-1: 80.25% vs AksharIME top-1: **81.93%**, top-5: **91.94%** on held-out Aksharantar native test). Combines an EM-trained source-channel model (`P(roman | akshara)` over 3.59M pairs) with a Kneser-Ney syllable trigram LM, candidate union decoding, and a canonical discriminative log-linear reranker (29 dense shape/frequency/morphology features + $2^{20}$-slot sparse lexicalized table). Zero neural network runtime dependencies, 100% classical and memory-safe.
 - **Adaptive Learning:** the IME learns your vocabulary and spelling variants
   in real time; the words you use most frequently appear first.
 - **Fuzzy Search:** finds the correct words even with spelling mistakes in
@@ -23,27 +23,33 @@ Akshar Devanagari IME is a next-generation input method built from the ground up
 ## Architectural Overview
 
 The engine is a modular, pure-Rust core with a C-API for integration with the
-IBus input framework on Linux.
+IBus input framework on Linux, and a WebAssembly (WASM) interface for zero-latency in-browser typing.
 
 ```
 +-------------------------------------------------------------------+
 |                        IBus Engine (C Layer)                      |
 | (Handles key events, UI updates, communication with the OS)       |
 +---------------------------------^---------------------------------+
-                                  | (FFI: C-API)
+                                  | (FFI: C-API / WebAssembly)
 +---------------------------------v---------------------------------+
 |                        IME Engine (Rust Core)                     |
+|  engine.rs       — candidate union & suggestion orchestrator      |
 |  decoder.rs      — persistent-path beam search over akshara lattice|
-|  reranker.rs     — discriminative reranking of the k-best list    |
-|  translit_model  — EM emissions + Kneser-Ney LM                   |
+|  reranker.rs     — discriminative log-linear k-best reranker      |
+|  matra.rs        — factored vowel/matra confusion transitions     |
+|  translit_model  — EM emissions + Kneser-Ney syllable LM          |
+|  morph.rs        — MDL morphological segmenter (prefix/suffix)    |
+|  normalizer.rs   — phonetic Roman input normalizer & skeletonizer |
 |  lexicon.rs      — corpus roman→devanagari dictionary             |
 |  trie/symspell   — user learning + typo tolerance                 |
-|  context.rs      — phrase-level re-ranking                        |
+|  context.rs      — phrase-level bigram re-ranking                 |
 +-------------------------------------------------------------------+
 ```
 
-For a deep dive into the mathematics and measured results, see
-[docs/plans/2026-08-01-generative-transliteration-design.md](docs/plans/2026-08-01-generative-transliteration-design.md).
+For complete technical and mathematical details, see:
+- [**System Architecture (`docs/ARCHITECTURE.md`)**](docs/ARCHITECTURE.md): Complete system design, Mermaid data-flow sequence diagrams, and memory/latency benchmarks.
+- [**Module Specifications (`docs/MODULES.md`)**](docs/MODULES.md): Mathematical formulations, derivations, and algorithmic implementations for all 15 core modules.
+- [**WebAssembly & Browser Guide (`docs/WASM.md`)**](docs/WASM.md): Browser integration, zero-server deployment, and performance specs.
 
 ## Building and Installation
 
@@ -158,32 +164,119 @@ Type `namaste` → popup `नमस्ते` → `Enter`/`Tab`/`1`. Learned wor
 
 ## Project Structure
 
-- `src/`: The Rust source code for the core IME.
-  - `core/`: The generative transliteration core.
-    - `engine.rs`: The IME engine (decoder + lexicon + learning + context).
-    - `decoder.rs`: Persistent-path beam search over the akshara lattice.
-    - `reranker.rs`: Discriminative reranking of the decoder's k-best list.
-    - `em_trainer.rs`: EM alignment trainer over the Aksharantar corpus.
-    - `translit_model.rs`: Learned emissions + Kneser-Ney bigram/trigram LM.
-    - `lexicon.rs`: Roman → Devanagari dictionary from the corpus.
-    - `akshara.rs`: Devanagari syllable segmenter.
-  - `fuzzy/`: Fuzzy search implementation (SymSpell).
-  - `learning/`: The real-time learning module.
-  - `persistence/`: Logic for saving/loading the user dictionary.
-  - `c_api.rs`: The Foreign Function Interface (FFI) for the C layer (native only).
-  - `wasm.rs`: WASM bindings (`WasmEngine`, `createEngine`, localStorage persistence).
-- `js/akshar-ime.js`: Drop-in browser helper — `AksharIME.attach(input)` / `autoAttach()`.
-- `wasm/`: WASM package build (`wasm/build.sh` → `wasm/pkg/`, `wasm/package.json` for npm).
-- `web/index.html`: Local demo page for the WASM IME.
-- `src/bin/`: Training and evaluation tools (`train_model`, `build_lexicon`,
-  `train_reranker`, `evaluate`, `evaluate_model`, `evaluate_aksharantar`,
-  `evaluate_nepali_transliteration`, `probe_model`).
-- `data/`: The single data root (gitignored; see [data/README.md](data/README.md)) —
-  Aksharantar corpus (`aksharantar/`), raw text dumps (`raw/`), scraping-pipeline
-  store (`store/`), and built artifacts (`translit_model.bin`, `word_freq_text.bin`).
-- `src/ibus_engine.c`: The C code that integrates the Rust library with IBus.
-- `Makefile`: The build and installation script.
-- `devanagari-smart.xml`: The IBus component registration file.
+```text
+akshar-ime/
+├── docs/                               # Comprehensive engineering & mathematical documentation
+│   ├── ARCHITECTURE.md                 # System architecture, runtime sequence diagrams & memory specs
+│   ├── MODULES.md                      # Complete algorithmic & mathematical spec for all 15 modules
+│   ├── WASM.md                         # WebAssembly architecture, performance & browser integration
+│   └── plans/                          # Historical design RFCs, math notes & milestone roadmaps
+├── src/                                # Core Rust engine & platform bindings
+│   ├── core/                           # Classical SOTA transliteration core (zero neural deps)
+│   │   ├── akshara.rs                  # Devanagari syllable segmentation & boundary detection
+│   │   ├── context.rs                  # Phrase-level bigram language model & re-ranking
+│   │   ├── crf.rs                      # Conditional Random Field sequence model
+│   │   ├── decoder.rs                  # Persistent-path beam search over akshara lattice
+│   │   ├── em_trainer.rs               # Expectation-Maximization source-channel trainer
+│   │   ├── engine.rs                   # IME coordinator, candidate union & suggestion lifecycle
+│   │   ├── lexicon.rs                  # Exact binary roman-to-Devanagari corpus dictionary
+│   │   ├── matra.rs                    # Factored vowel/matra confusion transitions
+│   │   ├── morph.rs                    # Minimum Description Length (MDL) morphological stemmer
+│   │   ├── normalizer.rs               # Phonetic Roman input normalizer & skeletonizer
+│   │   ├── pair_model.rs               # Joint pair sequence transliteration model
+│   │   ├── reranker.rs                 # Discriminative log-linear k-best reranker
+│   │   ├── reranker_weights.rs         # Statically baked dense feature weights (29 features)
+│   │   ├── translit_model.rs           # EM emissions table + Kneser-Ney syllable LM
+│   │   └── wordtrie.rs                 # Compressed prefix Trie over Devanagari vocabulary
+│   ├── fuzzy/                          # Typo-tolerant candidate generation (SymSpell & orthography)
+│   ├── learning/                       # Real-time adaptive user dictionary learning
+│   ├── persistence/                    # Memory-mapped user dictionary serialization
+│   ├── c_api.rs                        # Foreign Function Interface (FFI) for C / IBus
+│   ├── wasm.rs                         # WebAssembly FFI bindings & localStorage persistence
+│   ├── lib.rs                          # Root crate library definition
+│   ├── ibus_engine.c                   # Native Linux IBus engine integration (C layer)
+│   └── bin/                            # Command-line tools organized by functional domain
+│       ├── train/                      # Model training pipelines
+│       │   ├── train_model.rs          # EM source-channel transliteration trainer
+│       │   ├── train_reranker.rs       # Streaming discriminative log-linear reranker trainer
+│       │   ├── train_matra.rs          # Factored matra confusion transition probability trainer
+│       │   ├── train_pair_model.rs     # Aligned subword joint pair transliteration trainer
+│       │   └── train_crf.rs            # CRF sequence model trainer
+│       ├── evaluate/                   # Benchmarks, ablation harnesses & validation
+│       │   ├── evaluate_aksharantar.rs # Held-out Aksharantar test suite evaluation
+│       │   ├── evaluate_model.rs       # Core decoder accuracy & candidate dump harness
+│       │   ├── evaluate_pair_model.rs  # Joint pair model benchmark harness
+│       │   ├── evaluate_context.rs     # Phrase-level bigram context re-ranking harness
+│       │   ├── evaluate_matra.rs       # Factored matra accuracy benchmark
+│       │   ├── evaluate_candidate_union.rs # Multi-source candidate union smoke test
+│       │   ├── evaluate_shrinkage.rs   # Empirical-Bayes frequency shrinkage benchmark
+│       │   ├── evaluate_nepali_transliteration.rs # Out-of-domain Nepali evaluation
+│       │   ├── analyze_errors.rs       # Error taxonomy analyzer & oracle bounds
+│       │   ├── verify_parity.rs        # Cross-pipeline golden test parity verification
+│       │   └── evaluate.rs             # Bootstrap confidence interval evaluation harness
+│       └── build/                      # Data preprocessing & artifact generators
+│           ├── build_wordfreq_text.rs  # Vocabulary frequency builder from 75M+ text tokens
+│           ├── build_wordfreq.rs       # Frequency counter from parallel corpus pairs
+│           ├── build_lexicon.rs        # Roman-to-Devanagari binary lexicon builder
+│           ├── build_bigrams.rs        # Word bigram frequency builder from text
+│           ├── build_lm_from_text.rs   # Syllable / word LM builder from running text
+│           ├── build_morph.rs          # MDL morphological prefix/suffix table builder
+│           ├── romanize.rs             # Backward transliteration / romanization utility
+│           ├── probe_model.rs          # Interactive model emission & prediction inspector
+│           └── prune_model.rs          # Model parameter pruning utility
+├── data/                               # Dataset directory (gitignored; see data/README.md)
+│   ├── aksharantar/                    # AI4Bharat Aksharantar parallel word-pairs
+│   ├── raw/                            # Raw text dumps (Wikipedia, CC100, news crawl)
+│   └── pipeline/                       # Data cleaning, deduplication & splitting scripts
+├── js/akshar-ime.js                    # Zero-dependency browser helper for WASM integration
+├── wasm/                               # WebAssembly packaging scripts & manifest
+├── web/                                # Local interactive web demo
+├── Makefile                            # Top-level build, test, install & WASM automation
+└── devanagari-smart.xml                # Linux IBus component descriptor
+```
+
+## Training, Evaluation & Build Recipes
+
+All binaries are mapped cleanly and can be executed with `cargo run --release --bin <name>`:
+
+### 1. Training Workflows (`src/bin/train/`)
+```bash
+# Train the generative EM transliteration model & syllable LM:
+cargo run --release --bin train_model -- --train data/corpus_clean.json --output data/translit_model.bin
+
+# Train the discriminative log-linear reranker (dense weights + sparse hash table):
+cargo run --release --bin train_reranker -- --train data/aksharantar/nep_train.json --epochs 5
+
+# Train the factored vowel/matra confusion transition model:
+cargo run --release --bin train_matra -- --train data/aksharantar/nep_train.json --output data/matra_transitions.bin
+```
+
+### 2. Evaluation & Benchmarking Workflows (`src/bin/evaluate/`)
+```bash
+# Run the official Aksharantar test benchmark (reports Top-1 and Top-5):
+cargo run --release --bin evaluate_aksharantar
+
+# Evaluate the multi-source candidate union oracle coverage:
+cargo run --release --bin evaluate_candidate_union
+
+# Evaluate the multi-core empirical-Bayes frequency shrinkage:
+cargo run --release --bin evaluate_shrinkage
+
+# Run error taxonomy and failure analysis:
+cargo run --release --bin analyze_errors -- --dataset data/aksharantar/nep_test.json
+```
+
+### 3. Data & Artifact Construction (`src/bin/build/`)
+```bash
+# Build word frequency table from 75M+ cleaned running text tokens:
+cargo run --release --bin build_wordfreq_text -- --input data/raw/nepali_text.txt --output data/word_freq_text.bin
+
+# Build the exact Roman-to-Devanagari corpus lexicon:
+cargo run --release --bin build_lexicon -- --corpus data/aksharantar/nep_train.json --output data/roman_lexicon.bin
+
+# Build MDL morphological prefix/suffix segmenter tables:
+cargo run --release --bin build_morph -- --vocab data/word_freq_text.bin --output data/morph_tables.bin
+```
 
 ## Data & Attribution
 

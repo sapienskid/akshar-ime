@@ -1,4 +1,4 @@
-// File: src/bin/w2_shrinkage.rs
+// File: src/bin/evaluate/evaluate_shrinkage.rs
 //
 // W2: Empirical-Bayes shrinkage of the frequency table.
 // High-throughput native Rust implementation utilizing all CPU cores.

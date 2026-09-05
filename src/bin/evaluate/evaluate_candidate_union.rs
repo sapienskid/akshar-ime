@@ -1,4 +1,4 @@
-// File: src/bin/smoke_w3_union.rs
+// File: src/bin/evaluate/evaluate_candidate_union.rs
 //
 // W3: Candidate Union Smoke Test.
 // Measures oracle top-K coverage of:

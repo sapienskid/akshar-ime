@@ -191,10 +191,10 @@ graph TD
 1. **Corpus Ingestion & Normalization (`data/pipeline/`):**
    - Filters text strictly to valid Devanagari Unicode sequences (`U+0900..=U+0963`). Strips punctuation, non-Devanagari scripts, digits, and control characters.
    - Removes cross-language duplicate pairs between Hindi and Nepali splits (107,758 duplicates eliminated).
-2. **EM Transliteration Training (`src/bin/train_model.rs`):**
+2. **EM Transliteration Training (`src/bin/train/train_model.rs`):**
    - Implements Baum-Welch expectation-maximization over 3.59M pairs.
    - Learns emission probabilities $P(\text{roman chunk} \mid \text{akshara})$ and a Kneser-Ney syllable trigram language model.
-3. **Discriminative Reranker Training (`src/bin/train_reranker.rs`):**
+3. **Discriminative Reranker Training (`src/bin/train/train_reranker.rs`):**
    - Memory-safe streaming trainer that processes candidates in 100,000-pair chunks (RAM usage capped at $\approx 300$ MB).
    - Optimizes log-linear softmax loss with Adam/AdaGrad and $L_2$ regularization.
    - Quantizes $2^{20}$ sparse weights to signed 8-bit integers (`i8`) for zero-overhead array indexing.

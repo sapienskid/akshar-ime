@@ -1,4 +1,4 @@
-// File: src/bin/smoke_w4_matra.rs
+// File: src/bin/evaluate/evaluate_matra.rs
 //
 // W4: Factored Matra Model Smoke Test.
 //
