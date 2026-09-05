@@ -1,65 +1,107 @@
-# Data root — everything the IME learns from lives here
+# Data root — where AksharIME's data lives, where it came from, and how it is cleaned
 
-This directory is **fully gitignored** (only this README is tracked): corpora,
-the cleaned corpus, pipeline code, and built artifacts never enter the
-repository. Everything is rebuildable with the `make data*` targets below.
+This directory is **fully gitignored** (only this README is tracked). No data
+is committed to the repository — the repo ships code; releases ship the built
+artifacts. Everything below is rebuilt locally with the pipeline in
+`data/pipeline/`.
 
-**The single source of text is `store/corpus_clean.txt`** — 2.89M clean,
-deduplicated Devanagari sentences (86.1M word tokens) compiled from Nepali
-Wikipedia, CC100, and the news crawl. Nothing raw is stored: the download and
-cleaning pipeline consumes the raw dumps and deletes them. Word frequencies
-are *counted* from this one file; word bigrams can be re-derived from it.
+## Where the data came from (provenance)
+
+| Source | What it is | License / access |
+|---|---|---|
+| **Aksharantar** (AI4Bharat, IIT Madras) | 5.4M roman→Devanagari word pairs across Hindi + Nepali, produced by human annotators and validated with a rule-based checker. **Merged into one language-agnostic Devanagari set** — we do not treat entries as Hindi or Nepali. | CC0 / some CC-BY — download from [HuggingFace](https://huggingface.co/datasets/ai4bharat/Aksharantar) |
+| **Nepali Wikipedia** | Full article dump, text extracted from the XML. | CC-BY-SA — [dumps.wikimedia.org/newiki](https://dumps.wikimedia.org/newiki/) |
+| **CC100 Nepali** | CommonCrawl web text filtered to Devanagari by the creators. | CC0 — [data.statmt.org/cc-100](https://data.statmt.org/cc-100/) |
+| **akshar-ime news crawl** | 18,190+ full articles from Nepali news sites (gorkhapatra, onlinekhabar, nayapatrika, kanunpatrika), crawled with the private pipeline in `pipeline/pipeline.py`. Current-affairs vocabulary (ministers, dates, places) that encyclopedic sources lack. | public news; only derived counts ship |
+| **Your own typing** | learned on-device in `~/.config/akshar-devanagari/`, never leaves the machine | — |
+
+## How the data is cleaned (the single rule set)
+
+All cleaning enforces one definition of a *word*: **a maximal run of
+Devanagari letters U+0900..=U+0963** (consonants, vowels, matras, nukta
+forms, anusvara/visarga). Everything else is stripped or dropped:
+
+- no danda/purnabiram glued to words (`पुगे।` → `पुगे`)
+- no digits — Devanagari (`२०८१`) *and* ASCII (`2024`), either glued or alone
+- no ASCII punctuation/brackets/quotes (`सोमाली,` → `सोमाली`)
+- no ZWJ/ZWNJ joiners, no Latin letters
+- lines/sentences need ≥4 surviving words (kills headers, dates, captions)
+- **exact duplicate lines/pairs removed** (news syndication and Wikipedia
+  boilerplate repeat massively — 5.4M duplicate lines and 108k duplicate
+  word-pairs dropped)
+
+Why it matters: glued variants split a real word's count across dictionary
+keys, flattening exactly the frequency signal the engine's reranker depends
+on. Cleaning + dedup of the text corpus measured **+0.33 points** native
+top-1 (79.51-equivalent configs → see
+`../docs/plans/2026-09-03-accuracy-experiments.md`).
+
+## Layout
 
 ```
 data/
-  aksharantar/        AI4Bharat Aksharantar Nepali splits (download, ~560 MB)
-                      nep_{train,valid,test}.json — EM training + benchmark
-  pipeline/           the data pipeline (private, untracked):
-                      pipeline.py        crawl / count / export / romanize
-                      build_corpus.py    compile the cleaned corpus (single feed file)
-                      fetch_corpus.py    download Aksharantar from Hugging Face
-                      extract_wiki.py    Wikipedia dump -> text lines
-                      filter_cc100.py    CC100 -> Devanagari lines
-                      make_eval_tsv.py   regenerate data/eval/aksharantar_test.tsv
-                      .venv/             its Python environment
+  aksharantar/          language-agnostic Devanagari word-pair set (strict-cleaned)
+    train_devanagari.jsonl   3,588,793 pairs — EM training
+    valid_devanagari.jsonl       9,155 pairs — tuning only
+    test_devanagari.jsonl        4,101 cases — benchmark (single-shot measurement)
   store/
-                      corpus_clean.txt   THE single cleaned corpus (~1.5 GB):
-                                         one sentence per line, pure Devanagari
-                                         words only, exact duplicates removed
-                      word_pairs.csv     word bigrams (freq>=3) — E6 context
-                                         layer data; re-derivable from corpus_clean.txt
-  eval/               derived evaluation subsets
-                      aksharantar_test.tsv  nep_test.json flattened (regenerate:
-                                            python3 data/pipeline/make_eval_tsv.py)
-  translit_model.bin  BUILT artifact — EM emissions + akshara KN LM (~22 MB)
-  word_freq_text.bin  BUILT artifact — 470k-word frequency vocabulary (~17 MB),
-                      counted from corpus_clean.txt
+    corpus_clean.txt   THE single stored text: 2.89M clean unique sentences,
+                       86.1M tokens, compiled from Wikipedia+CC100+news;
+                       frequencies and bigrams are derived from it
+    word_pairs.csv     word bigrams (freq>=3) — E6 context-layer data
+  eval/                benchmark convenience files (TSV = test split flattened)
+  pipeline/            the pipeline (private, untracked):
+    pipeline.py            news crawl / count / export
+    clean_aksharantar.py   strict-clean + merge the word-pair JSONs
+    build_corpus.py        compile the cleaned corpus, delete raw inputs
+    fetch_corpus.py        download Aksharantar from Hugging Face
+    extract_wiki.py        Wikipedia dump -> text lines
+    filter_cc100.py        CC100 -> Devanagari lines
+    make_eval_tsv.py       regenerate eval TSV
+    .venv/                 its Python environment
+  backup/              gzip snapshots taken before destructive operations
+  translit_model.bin   BUILT — EM emissions P(roman|akshara) + akshara KN LM
+  word_freq_text.bin   BUILT — 470k-word frequency vocabulary counted from
+                       corpus_clean.txt
 ```
 
-## Build commands
+## Rebuild recipes (local; not Makefile targets — data is not in the repo)
 
-| Target | What it does |
-|---|---|
-| `make data-raw` | download sources (Aksharantar, Wikipedia, CC100) into transient `data/raw/` |
-| `make data-clean` | compile everything into `store/corpus_clean.txt`, then delete the raw inputs |
-| `make data-vocab` | count `corpus_clean.txt` → `data/word_freq_text.bin` |
-| `make data-model` | train EM model (`nep_train` + `nep_valid`) → `data/translit_model.bin` |
-| `make data` | the whole chain: raw → clean → vocab → model |
-| `make data-store` | incremental news crawl, then re-clean + re-count |
-| `make release-upload TAG=vX.Y.Z` | upload built artifacts to a GitHub release |
+```bash
+# 1. Word-pair corpus (transliteration training)
+python3 data/pipeline/fetch_corpus.py data/aksharantar     # download Aksharantar
+python3 data/pipeline/clean_aksharantar.py                 # clean + merge -> *_devanagari.jsonl
+#   originals are deleted after cleaning; keep data/backup/*.gz snapshots
 
-Cleaning rules (enforced in `build_corpus.py`, mirrored in
-`build_wordfreq_text.rs`): a word is a maximal run of Devanagari *letters*
-(U+0900..=U+0963) — danda, digits (Devanagari and ASCII), punctuation,
-ZWJ/ZWNJ, and Latin are stripped or dropped; lines need ≥4 surviving words;
-exact duplicate lines are removed (syndication/boilerplate otherwise inflates
-counts).
+# 2. Cleaned running-text corpus (the single text file)
+mkdir -p data/raw
+curl -sL -o /tmp/newiki.xml.bz2 https://dumps.wikimedia.org/newiki/latest/newiki-latest-pages-articles.xml.bz2
+python3 data/pipeline/extract_wiki.py /tmp/newiki.xml.bz2 data/raw/newiki.txt
+curl -sL -o /tmp/cc100-ne.txt.xz https://data.statmt.org/cc-100/ne.txt.xz
+python3 data/pipeline/filter_cc100.py /tmp/cc100-ne.txt.xz data/raw/cc100ne.txt
+# news: python3 data/pipeline/pipeline.py crawl  (articles land in the DB)
+python3 data/pipeline/build_corpus.py data/store/corpus_clean.txt \
+    --db data/store/nepali_text.db data/raw/newiki.txt data/raw/cc100ne.txt
 
-The engine loads exactly four files at runtime (resolved via `$AKSHAR_DATA_DIR`,
-`data/`, `~/.local/share/akshar-ime/`, then `/usr/share/akshar-ime/`):
-`translit_model.bin`, `word_freq_text.bin`, `roman_lexicon.bin` (optional),
-`reranker_weights.json` (optional).
+# 3. Artifacts
+cargo run --release --bin build_wordfreq_text -- data/store/corpus_clean.txt
+cargo run --release --bin train_model -- \
+    --train data/aksharantar/train_devanagari.jsonl \
+    --extra data/aksharantar/valid_devanagari.jsonl \
+    --out data/translit_model.bin
 
-**Do not write into the top level from other tools** — the top-level `.bin`
-files are owned by `build_wordfreq_text` and `train_model`. Verified result of
-this exact chain: **80.98% native top-1** on the Aksharantar Nepali benchmark.
+# 4. Evaluate (beam 256, k=50, lm 0.85, vocab 0.75)
+cargo run --release --bin evaluate_model -- \
+    --dataset data/aksharantar/test_devanagari.jsonl \
+    --beam 256 --topk 50 --lm-weight 0.85 --vocab-weight 0.75
+```
+
+## Rules that prevent repeat incidents
+
+- Only `build_wordfreq_text` / `train_model` write the top-level `data/*.bin`.
+- The news pipeline exports into `data/store/` and merges into the vocab only
+  via explicit `--merge-base` (a news-only vocabulary once silently overwrote
+  the real one and cost 1.2 accuracy points).
+- **Backup before destroying:** gzip snapshot into `data/backup/` first.
+- Verified result of the current chain: **80.98% native top-1** (merged
+  model), ALL 60.64%.

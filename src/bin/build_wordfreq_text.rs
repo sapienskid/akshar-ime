@@ -9,6 +9,32 @@
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
 
+/// Allowed code points for a vocabulary word: Devanagari letters, matras,
+/// nukta consonants, vocalics, anusvara/visarga (U+0900..=U+0963). This
+/// deliberately EXCLUDES danda/double-danda (U+0964-0965), Devanagari digits
+/// (U+0966-096F), and abbreviation signs (U+0970+) — running text glues all
+/// of these onto words ("पुगे।", "२०७८साल", "सोमाली,"), which both pollutes
+/// the vocabulary and splits a real word's count across glued variants.
+fn is_word_char(c: char) -> bool {
+    matches!(c, '\u{0900}'..='\u{0963}')
+}
+
+/// Trim non-word characters glued to the token edges, then require the
+/// remainder to be pure Devanagari. Returns None for numbers, URLs, English,
+/// dates, and glued phrases (ZWJ/ZWNJ joiners are not word chars either).
+fn clean_token(word: &str) -> Option<String> {
+    let trimmed = word.trim_matches(|c: char| !is_word_char(c));
+    let chars: Vec<char> = trimmed.chars().collect();
+    if chars.is_empty() || chars.len() > 24 {
+        return None;
+    }
+    if chars.iter().all(|c| is_word_char(*c)) {
+        Some(trimmed.to_string())
+    } else {
+        None
+    }
+}
+
 fn main() {
     let paths: Vec<String> = std::env::args().skip(1).collect();
     if paths.is_empty() {
@@ -24,17 +50,8 @@ fn main() {
         };
         for line in BufReader::new(f).lines().map_while(Result::ok) {
             for word in line.split_whitespace() {
-                // Keep tokens that are (mostly) Devanagari letters.
-                let chars: Vec<char> = word.chars().collect();
-                if chars.is_empty() || chars.len() > 24 {
-                    continue;
-                }
-                let dev = chars
-                    .iter()
-                    .filter(|c| matches!(c, '\u{0900}'..='\u{097F}'))
-                    .count();
-                if dev * 2 >= chars.len() {
-                    *freq.entry(word.to_string()).or_insert(0) += 1;
+                if let Some(clean) = clean_token(word) {
+                    *freq.entry(clean).or_insert(0) += 1;
                     total += 1;
                 }
             }
