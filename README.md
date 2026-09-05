@@ -69,17 +69,24 @@ sudo dnf groupinstall "Development Tools" "Development Libraries"
 sudo dnf install rust cargo ibus-devel jansson-devel
 ```
 
-### Step 1 — Clone and get the corpus
+### Step 1 — Clone and get the data
 
 ```bash
 git clone https://github.com/sapienskid/akshar-ime.git
 cd akshar-ime
 ```
 
-Download the Aksharantar Nepali split (train/valid/test) into `data/aksharantar/`.
-The dataset is published by AI4Bharat on
-[Hugging Face](https://huggingface.co/datasets/ai4bharat/Aksharantar) (Nepali
-files: `nep_train.json`, `nep_valid.json`, `nep_test.json`).
+All data lives under `data/` (never committed to the repo — see
+[data/README.md](data/README.md) for the layout). One command fetches
+everything: the Aksharantar Nepali split, Nepali Wikipedia, and CC100:
+
+```bash
+make data-raw
+```
+
+(The Aksharantar dataset is published by AI4Bharat on
+[Hugging Face](https://huggingface.co/datasets/ai4bharat/Aksharantar); the
+`nep_*.json` files land in `data/aksharantar/`.)
 
 ### Step 2 — Get the model artifacts
 
@@ -97,14 +104,11 @@ Two artifacts power the engine (both are gitignored):
 **Option B — build them locally:**
 
 ```bash
-# Vocabulary from running text (downloads Wikipedia + CC100 dumps, ~5 min)
-cargo run --release --bin build_wordfreq_text -- /tmp/newiki.txt /tmp/cc100ne.txt
-# Transliteration model from the corpus (~2-3 min, threaded)
-cargo run --release --bin train_model
+make data-vocab   # count data/raw/* -> data/word_freq_text.bin
+make data-model   # train the EM model -> data/translit_model.bin
+# or everything at once (downloads included):
+make data
 ```
-
-(Word-counting scripts for the raw dumps live in
-`.github/workflows/release.yml` — the release build runs them for you.)
 
 ### Step 3 — Build and install
 
@@ -181,8 +185,9 @@ Type `namaste` → popup `नमस्ते` → `Enter`/`Tab`/`1`. Learned wor
 - `src/bin/`: Training and evaluation tools (`train_model`, `build_lexicon`,
   `train_reranker`, `evaluate`, `evaluate_model`, `evaluate_aksharantar`,
   `evaluate_nepali_transliteration`, `probe_model`).
-- `data/`: Aksharantar corpus (`aksharantar/`) and built artifacts
-  (`translit_model.bin`, `word_freq_text.bin`).
+- `data/`: The single data root (gitignored; see [data/README.md](data/README.md)) —
+  Aksharantar corpus (`aksharantar/`), raw text dumps (`raw/`), scraping-pipeline
+  store (`store/`), and built artifacts (`translit_model.bin`, `word_freq_text.bin`).
 - `src/ibus_engine.c`: The C code that integrates the Rust library with IBus.
 - `Makefile`: The build and installation script.
 - `devanagari-smart.xml`: The IBus component registration file.
@@ -201,10 +206,13 @@ The engine is built from three open datasets:
 - **Your own typing** — the engine's adaptive learning happens entirely on-device
   (`~/.config/akshar-devanagari/user_dictionary.bin`); it never leaves your machine.
 
-- The corpus itself is **not** included in this repository — download it separately
-  (see Step 1 above).
-- `data/eval/aksharantar_test.tsv` is a small derived evaluation subset of the Aksharantar
-  Nepali test split (roman/Devanagari pairs), included here under the terms of CC0.
+- The corpus itself is **not** included in this repository — download it with
+  `make data-raw` (see Step 1 above). No data files are committed to the repo;
+  `data/` is fully gitignored (only its README is tracked).
+- The 75M-token text vocabulary now also includes an akshar-ime news crawl
+  (~34M tokens of current Nepali news) merged on top of Wikipedia + CC100 —
+  see `data/README.md` and the scraping pipeline in `data-pipeline/` (private,
+  untracked).
 
 ## License
 

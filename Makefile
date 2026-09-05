@@ -18,7 +18,7 @@ IBUS_ENGINE_DIR   := $(PREFIX)/lib/ibus/engines
 IBUS_COMPONENT_DIR:= $(PREFIX)/share/ibus/component
 DATA_DIR          := $(PREFIX)/share/akshar-ime
 
-.PHONY: all release debug install uninstall reinstall clean reset-learning restart-ibus help wasm wasm-clean wasm-serve
+.PHONY: all release debug install uninstall reinstall clean reset-learning restart-ibus help wasm wasm-clean wasm-serve data data-raw data-vocab data-model data-store
 
 # --- Main Targets ---
 
@@ -64,7 +64,9 @@ install:  ## Compile (if needed) and install the engine to system directories.
 	@echo "  > Installing IBus component file..."
 	@sudo cp devanagari-smart.xml $(IBUS_COMPONENT_DIR)/
 	@echo "  > Installing model artifacts..."
-	@sudo cp data/translit_model.bin data/word_freq_text.bin data/reranker_weights.json $(DATA_DIR)/
+	@for f in data/translit_model.bin data/word_freq_text.bin data/reranker_weights.json data/roman_lexicon.bin; do \
+		if [ -f "$$f" ]; then sudo cp "$$f" $(DATA_DIR)/; fi; \
+	done
 	@echo "  > Updating linker cache..."
 	@sudo ldconfig
 	@echo "\nInstallation complete. Run 'make restart-ibus' (no sudo) to reload IBus,"
@@ -117,6 +119,39 @@ wasm-serve: wasm  ## Build WASM and serve demo at http://localhost:PORT/web/ (de
 	echo "Serving demo at http://localhost:$$PORT/web/ (Ctrl+C to stop)"; \
 	echo "  (override with: make wasm-serve PORT=9000)"; \
 	python3 -m http.server $$PORT
+
+# --- Data system (see data/README.md) — everything builds into data/ ---
+
+data: data-raw data-vocab data-model  ## Build the full data chain: downloads → vocab → model.
+
+data-raw:  ## Download corpora: Aksharantar splits + Nepali Wikipedia + CC100 → data/.
+	@mkdir -p data/aksharantar data/raw
+	@python3 scripts/fetch_corpus.py data/aksharantar
+	@if [ ! -f data/raw/newiki.txt ]; then \
+		echo "  > Downloading + extracting Nepali Wikipedia..."; \
+		curl -sL -o /tmp/newiki.xml.bz2 https://dumps.wikimedia.org/newiki/latest/newiki-latest-pages-articles.xml.bz2; \
+		python3 scripts/extract_wiki.py /tmp/newiki.xml.bz2 data/raw/newiki.txt; \
+		rm -f /tmp/newiki.xml.bz2; \
+	else echo "  > data/raw/newiki.txt already present"; fi
+	@if [ ! -f data/raw/cc100ne.txt ]; then \
+		echo "  > Downloading + filtering CC100 Nepali..."; \
+		curl -sL -o /tmp/cc100-ne.txt.xz https://data.statmt.org/cc-100/ne.txt.xz; \
+		python3 scripts/filter_cc100.py /tmp/cc100-ne.txt.xz data/raw/cc100ne.txt; \
+		rm -f /tmp/cc100-ne.txt.xz; \
+	else echo "  > data/raw/cc100ne.txt already present"; fi
+
+data-vocab:  ## Count data/raw/* frequencies → data/word_freq_text.bin.
+	@cargo run --release --bin build_wordfreq_text -- data/raw/newiki.txt data/raw/cc100ne.txt data/raw/news.txt
+
+data-model:  ## Train the EM model (train+valid) → data/translit_model.bin.
+	@cargo run --release --bin train_model -- \
+		--train data/aksharantar/nep_train.json \
+		--extra data/aksharantar/nep_valid.json \
+		--out data/translit_model.bin
+
+data-store:  ## Scraping pipeline: incremental crawl + count + export → data/store/.
+	@python3 data-pipeline/pipeline.py count
+	@python3 data-pipeline/pipeline.py export --merge-base data/word_freq_text.bin
 
 # --- Help ---
 

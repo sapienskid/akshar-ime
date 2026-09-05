@@ -12,16 +12,12 @@ dist
 *.bak
 .zcode/
 
-# Generated transliteration model + downloaded Aksharantar corpus
-data/nepali_model.bin
-data/aksharantar/
-data/translit_model.bin
-data/roman_lexicon.bin
-# WASM build output is committed for npm, but local dev may rebuild
-# Uncomment to ignore if you prefer not to commit:
-# wasm/pkg/
-# js uses no build step — keep committed
+# All data lives under data/ (corpora, raw text, pipeline store, built model
+# artifacts) and is never tracked.  Only data/README.md (the layout doc) is
+# tracked.  See data/README.md for what belongs where and how to build it.
+data/*
+!data/README.md
 
-# Private scraping pipeline + data (never tracked)
+# Private scraping pipeline code (never tracked)
 data-pipeline/
-docs/paper/*.aux *.log *.out
+docs/paper/*.aux

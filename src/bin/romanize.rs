@@ -14,10 +14,10 @@
 //
 // Usage:
 //   cargo run --release --bin romanize -- \
-//     [--vocab data-pipeline/out/word_freq.csv] \
+//     [--vocab data/store/word_freq.csv] \
 //     [--model data/translit_model.bin] \
 //     [--ref-vocab data/word_freq_text.bin] \
-//     [--out data-pipeline/out/synthetic.jsonl] \
+//     [--out data/store/synthetic.jsonl] \
 //     [--max-combos 6] [--top 3] [--max-weight 9.0] [--min-freq 2] [--threads 12]
 
 use akshar_ime::core::akshara::segment;
@@ -32,10 +32,10 @@ use std::sync::Arc;
 use std::time::Instant;
 
 fn main() {
-    let mut vocab_path = "data-pipeline/out/word_freq.csv".to_string();
+    let mut vocab_path = "data/store/word_freq.csv".to_string();
     let mut model_path = "data/translit_model.bin".to_string();
     let mut ref_vocab_path = "data/word_freq_text.bin".to_string();
-    let mut out_path = "data-pipeline/out/synthetic.jsonl".to_string();
+    let mut out_path = "data/store/synthetic.jsonl".to_string();
     let mut max_combos = 6usize;
     let mut top = 3usize;
     let mut max_weight = 9.0f32;
