@@ -121,3 +121,18 @@ tree), not be a separate added term. That is the v3 scoring core, ~150 lines
 of change to v2: replace `transition() + fluency` with a single recursive
 node mixture W = 1/2 P_KT(edge|ctx) + 1/2 W(child-context). The decoder,
 trainer, trie, and harness all stay.
+
+## M4 pilot — vocabulary rescoring (2026-09-03)
+
+Pilot for the graph-intersection word layer: post-decode rescoring of v2
+candidates by corpus-word frequency (score -= w*ln(1+freq), --vocab-weight,
+--vocab-min). Sweep vw in {0.5,1,2,4} at min-count 2: **flat at 62.62%** —
+the rescorer almost never fires. Root cause (decisive, quantified): Aksharantar
+natives are 2.4M unique from 2.4M tokens, so only ~5,200 words have count>=2.
+The vocabulary measure is empty BY CONSTRUCTION.
+
+**Conclusion:** the word-trie ∩ lattice intersection needs real running Nepali
+text (IndicCorp-Nepali / Wikipedia dumps) for (a) word frequencies that
+actually separate candidates and (b) word-bigram context. Word-PAIR corpora
+cannot substitute. Next session: download corpus -> word-trie with counts ->
+full intersection during decode (trie walk parallel to the lattice beam).

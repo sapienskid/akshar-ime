@@ -27,6 +27,9 @@ fn main() {
     let mut probe: Option<String> = None;
     let mut trans: Option<String> = None;
     let mut pair_weight: f64 = 0.5;
+    // M4 pilot: vocabulary rescoring (freq bonus for real corpus words).
+    let mut vocab_weight: f64 = 0.0;
+    let mut vocab_min_count: u32 = 1;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -35,6 +38,8 @@ fn main() {
             }
             "--trans" => trans = Some(args.next().expect("chunk")),
             "--pair-weight" => pair_weight = args.next().expect("f").parse().expect("f"),
+            "--vocab-weight" => vocab_weight = args.next().expect("f").parse().expect("f"),
+            "--vocab-min" => vocab_min_count = args.next().expect("n").parse().expect("n"),
             "--model" => model_path = args.next().expect("path").into(),
             "--dataset" => dataset = args.next().expect("path").into(),
             other => {
@@ -47,6 +52,35 @@ fn main() {
     let model = PairModel::load(&model_path).expect("load v2 model");
     let mut decoder = PairDecoder::new(model);
     decoder.pair_weight = pair_weight;
+
+    // Load the vocabulary map (bincode HashMap<String,u32> from build_wordfreq).
+    let vocab: Option<std::collections::HashMap<String, u32>> = if vocab_weight > 0.0 {
+        match std::fs::read("data/word_freq.bin") {
+            Ok(bytes) => match bincode::deserialize::<std::collections::HashMap<String, u32>>(&bytes) {
+                Ok(map) => {
+                    let pruned: std::collections::HashMap<String, u32> = map
+                        .into_iter()
+                        .filter(|(_, c)| *c >= vocab_min_count)
+                        .collect();
+                    eprintln!(
+                        "vocab: {} words (min count {vocab_min_count})",
+                        pruned.len()
+                    );
+                    Some(pruned)
+                }
+                Err(e) => {
+                    eprintln!("WARNING: word_freq.bin deserialize failed: {e}");
+                    None
+                }
+            },
+            Err(e) => {
+                eprintln!("WARNING: word_freq.bin not found: {e}");
+                None
+            }
+        }
+    } else {
+        None
+    };
 
     // Debug: --probe <word> prints the k-best lattice paths and exits.
     let probe = std::env::args().position(|a| a == "--probe").and_then(|i| std::env::args().nth(i + 1));
@@ -156,7 +190,17 @@ fn main() {
             continue;
         }
         let t0 = Instant::now();
-        let cands = decoder.decode(&roman, 5);
+        let mut cands = decoder.decode(&roman, 5);
+        if let Some(vocab) = &vocab {
+            for c in &mut cands {
+                if let Some(&f) = vocab.get(&c.dev) {
+                    c.lm -= vocab_weight * (1.0 + f as f64).ln();
+                }
+            }
+            cands.sort_by(|a, b| {
+                (a.emit + a.lm).partial_cmp(&(b.emit + b.lm)).unwrap_or(std::cmp::Ordering::Equal)
+            });
+        }
         let us = t0.elapsed().as_micros() as usize;
         let bucket = match rec.source {
             "AK-Freq" => "AK-Freq",
