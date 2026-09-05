@@ -10,10 +10,13 @@ Priorities ordered by user impact; §2 is the paper's core.
 **Model.** After the user commits word `w_{i−1}`, the current word's
 candidates are rescored with a corpus word-bigram term:
 
-```
-score'(v) = score(v) − λ_c · (−log P(v | w_{i−1}))
-P(v | w)  = max(c(w,v), 0)/c(w)  +  λ(w) · P(v)        (KN over words)
-```
+$$
+\mathrm{score}'(v) = \mathrm{score}(v) - \lambda_c \cdot \big(-\log P(v \mid w_{i-1})\big),
+$$
+
+$$
+P(v \mid w) = \frac{\max\big(c(w, v) - \delta,\ 0\big)}{c(w)} + \lambda(w) \cdot P(v) \qquad \text{(KN over words)}.
+$$
 
 This is a *conditional* version of the vocabulary prior (mathematics doc §6):
 the prior over the ambiguity set A(R) is no longer corpus-global but
@@ -44,28 +47,29 @@ guarantee.
 **KT estimator.** For a node with counts (n_1..n_K) over outcomes and a flat
 Dirichlet(½) prior, the predictive probability of outcome i is
 
-```
-P_KT(i | node) = (n_i + ½) / (n + K/2)
-```
+$$
+P_{\mathrm{KT}}(i \mid \text{node}) = \frac{n_i + \tfrac{1}{2}}{n + \tfrac{K}{2}},
+$$
 
 and the node's sequential likelihood accumulates as a product of these.
 
 **The CTW recursion.** For a context path (deepest first), the mixture
 weight of depth d is updated online:
 
-```
-W_d = ½ · P_KT(d) · W_{d-1}^unconditioned  +  ½ · W_{d+1}
-```
+$$
+W_d = \tfrac{1}{2} \cdot P_{\mathrm{KT},d} \cdot W_{d-1} + \tfrac{1}{2} \cdot W_{d+1},
+$$
 
 standardly: each tree node stores its mixture probability
-`W_node = ½·P_KT_node + ½·Π_children W_child`; the root's W is the model's
-sequential likelihood. Regret guarantee (Willems–Shtarkov–Tillemae 1995):
+$W_{\text{node}} = \tfrac{1}{2} P_{\mathrm{KT,node}} + \tfrac{1}{2} \prod_{\text{children}} W_{\text{child}}$;
+the root's $W$ is the model's sequential likelihood. Regret guarantee
+(Willems–Shtarkov–Tillemae 1995):
 
-```
-ln P_CTW(sequence) ≥ ln P_best-fixed-depth-model − |tree| · ln 2
-```
+$$
+\ln P_{\mathrm{CTW}}(\text{sequence}) \ \ge\ \ln P_{\text{best fixed depth}} \ -\ |T| \ln 2,
+$$
 
-i.e. within `|tree|·ln2` nats of the *best* depth chosen in hindsight —
+i.e. within $|T| \ln 2$ nats of the *best* depth chosen in hindsight —
 a guarantee no KN-tuned, and no neural, system states.
 
 **Application to AksharIME.** The context tree lives over the alignment
@@ -98,9 +102,9 @@ and matches how the akshara LM is already counted; start there.
 Beam search has no quality guarantee; A* with an **admissible** heuristic
 does. For node u = (roman position i, LM state), define
 
-```
-h(u) = (m − i) · min_edge_weight      (minimum possible remaining cost)
-```
+$$
+h(u) = (m - i) \cdot w_{\min}, \qquad w_{\min} = \text{minimum lattice edge weight},
+$$
 
 which never overestimates (each remaining akshara costs ≥ min edge weight).
 A* then expands nodes in f = g + h order and the first complete path is
