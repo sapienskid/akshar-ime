@@ -648,15 +648,19 @@ fn load_reranker(lexicon: Option<RomanLexicon>) -> Reranker {
             }
         }
     }
-    let mut reranker = Reranker::new(weights, lexicon);
+    let reranker = Reranker::new(weights, lexicon);
     // E3: word-frequency evidence (native targets only; absent on wasm unless
     // fetched separately).
     #[cfg(not(target_arch = "wasm32"))]
-    if let Ok(bytes) = std::fs::read(data_path("word_freq_text.bin")) {
-        if let Ok(map) = bincode::deserialize::<HashMap<String, u32>>(&bytes) {
-            reranker = reranker.with_freq(Some(map));
+    let reranker = {
+        let mut r = reranker;
+        if let Ok(bytes) = std::fs::read(data_path("word_freq_text.bin")) {
+            if let Ok(map) = bincode::deserialize::<HashMap<String, u32>>(&bytes) {
+                r = r.with_freq(Some(map));
+            }
         }
-    }
+        r
+    };
     reranker
 }
 

@@ -36,10 +36,9 @@ IBus input framework on Linux, and a WebAssembly (WASM) interface for zero-laten
 |  engine.rs       — candidate union & suggestion orchestrator      |
 |  decoder.rs      — persistent-path beam search over akshara lattice|
 |  reranker.rs     — discriminative log-linear k-best reranker      |
-|  matra.rs        — factored vowel/matra confusion transitions     |
-|  translit_model  — EM emissions + Kneser-Ney syllable LM          |
-|  morph.rs        — MDL morphological segmenter (prefix/suffix)    |
 |  normalizer.rs   — phonetic Roman input normalizer & skeletonizer |
+|  translit_model  — EM emissions + Kneser-Ney syllable LM          |
+|  wordtrie.rs     — compressed prefix Trie dictionary              |
 |  lexicon.rs      — corpus roman→devanagari dictionary             |
 |  trie/symspell   — user learning + typo tolerance                 |
 |  context.rs      — phrase-level bigram re-ranking                 |
@@ -174,23 +173,27 @@ akshar-ime/
 ├── src/                                # Core Rust engine & platform bindings
 │   ├── core/                           # Classical SOTA transliteration core (zero neural deps)
 │   │   ├── akshara.rs                  # Devanagari syllable segmentation & boundary detection
+│   │   ├── alignment.rs                # Dynamic programming char-level alignment (seeds EM)
 │   │   ├── context.rs                  # Phrase-level bigram language model & re-ranking
 │   │   ├── crf.rs                      # Conditional Random Field sequence model
 │   │   ├── decoder.rs                  # Persistent-path beam search over akshara lattice
 │   │   ├── em_trainer.rs               # Expectation-Maximization source-channel trainer
 │   │   ├── engine.rs                   # IME coordinator, candidate union & suggestion lifecycle
 │   │   ├── lexicon.rs                  # Exact binary roman-to-Devanagari corpus dictionary
-│   │   ├── matra.rs                    # Factored vowel/matra confusion transitions
-│   │   ├── morph.rs                    # Minimum Description Length (MDL) morphological stemmer
 │   │   ├── normalizer.rs               # Phonetic Roman input normalizer & skeletonizer
 │   │   ├── pair_model.rs               # Joint pair sequence transliteration model
-│   │   ├── reranker.rs                 # Discriminative log-linear k-best reranker
-│   │   ├── reranker_weights.rs         # Statically baked dense feature weights (29 features)
+│   │   ├── reranker.rs                 # Discriminative log-linear k-best reranker (29 dense features)
+│   │   ├── reranker_weights.rs         # Statically baked dense feature weights
 │   │   ├── translit_model.rs           # EM emissions table + Kneser-Ney syllable LM
+│   │   ├── trie.rs                     # Dynamic Trie for user-learned vocabulary & Roman variants
+│   │   ├── types.rs                    # Core type definitions (WordId, WordMetadata, TranslitModel)
 │   │   └── wordtrie.rs                 # Compressed prefix Trie over Devanagari vocabulary
 │   ├── fuzzy/                          # Typo-tolerant candidate generation (SymSpell & orthography)
-│   ├── learning/                       # Real-time adaptive user dictionary learning
-│   ├── persistence/                    # Memory-mapped user dictionary serialization
+│   │   ├── grammar.rs                  # Phonetic Roman canonicalization & skeletonization
+│   │   ├── mod.rs
+│   │   └── symspell.rs                 # Symmetric delete spelling correction for Devanagari & Roman
+│   ├── learning.rs                     # Real-time adaptive user dictionary learning
+│   ├── persistence.rs                  # Memory-mapped user dictionary serialization
 │   ├── c_api.rs                        # Foreign Function Interface (FFI) for C / IBus
 │   ├── wasm.rs                         # WebAssembly FFI bindings & localStorage persistence
 │   ├── lib.rs                          # Root crate library definition

@@ -694,7 +694,7 @@ fn main() {
         for ep in 1..=n_ep {
             let mut order: Vec<usize> = (0..trainable.len()).collect();
             for i in (1..order.len()).rev() {
-                let j = (i.wrapping_mul(6364136223846793005).wrapping_add(ep)) % (i + 1);
+                let j = (((i as u64).wrapping_mul(6364136223846793005).wrapping_add(ep as u64)) % ((i + 1) as u64)) as usize;
                 order.swap(i, j);
             }
 
