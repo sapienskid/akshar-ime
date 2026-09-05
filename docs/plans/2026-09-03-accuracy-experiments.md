@@ -534,3 +534,17 @@ ambiguity left); on real user input (variants, typos) the context term has
 more errors to fix. Default boost set to 40k. Benchmark note: this lever is
 invisible to the isolated-word benchmark by construction — it exists for
 real typing flow.
+
+## Suffix-feature ablation + large held-out E6 run (2026-09-05, night)
+
+**Short-word features: zero contribution (ablation).** Retraining the
+reranker with all 24 data-derived short-word slots removed reproduces the
+shipped numbers exactly (61.01% ALL / 81.69% AK-Freq, case-identical). The
+feature class — first hand-picked postpositions, then the data-derived
+table — has not earned its place yet; the likely fix is a fuzzy roman-tail
+matcher instead of strict `ends_with`. Kept in the model for now (zero
+cost); candidate for removal at the next retrain cycle.
+
+**E6 large held-out run** (2,400 held-out sentences, 73,583 words, boost
+40k): context OFF 88.41% → ON **88.72%** (+0.31; post-first-word subset
++0.31). Confirms the +0.3–0.4 sentence-level estimate from the smaller runs.

@@ -25,11 +25,12 @@ conditioned on the committed left context.
 **Data.** `word_pairs` table (streaming counter over the running-text DB),
 pruned to freq ≥ 3; expected ~2–5M bigrams from 75M+ tokens.
 
-**Evaluation.** Requires a sentence-level harness: romanize the words of
-held-out running text sentence-by-sentence, feed committed words as context,
-measure sentence word-accuracy. Literature calibration (Kirov et al. 2024):
-context contributes +18.6% relative WER reduction; a third of that crosses
-84% effective accuracy.
+**Evaluation — DONE (2026-09-05).** `evaluate_context` A/B harness (two
+identical engines over romanized corpus sentences, context the only
+difference). Held-out: **+0.31–0.40%** suggestion accuracy (73,583 words).
+Modest vs the Kirov-calibrated +2–4 because canonical romanizations already
+decode at ~89% — real user input (variants, typos) leaves more for context
+to fix. Wired into the engine with boost 40k·ln(1+f).
 
 **Design decision to make:** greedy per-word rescoring (v1) vs a word-lattice
 Viterbi that defers commitment until the sentence evidence is in. Pinyin IMEs
@@ -159,7 +160,7 @@ vocabulary rescoring, on low-resource devices.
 
 | Step | Output | Unlocks |
 |---|---|---|
-| 1. E6 context + sentence harness | +2–4 top-1, effective 84%+ | Google-level feel; bigram data already collecting |
+| 1. E6 context + sentence harness | DONE: +0.31–0.40 sentence-level | real-typing value grows with corpus scale |
 | 2. Incremental decoding + beam 128 | < 2 ms/keystroke at SOTA quality | real-device IME, low-resource |
 | 3. Entropy harness | information budget per layer | paper analysis section |
 | 4. v3 CTW estimator | parameter-free, ~4MB, regret bound | paper core theorem |

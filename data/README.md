@@ -103,5 +103,5 @@ cargo run --release --bin evaluate_model -- \
   via explicit `--merge-base` (a news-only vocabulary once silently overwrote
   the real one and cost 1.2 accuracy points).
 - **Backup before destroying:** gzip snapshot into `data/backup/` first.
-- Verified result of the current chain: **80.98% native top-1** (merged
-  model), ALL 60.64%.
+- Verified result of the current chain: **81.40% native top-1** through the
+  full engine (v2 reranker + bigram context).

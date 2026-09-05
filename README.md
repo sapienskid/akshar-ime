@@ -9,11 +9,14 @@ Akshar Devanagari IME is a next-generation input method built from the ground up
 
 ## Key Features
 
-- **Fast:** ~3 ms keystroke latency (7 ms worst case), single generative decoder.
+- **Nepali-native details:** digits map to Devanagari numerals (123 → १२३)
+  and a trailing `.` offers purnabiram (namaste. → नमस्ते।).
+- **Fast:** ~3–14 ms keystroke latency, single generative decoder.
 - **Generative transliteration core:** a source-channel model (EM-trained
-  `P(roman | akshara)` over a 2.4M-pair corpus) with a Kneser-Ney akshara
-  bigram/trigram language model. All probabilities are estimated by EM from the
-  corpus — no neural network, no ML dependencies.
+  `P(roman | akshara)` over a 3.59M-pair Devanagari corpus) with a Kneser-Ney
+  akshara trigram language model, plus a trained 52-feature reranker
+  (embedded weights, no ML dependencies) and corpus word-bigram context.
+  Pure statistics — no neural network.
 - **Adaptive Learning:** the IME learns your vocabulary and spelling variants
   in real time; the words you use most frequently appear first.
 - **Fuzzy Search:** finds the correct words even with spelling mistakes in
@@ -191,7 +194,8 @@ Type `namaste` → popup `नमस्ते` → `Enter`/`Tab`/`1`. Learned wor
 The engine is built from three open datasets:
 
 - **[Aksharantar](https://huggingface.co/datasets/ai4bharat/Aksharantar)** (AI4Bharat,
-  IIT Madras; arXiv:2205.03018) — 2.4M Nepali roman→Devanagari word pairs that train the
+  IIT Madras; arXiv:2205.03018) — 3.59M roman→Devanagari word pairs (Hindi + Nepali,
+  merged and strict-cleaned) that train the
   transliteration model (CC0, some portions CC-BY). The corpus is **not** included in this
   repository — download it separately (Step 1).
 - **Nepali Wikipedia** (CC-BY-SA) and **CC100 Nepali** (CC0) — 75M tokens of running text
