@@ -211,7 +211,7 @@ The engine is built from three open datasets:
   `data/` is fully gitignored (only its README is tracked).
 - The 75M-token text vocabulary now also includes an akshar-ime news crawl
   (~34M tokens of current Nepali news) merged on top of Wikipedia + CC100 —
-  see `data/README.md` and the scraping pipeline in `data-pipeline/` (private,
+  see `data/README.md` and the scraping pipeline in `data/pipeline/` (private,
   untracked).
 
 ## License

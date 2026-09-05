@@ -12,12 +12,9 @@ dist
 *.bak
 .zcode/
 
-# All data lives under data/ (corpora, raw text, pipeline store, built model
-# artifacts) and is never tracked.  Only data/README.md (the layout doc) is
-# tracked.  See data/README.md for what belongs where and how to build it.
+# All data lives under data/ (corpora, raw text, pipeline code+store, built
+# model artifacts) and is never tracked.  Only data/README.md is tracked.
+# See data/README.md for what belongs where and how to build it.
 data/*
 !data/README.md
-
-# Private scraping pipeline code (never tracked)
-data-pipeline/
 docs/paper/*.aux

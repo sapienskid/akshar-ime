@@ -150,8 +150,16 @@ data-model:  ## Train the EM model (train+valid) → data/translit_model.bin.
 		--out data/translit_model.bin
 
 data-store:  ## Scraping pipeline: incremental crawl + count + export → data/store/.
-	@python3 data-pipeline/pipeline.py count
-	@python3 data-pipeline/pipeline.py export --merge-base data/word_freq_text.bin
+	@python3 data/pipeline/pipeline.py count
+	@python3 data/pipeline/pipeline.py export --merge-base data/word_freq_text.bin
+
+release-upload:  ## Upload locally built model artifacts to a GitHub release (TAG=vX.Y.Z required).
+	@if [ -z "$(TAG)" ]; then echo "usage: make release-upload TAG=vX.Y.Z"; exit 1; fi
+	@test -f data/translit_model.bin || { echo "data/translit_model.bin missing — run 'make data-model' first"; exit 1; }
+	@test -f data/word_freq_text.bin || { echo "data/word_freq_text.bin missing — run 'make data-vocab' first"; exit 1; }
+	@gh release view $(TAG) >/dev/null 2>&1 || gh release create $(TAG) --generate-notes --verify-tag
+	@gh release upload $(TAG) data/translit_model.bin data/word_freq_text.bin --clobber
+	@echo "Uploaded model artifacts to release $(TAG)."
 
 # --- Help ---
 

@@ -19,8 +19,9 @@ env:
 jobs:
   build-and-release:
     runs-on: ubuntu-latest
-    # allow 30 min for EM training + wasm build
-    timeout-minutes: 35
+    # wasm build only — model artifacts are trained locally and uploaded
+    # separately via `make release-upload TAG=...` (data/ is not in CI)
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -38,57 +39,6 @@ jobs:
       - name: Install wasm-bindgen-cli
         run: cargo install wasm-bindgen-cli --version 0.2.100 --locked
 
-      - name: Download Aksharantar Nepali corpus (Hugging Face)
-        run: |
-          mkdir -p data/aksharantar
-          pip install -q huggingface_hub
-          python3 << 'PY'
-          from huggingface_hub import hf_hub_download
-          import shutil, os, zipfile, pathlib, sys
-          repo = "ai4bharat/Aksharantar"
-          # Dataset stores per-language zips (nep.zip contains nep_{train,valid,test}.json)
-          try:
-              zip_path = hf_hub_download(repo_id=repo, filename="nep.zip", repo_type="dataset")
-              print(f"hf_hub_download nep.zip -> {zip_path} ({os.path.getsize(zip_path)} bytes)")
-          except Exception as e:
-              print(f"hf_hub_download failed for nep.zip: {e}, trying wget", file=sys.stderr)
-              import subprocess
-              url = f"https://huggingface.co/datasets/{repo}/resolve/main/nep.zip"
-              rc = subprocess.call(["wget", "-q", "-O", "nep.zip", url])
-              if rc != 0 or not os.path.exists("nep.zip"):
-                  print(f"wget failed for {url}", file=sys.stderr)
-                  sys.exit(1)
-              zip_path = "nep.zip"
-              print(f"wget nep.zip ({os.path.getsize(zip_path)} bytes)")
-          # Unzip
-          with zipfile.ZipFile(zip_path) as z:
-              print("zip contents:", z.namelist())
-              z.extractall("data/aksharantar")
-          print("corpus ready:")
-          for p in pathlib.Path("data/aksharantar").glob("*"):
-              print(p, p.stat().st_size)
-          # sanity: train should be ~2.4M lines
-          assert (pathlib.Path("data/aksharantar/nep_train.json").exists()), "nep_train.json missing after unzip"
-          PY
-          ls -lh data/aksharantar/
-
-      - name: Build word-frequency vocabulary (Nepali Wikipedia + CC100)
-        run: |
-          curl -sL -o /tmp/newiki.xml.bz2 https://dumps.wikimedia.org/newiki/latest/newiki-latest-pages-articles.xml.bz2
-          python3 scripts/extract_wiki.py /tmp/newiki.xml.bz2 data/raw/newiki.txt
-          curl -sL -o /tmp/cc100-ne.txt.xz https://data.statmt.org/cc-100/ne.txt.xz
-          python3 scripts/filter_cc100.py /tmp/cc100-ne.txt.xz data/raw/cc100ne.txt
-          cargo run --release --bin build_wordfreq_text -- data/raw/newiki.txt data/raw/cc100ne.txt
-
-      - name: Build model artifacts (EM + reranker)
-        run: |
-          cargo run --release --bin train_model -- --train data/aksharantar/nep_train.json --extra data/aksharantar/nep_valid.json --out data/translit_model.bin
-          cargo run --release --bin train_reranker || echo "train_reranker optional, continue"
-          ls -lh data/translit_model.bin data/word_freq_text.bin data/reranker_weights.json
-          echo "Model gzip:"
-          gzip -c data/translit_model.bin | wc -c | awk '{printf "%d bytes %.1f MB\n",$1,$1/1024/1024}'
-          brotli -c data/translit_model.bin | wc -c | awk '{printf "brotli %d bytes %.1f MB\n",$1,$1/1024/1024}'
-
       - name: Build WASM package
         run: bash wasm/build.sh
 
@@ -104,7 +54,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ inputs.tag || github.ref_name }}
-          name: ${{ inputs.tag || github.ref_name }} — WASM + model
+          name: ${{ inputs.tag || github.ref_name }} — WASM
           generate_release_notes: true
           files: |
             wasm/pkg/akshar_ime_bg.wasm
@@ -113,9 +63,9 @@ jobs:
             wasm/pkg/akshar_ime_bg.wasm.d.ts
             js/akshar-ime.js
             web/index.html
-            data/translit_model.bin
-            data/word_freq_text.bin
-            data/reranker_weights.json
           fail_on_unmatched_files: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # Model artifacts (data/translit_model.bin, data/word_freq_text.bin) are
+      # NOT built in CI — data/ is not in the repo. Train locally (`make data`)
+      # and upload them to the release: `make release-upload TAG=vX.Y.Z`.

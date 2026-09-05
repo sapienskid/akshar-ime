@@ -13,7 +13,11 @@ data/
                       newiki.txt   Nepali Wikipedia (CC-BY-SA)
                       cc100ne.txt  CC100 Nepali (CC0)
                       news.txt     akshar-ime news-crawl extraction
-  store/              the scraping pipeline's database + derived products
+  pipeline/           the scraping + preparation pipeline (private, untracked):
+                      pipeline.py        crawl / count / export / romanize
+                      make_eval_tsv.py   regenerate data/eval/aksharantar_test.tsv
+                      .venv/             its Python environment
+  store/              the pipeline's database + derived products
                       nepali_text.db        articles + word/pair counts (SQLite, ~1.4 GB)
                       word_freq.csv         word,freq (all words)
                       word_pairs.csv        w1,w2,freq (freq>=3) — E6 context layer
@@ -22,6 +26,8 @@ data/
                                             self-training measured NEGATIVE, kept for reference)
                       word_freq_news_only.bin / word_freq_merged.csv  intermediate vocab files
   eval/               derived evaluation subsets
+                      aksharantar_test.tsv  nep_test.json flattened (regenerate:
+                                            python3 data/pipeline/make_eval_tsv.py)
   translit_model.bin  BUILT artifact — EM emissions + akshara KN LM (~22 MB)
   word_freq_text.bin  BUILT artifact — word-frequency vocabulary (~26 MB)
 ```
