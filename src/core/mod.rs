@@ -14,4 +14,5 @@ pub mod pair_model;
 pub mod translit_model;
 pub mod trie;
 pub mod types;
+pub mod unified;
 pub mod wordtrie;

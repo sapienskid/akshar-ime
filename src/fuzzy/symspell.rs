@@ -14,6 +14,12 @@ pub struct SymSpell {
     max_edit_distance: usize,
 }
 
+impl Default for SymSpell {
+    fn default() -> Self {
+        Self::new(2)
+    }
+}
+
 impl SymSpell {
     pub fn new(max_edit_distance: usize) -> Self {
         Self {

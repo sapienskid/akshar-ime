@@ -368,7 +368,13 @@ fn parse_tsv(path: &PathBuf) -> Result<Vec<EvalCase>, String> {
 }
 
 fn parse_args() -> Args {
-    let mut dataset = PathBuf::from("data/aksharantar/nep_test.json");
+    let mut dataset = if std::path::Path::new("data/aksharantar/nep_test.json").exists() {
+        PathBuf::from("data/aksharantar/nep_test.json")
+    } else if std::path::Path::new("data/aksharantar/test_devanagari.jsonl").exists() {
+        PathBuf::from("data/aksharantar/test_devanagari.jsonl")
+    } else {
+        PathBuf::from("data/aksharantar/nep_test.json")
+    };
     let mut topk: usize = 10;
     let mut suggestions: usize = 0;
     let mut resamples: usize = 1000;

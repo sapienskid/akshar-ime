@@ -250,6 +250,17 @@ pub fn rerank(
     freq: &HashMap<String, u32>,
     ranks: &FreqRanks,
 ) -> Vec<(String, f64)> {
+    rerank_with_table(roman, candidates, freq, ranks, None)
+}
+
+/// Rank candidates with an optional custom sparse weight table (from UnifiedModel).
+pub fn rerank_with_table(
+    roman: &str,
+    candidates: &[DecodedCandidate],
+    freq: &HashMap<String, u32>,
+    ranks: &FreqRanks,
+    custom_sparse_table: Option<&[i8]>,
+) -> Vec<(String, f64)> {
     if candidates.is_empty() {
         return vec![];
     }
@@ -293,7 +304,10 @@ pub fn rerank(
             s += W_DENSE[k] * ((dense[k] - MEAN_DENSE[k]) / STD_DENSE[k]);
         }
         for &h in &sparse {
-            let b = SPARSE_TABLE[h] as i8;
+            let b = match custom_sparse_table {
+                Some(t) if h < t.len() => t[h],
+                _ => SPARSE_TABLE[h] as i8,
+            };
             s += (b as f64) * SPARSE_SCALE;
         }
         scores.push(s);

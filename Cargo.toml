@@ -34,80 +34,40 @@ name = "akshar_ime"
 crate-type = ["cdylib", "rlib"]
 
 # ------------------------------------------------------------------------------
-# Training Binaries (src/bin/train/)
+# Training Pipeline (src/bin/train/)
 # ------------------------------------------------------------------------------
 
 [[bin]]
-name = "train_model"
-path = "src/bin/train/train_model.rs"
-
-[[bin]]
-name = "train_reranker"
-path = "src/bin/train/train_reranker.rs"
-
-[[bin]]
-name = "train_matra"
-path = "src/bin/train/train_matra.rs"
-
-[[bin]]
-name = "train_pair_model"
-path = "src/bin/train/train_pair_model.rs"
-
-[[bin]]
-name = "train_crf"
-path = "src/bin/train/train_crf.rs"
+name = "train"
+path = "src/bin/train/train.rs"
 
 # ------------------------------------------------------------------------------
 # Evaluation & Benchmark Binaries (src/bin/evaluate/)
 # ------------------------------------------------------------------------------
 
 [[bin]]
-name = "evaluate"
-path = "src/bin/evaluate/evaluate.rs"
-
-[[bin]]
 name = "evaluate_aksharantar"
 path = "src/bin/evaluate/evaluate_aksharantar.rs"
 
 [[bin]]
-name = "evaluate_model"
-path = "src/bin/evaluate/evaluate_model.rs"
-
-[[bin]]
-name = "evaluate_pair_model"
-path = "src/bin/evaluate/evaluate_pair_model.rs"
-
-[[bin]]
-name = "evaluate_context"
-path = "src/bin/evaluate/evaluate_context.rs"
-
-[[bin]]
-name = "evaluate_matra"
-path = "src/bin/evaluate/evaluate_matra.rs"
-
-[[bin]]
-name = "evaluate_candidate_union"
-path = "src/bin/evaluate/evaluate_candidate_union.rs"
-
-[[bin]]
-name = "evaluate_shrinkage"
-path = "src/bin/evaluate/evaluate_shrinkage.rs"
-
-[[bin]]
-name = "evaluate_nepali_transliteration"
-path = "src/bin/evaluate/evaluate_nepali_transliteration.rs"
+name = "evaluate"
+path = "src/bin/evaluate/evaluate.rs"
 
 [[bin]]
 name = "analyze_errors"
 path = "src/bin/evaluate/analyze_errors.rs"
 
-[[bin]]
-name = "verify_parity"
-path = "src/bin/evaluate/verify_parity.rs"
-
 # ------------------------------------------------------------------------------
 # Data Construction & Utility Binaries (src/bin/build/)
 # ------------------------------------------------------------------------------
+
+[[bin]]
+name = "pack_model"
+path = "src/bin/build/pack_model.rs"
+
+[[bin]]
+name = "build_wordfreq_text"
+path = "src/bin/build/build_wordfreq_text.rs"
 
 [[bin]]
 name = "build_bigrams"
@@ -118,20 +78,8 @@ name = "build_lexicon"
 path = "src/bin/build/build_lexicon.rs"
 
 [[bin]]
-name = "build_lm_from_text"
-path = "src/bin/build/build_lm_from_text.rs"
-
-[[bin]]
-name = "build_morph"
-path = "src/bin/build/build_morph.rs"
-
-[[bin]]
-name = "build_wordfreq"
-path = "src/bin/build/build_wordfreq.rs"
-
-[[bin]]
-name = "build_wordfreq_text"
-path = "src/bin/build/build_wordfreq_text.rs"
+name = "romanize"
+path = "src/bin/build/romanize.rs"
 
 [[bin]]
 name = "probe_model"
@@ -140,7 +88,3 @@ path = "src/bin/build/probe_model.rs"
 [[bin]]
 name = "prune_model"
 path = "src/bin/build/prune_model.rs"
-
-[[bin]]
-name = "romanize"
-path = "src/bin/build/romanize.rs"

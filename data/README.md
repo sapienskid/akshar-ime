@@ -60,9 +60,9 @@ data/
     make_eval_tsv.py       regenerate eval TSV
     .venv/                 its Python environment
   backup/              gzip snapshots taken before destructive operations
-  translit_model.bin   BUILT — EM emissions P(roman|akshara) + akshara KN LM
-  word_freq_text.bin   BUILT — 470k-word frequency vocabulary counted from
-                       corpus_clean.txt
+  akshar.model         BUILT — Unified production container (transliteration model +
+                       KN syllable LM + 470k vocab frequencies + sparse reranker weights
+                       + optional phrase bigrams)
 ```
 
 ## Rebuild recipes (local; not Makefile targets — data is not in the repo)
@@ -83,24 +83,20 @@ python3 data/pipeline/filter_cc100.py /tmp/cc100-ne.txt.xz data/raw/cc100ne.txt
 python3 data/pipeline/build_corpus.py data/store/corpus_clean.txt \
     --db data/store/nepali_text.db data/raw/newiki.txt data/raw/cc100ne.txt
 
-# 3. Artifacts
-cargo run --release --bin build_wordfreq_text -- data/store/corpus_clean.txt
-cargo run --release --bin train_model -- \
-    --train data/aksharantar/train_devanagari.jsonl \
-    --extra data/aksharantar/valid_devanagari.jsonl \
-    --out data/translit_model.bin
-cargo run --release --bin train_reranker -- \
-    --train data/aksharantar/train_devanagari.jsonl \
-    --chunk-size 100000
+# 3. One-Shot End-to-End Model Training
+cargo run --release --bin train
+# or simply: make train
+
+# Alternatively, repack loose binaries into akshar.model:
+cargo run --release --bin pack_model
 
 # 4. Evaluate
-cargo run --release --bin evaluate_aksharantar -- \
-    --dataset data/aksharantar/test_devanagari.jsonl
+cargo run --release --bin evaluate_aksharantar
 ```
 
 ## Rules that prevent repeat incidents
 
-- Only `build_wordfreq_text` / `train_model` / `train_reranker` write top-level `data/*.bin`.
+- Model artifacts are bundled into the unified `data/akshar.model` container.
 - No binary files are ever stored inside `src/`.
 - The news pipeline exports into `data/store/` and merges into the vocab only
   via explicit `--merge-base` (a news-only vocabulary once silently overwrote

@@ -89,7 +89,13 @@ impl Report {
 }
 
 fn main() {
-    let mut dataset_path = "data/aksharantar/nep_test.json".to_string();
+    let mut dataset_path = if std::path::Path::new("data/aksharantar/nep_test.json").exists() {
+        "data/aksharantar/nep_test.json".to_string()
+    } else if std::path::Path::new("data/aksharantar/test_devanagari.jsonl").exists() {
+        "data/aksharantar/test_devanagari.jsonl".to_string()
+    } else {
+        "data/aksharantar/nep_test.json".to_string()
+    };
     let mut topk = 5usize;
     let mut show_misses = 15usize;
 

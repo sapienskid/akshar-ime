@@ -299,3 +299,31 @@ Integrates with IBus event loops without blocking main thread X11/Wayland input 
 - Exposes `WasmEngine` with drop-in JavaScript helper `js/akshar-ime.js`.
 - Automatically persists user-learned vocabulary to browser `localStorage` under `akshar-ime-state-v1`.
 - Fully offline, 0 HTTP network requests after initial model load.
+
+---
+
+## 16. `src/core/unified.rs` — Unified Model Container (`akshar.model`)
+
+### Purpose & Single-Artifact Container Architecture
+Instead of distributing 4 disparate binary artifacts (`translit_model.bin`, `word_freq_text.bin`, `reranker_weights_sparse.bin`, and `word_bigrams.bin`), `UnifiedModel` packages the entire engine into a single atomic binary file: `akshar.model`.
+
+### Binary Wire Format:
+```
++-------------------------------------------------------------------------+
+| Magic Bytes: [0x41, 0x4B, 0x53, 0x48] ("AKSH")  (4 bytes)               |
++-------------------------------------------------------------------------+
+| Version: u32 = 1                                (4 bytes)               |
++-------------------------------------------------------------------------+
+| Payload: bincode-serialized UnifiedModel:                               |
+|   1. translit: TranslitModel (EM emission tables + syllable LM)        |
+|   2. sparse_reranker_table: Vec<f32> (2^20 table slots, 4 MB)           |
+|   3. vocab_freq: HashMap<String, u32> (470k unigram words)              |
+|   4. bigrams: Option<HashMap<(u32, u32), u32>> (phrase context)         |
++-------------------------------------------------------------------------+
+```
+
+### Loading & Fallback Semantics:
+- `ImeEngine::new()` inspects `data/akshar.model` first (or `/usr/share/akshar-ime/akshar.model`).
+- If present, it loads all model components in a single atomic I/O operation.
+- If missing, it falls back seamlessly to multi-file legacy loading for backward compatibility.
+- Streamlined training (`cargo run --release --bin train` or `make train`) produces `data/akshar.model` directly in one command.

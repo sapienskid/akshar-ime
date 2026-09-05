@@ -155,49 +155,40 @@ graph TD
         CorpusText["data/store/corpus_clean.txt: 2.89M clean sentences, 86.1M tokens"]
     end
 
-    subgraph Artifact_Generators ["Core Training Stage"]
-        BuildVocab["build_wordfreq_text -> data/word_freq_text.bin (470k words)"]
-        BuildBigrams["build_bigrams -> data/word_bigrams.bin (1.25M bigrams)"]
-        TrainEM["train_model (EM Baum-Welch, 12 iterations) -> data/translit_model.bin"]
-        TrainReranker["train_reranker (Multi-pass Streaming Softmax)"]
+    subgraph Artifact_Generators ["Core Training Stage (One-Shot train / Pack)"]
+        TrainOneShot["train (One-Shot Pipeline) -> data/akshar.model"]
+        BuildVocab["build_wordfreq_text -> vocab frequencies"]
+        BuildBigrams["build_bigrams -> word bigrams"]
+        PackModel["pack_model -> data/akshar.model"]
     end
 
-    subgraph Output_Artifacts ["Production Runtime Artifacts"]
-        TranslitBin["data/translit_model.bin (32 MB)"]
-        FreqBin["data/word_freq_text.bin (17 MB)"]
-        BigramBin["data/word_bigrams.bin (41 MB)"]
-        RerankerRS["src/core/reranker_weights.rs (29 dense weights)"]
-        RerankerSparse["data/reranker_weights_sparse.bin (1 MB quantized)"]
+    subgraph Output_Artifacts ["Production Runtime Artifact"]
+        UnifiedModel["data/akshar.model (Bundled container: translit + vocab + reranker + bigrams)"]
+        LegacyBins["Legacy Fallbacks (optional): translit_model.bin, word_freq_text.bin, etc."]
     end
 
     Aksharantar --> Dedup
     Wikipedia --> CorpusText
     CC100 --> CorpusText
     NewsCrawl --> CorpusText
-    Dedup --> TrainEM
-    CorpusText --> BuildVocab
-    CorpusText --> BuildBigrams
-    TrainEM --> TranslitBin
-    BuildVocab --> FreqBin
-    BuildBigrams --> BigramBin
-    Dedup --> TrainReranker
-    TranslitBin --> TrainReranker
-    FreqBin --> TrainReranker
-    TrainReranker --> RerankerRS
-    TrainReranker --> RerankerSparse
+    Dedup --> TrainOneShot
+    CorpusText --> TrainOneShot
+    TrainOneShot --> UnifiedModel
+    UnifiedModel --> LegacyBins
 ```
 
 ### Training Pipeline Phases:
 1. **Corpus Ingestion & Normalization (`data/pipeline/`):**
    - Filters text strictly to valid Devanagari Unicode sequences (`U+0900..=U+0963`). Strips punctuation, non-Devanagari scripts, digits, and control characters.
    - Removes cross-language duplicate pairs between Hindi and Nepali splits (107,758 duplicates eliminated).
-2. **EM Transliteration Training (`src/bin/train/train_model.rs`):**
-   - Implements Baum-Welch expectation-maximization over 3.59M pairs.
-   - Learns emission probabilities $P(\text{roman chunk} \mid \text{akshara})$ and a Kneser-Ney syllable trigram language model.
-3. **Discriminative Reranker Training (`src/bin/train/train_reranker.rs`):**
-   - Memory-safe streaming trainer that processes candidates in 100,000-pair chunks (RAM usage capped at $\approx 300$ MB).
-   - Optimizes log-linear softmax loss with Adam/AdaGrad and $L_2$ regularization.
-   - Quantizes $2^{20}$ sparse weights to signed 8-bit integers (`i8`) for zero-overhead array indexing.
+2. **Unified One-Shot Training (`src/bin/train/train.rs`):**
+   - A single unified CLI: `cargo run --release --bin train` (or `make train`).
+   - Runs Baum-Welch expectation-maximization over 3.59M pairs to learn emission probabilities $P(\text{roman chunk} \mid \text{akshara})$ and syllable Kneser-Ney trigrams.
+   - Computes Devanagari word frequency distribution from text corpus.
+   - Fits discriminative reranker features and packs everything directly into `data/akshar.model`.
+   - Supports self-contained smoke tests via `--smoke`.
+3. **Model Packaging (`src/bin/build/pack_model.rs`):**
+   - Allows bundling or re-packing disparate binaries into `data/akshar.model` with optional bigram inclusion and parameter pruning.
 
 ---
 
@@ -205,9 +196,11 @@ graph TD
 
 | Component | Disk Footprint | Memory at Runtime | Algorithmic Complexity | Keystroke Latency |
 | :--- | :--- | :--- | :--- | :--- |
-| **Generative Decoder** | 32 MB (`translit_model.bin`) | $\approx 32$ MB (or 9.1 MB Brotli in WASM) | $O(M \cdot B \cdot L)$ | $0.25 - 0.40$ ms |
-| **Vocabulary WordTrie** | 17 MB (`word_freq_text.bin`) | $\approx 22$ MB heap | $O(M \cdot \Sigma)$ prefix walk | $0.05 - 0.10$ ms |
-| **Discriminative Reranker**| 1 MB (`reranker_weights_sparse.bin`) | 1 MB mmap/embedded | $O(K \cdot (D + S))$ | $0.08 - 0.15$ ms |
-| **Bigram Context Layer** | 41 MB (`word_bigrams.bin`) | $\approx 15$ MB (on-demand / native only) | $O(K \log \text{deg})$ | $0.01 - 0.03$ ms |
+| **Unified Container (`akshar.model`)** | 48 MB (no bigrams) / 88 MB (with bigrams) | $\approx 45$ MB heap (atomic load) | Single read | N/A (load time < 0.6s) |
+| **Generative Decoder** | Included in container | $\approx 32$ MB (or 9.1 MB Brotli in WASM) | $O(M \cdot B \cdot L)$ | $0.25 - 0.40$ ms |
+| **Vocabulary WordTrie** | Included in container | $\approx 22$ MB heap | $O(M \cdot \Sigma)$ prefix walk | $0.05 - 0.10$ ms |
+| **Discriminative Reranker**| Included in container (4 MB) | 4 MB sparse table | $O(K \cdot (D + S))$ | $0.08 - 0.15$ ms |
+| **Bigram Context Layer** | Included in container (41 MB) | $\approx 15$ MB (native only) | $O(K \log \text{deg})$ | $0.01 - 0.03$ ms |
 | **SymSpell & User Trie** | $\approx 50$ KB (`user_dictionary.bin`) | $< 2$ MB heap | $O(1)$ hash lookup | $0.01 - 0.02$ ms |
-| **Total Runtime Engine** | **$\approx 9.1$ MB (Brotli)** | **$\approx 25 - 45$ MB** | **Strictly sub-linear** | **$0.40 - 0.80$ ms** |
+| **Total Runtime Engine** | **$\approx 15$ MB (Brotli)** | **$\approx 25 - 45$ MB** | **Strictly sub-linear** | **$0.40 - 0.80$ ms** |
+

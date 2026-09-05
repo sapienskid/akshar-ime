@@ -83,10 +83,20 @@ pub struct ImeEngine {
     learning_engine: LearningEngine,
     #[allow(dead_code)]
     dictionary_path: Option<String>,
+    pub sparse_table: Option<Vec<i8>>,
 }
 
 impl ImeEngine {
     pub fn new() -> Self {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let unified_path = data_path("akshar.model");
+            if unified_path.exists() {
+                if let Ok(unified) = crate::core::unified::UnifiedModel::load(&unified_path) {
+                    return Self::from_unified(unified);
+                }
+            }
+        }
         let model = load_model_or_default();
         let decoder = ModelDecoder::with_config(
             model,
@@ -113,11 +123,70 @@ impl ImeEngine {
             last_word: None,
             trie: Trie::new(),
             context_model: ContextModel::new(CONTEXT_WINDOW_SIZE),
-            symspell: SymSpell::new(MAX_EDIT_DISTANCE),
-            transliteration_model: HashMap::new(),
+            symspell: SymSpell::default(),
+            transliteration_model: TransliterationModel::new(),
             learning_engine: LearningEngine::new(),
             dictionary_path: None,
+            sparse_table: None,
         }
+    }
+
+    /// Construct engine directly from a unified model container.
+    pub fn from_unified(mut unified: crate::core::unified::UnifiedModel) -> Self {
+        unified.translit.build_trigram_index();
+        let decoder = ModelDecoder::with_config(
+            unified.translit,
+            DecoderConfig {
+                beam_width: DECODER_BEAM,
+                ..DecoderConfig::default()
+            },
+        );
+        let lexicon = None;
+        let reranker = load_reranker(lexicon.clone()).with_freq(Some(unified.vocab_freq.clone()));
+        let ranks = crate::core::reranker::FreqRanks::from_freq_map(&unified.vocab_freq);
+        let word_trie = Some(crate::core::wordtrie::WordTrie::from_freq_map(
+            &unified.vocab_freq,
+            &|a| decoder.model.akshara_id(a),
+            1,
+        ));
+        let reranker_data = Some(crate::core::reranker::RerankerData {
+            freq: unified.vocab_freq,
+            ranks,
+        });
+        Self {
+            decoder,
+            reranker,
+            lexicon,
+            reranker_data,
+            word_trie,
+            corpus_bigrams: unified.bigrams,
+            bigram_context_enabled: true,
+            bigram_boost: DEFAULT_BIGRAM_BOOST,
+            last_word: None,
+            trie: Trie::new(),
+            context_model: ContextModel::new(CONTEXT_WINDOW_SIZE),
+            symspell: SymSpell::default(),
+            transliteration_model: TransliterationModel::new(),
+            learning_engine: LearningEngine::new(),
+            dictionary_path: None,
+            sparse_table: if unified.sparse_reranker_table.is_empty() {
+                None
+            } else {
+                Some(unified.sparse_reranker_table)
+            },
+        }
+    }
+
+    /// Load engine from a unified model file (`akshar.model`).
+    pub fn from_unified_file(path: &std::path::Path) -> Result<Self, Box<dyn std::error::Error>> {
+        let unified = crate::core::unified::UnifiedModel::load(path)?;
+        Ok(Self::from_unified(unified))
+    }
+
+    /// Load engine from in-memory unified model bytes.
+    pub fn from_unified_bytes(bytes: &[u8]) -> Result<Self, Box<dyn std::error::Error>> {
+        let unified = crate::core::unified::UnifiedModel::from_bytes(bytes)?;
+        Ok(Self::from_unified(unified))
     }
 
     pub fn from_file_or_new(path: &str) -> Self {
@@ -173,6 +242,7 @@ impl ImeEngine {
             transliteration_model: HashMap::new(),
             learning_engine: LearningEngine::new(),
             dictionary_path: None,
+            sparse_table: None,
         }
     }
 
@@ -366,7 +436,13 @@ impl ImeEngine {
             let roman = qv.roman.as_str();
             let cands = self.decoder.decode_union(roman, (count * 4).max(50), self.word_trie.as_ref());
             let ranked: Vec<(String, f64)> = match &self.reranker_data {
-                Some(data) => crate::core::reranker::rerank(roman, &cands, &data.freq, &data.ranks),
+                Some(data) => crate::core::reranker::rerank_with_table(
+                    roman,
+                    &cands,
+                    &data.freq,
+                    &data.ranks,
+                    self.sparse_table.as_deref(),
+                ),
                 None => self.reranker.rerank(roman, cands),
             };
             // Convert to the engine's higher-better u64 scale, preserving the
@@ -763,6 +839,7 @@ mod tests {
             transliteration_model: HashMap::new(),
             learning_engine: LearningEngine::new(),
             dictionary_path: None,
+            sparse_table: None,
         }
     }
 

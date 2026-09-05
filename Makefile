@@ -17,9 +17,7 @@ LIB_DIR           := $(PREFIX)/lib
 IBUS_ENGINE_DIR   := $(PREFIX)/lib/ibus/engines
 IBUS_COMPONENT_DIR:= $(PREFIX)/share/ibus/component
 DATA_DIR          := $(PREFIX)/share/akshar-ime
-
-.PHONY: all release debug install uninstall reinstall clean reset-learning restart-ibus help wasm wasm-clean wasm-serve release-upload
-
+.PHONY: all release debug install uninstall reinstall clean reset-learning restart-ibus help wasm wasm-clean wasm-serve release-upload train pack
 # --- Main Targets ---
 
 all: release  ## Build the engine for release (default).
@@ -64,9 +62,17 @@ install:  ## Compile (if needed) and install the engine to system directories.
 	@echo "  > Installing IBus component file..."
 	@sudo cp devanagari-smart.xml $(IBUS_COMPONENT_DIR)/
 	@echo "  > Installing model artifacts..."
-	@for f in data/translit_model.bin data/word_freq_text.bin data/reranker_weights.json data/roman_lexicon.bin; do \
-		if [ -f "$$f" ]; then sudo cp "$$f" $(DATA_DIR)/; fi; \
-	done
+	@if [ -f data/akshar.model ]; then \
+		echo "    * Installing unified model (data/akshar.model)..."; \
+		sudo cp data/akshar.model $(DATA_DIR)/akshar.model; \
+		echo "    * Purging legacy bin files from $(DATA_DIR)..."; \
+		sudo rm -f $(DATA_DIR)/translit_model.bin $(DATA_DIR)/word_freq_text.bin $(DATA_DIR)/reranker_weights_sparse.bin $(DATA_DIR)/word_bigrams.bin $(DATA_DIR)/reranker_weights.json $(DATA_DIR)/crf_model.bin; \
+	else \
+		echo "    * Installing legacy model artifacts..."; \
+		for f in data/translit_model.bin data/word_freq_text.bin data/reranker_weights_sparse.bin data/word_bigrams.bin data/roman_lexicon.bin; do \
+			if [ -f "$$f" ]; then sudo cp "$$f" $(DATA_DIR)/; fi; \
+		done; \
+	fi
 	@echo "  > Updating linker cache..."
 	@sudo ldconfig
 	@echo "\nInstallation complete. Run 'make restart-ibus' (no sudo) to reload IBus,"
@@ -92,9 +98,16 @@ uninstall:  ## Remove the engine from the system.
 
 reinstall: uninstall install  ## Run uninstall and then install.
 
-clean:  ## Remove all build artifacts.
+train:  ## Run the end-to-end one-shot model training pipeline.
+	@cargo run --release --bin train
+
+pack:  ## Pack model binaries into unified data/akshar.model container.
+	@cargo run --release --bin pack_model
+
+clean:  ## Remove all build artifacts and temporary files.
 	@echo "Cleaning build artifacts..."
 	@cargo clean
+	@rm -f data/*.tmp data/smoke.model
 
 reset-learning:  ## Delete the user's learned dictionary (start fresh).
 	@echo "Removing user learning data..."
@@ -122,10 +135,17 @@ wasm-serve: wasm  ## Build WASM and serve demo at http://localhost:PORT/web/ (de
 
 release-upload:  ## Upload locally built model artifacts to a GitHub release (TAG=vX.Y.Z required).
 	@if [ -z "$(TAG)" ]; then echo "usage: make release-upload TAG=vX.Y.Z"; exit 1; fi
-	@test -f data/translit_model.bin || { echo "data/translit_model.bin missing — build via data/README.md"; exit 1; }
-	@test -f data/word_freq_text.bin || { echo "data/word_freq_text.bin missing — build via data/README.md"; exit 1; }
-	@gh release view $(TAG) >/dev/null 2>&1 || gh release create $(TAG) --generate-notes --verify-tag
-	@gh release upload $(TAG) data/translit_model.bin data/word_freq_text.bin --clobber
+	@if [ -f data/akshar.model ]; then \
+		echo "Uploading unified model data/akshar.model..."; \
+		gh release view $(TAG) >/dev/null 2>&1 || gh release create $(TAG) --generate-notes --verify-tag; \
+		gh release upload $(TAG) data/akshar.model --clobber; \
+	elif [ -f data/translit_model.bin ] && [ -f data/word_freq_text.bin ]; then \
+		echo "Uploading legacy model binaries..."; \
+		gh release view $(TAG) >/dev/null 2>&1 || gh release create $(TAG) --generate-notes --verify-tag; \
+		gh release upload $(TAG) data/translit_model.bin data/word_freq_text.bin --clobber; \
+	else \
+		echo "No model artifacts found in data/. Run 'make train' or 'make pack' first."; exit 1; \
+	fi
 	@echo "Uploaded model artifacts to release $(TAG)."
 
 # --- Help ---

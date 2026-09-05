@@ -90,23 +90,22 @@ more.
 [Hugging Face](https://huggingface.co/datasets/ai4bharat/Aksharantar);
 running text comes from Nepali Wikipedia, CC100, and an akshar-ime news crawl.)
 
-### Step 2 — Get the model artifacts
+### Step 2 — Get the model artifact
 
-Two artifacts power the engine (both are gitignored):
+A single unified model container powers the engine:
 
-- `translit_model.bin` (~32 MB) — the EM-trained transliteration table and
-  syllable language model (built from the merged Devanagari word-pair set).
-- `word_freq_text.bin` (~17 MB) — the vocabulary: 470k clean Devanagari words
-  with usage frequencies (counted from the cleaned Wikipedia + CC100 + news
-  corpus).
+- `akshar.model` (~48 MB without bigrams, ~88 MB with full bigrams) — bundles the EM-trained transliteration model, Kneser-Ney syllable LM, 470k-word Devanagari vocabulary frequency distribution, and $2^{20}$-entry discriminative reranker weights into a single atomic binary.
 
-**Option A — download prebuilt artifacts** from the
-[GitHub Releases](https://github.com/sapienskid/akshar-ime/releases) page into
-`data/` (recommended; no training needed).
+**Option A — download prebuilt model:**
+Download `akshar.model` from the [GitHub Releases](https://github.com/sapienskid/akshar-ime/releases) page into `data/akshar.model` (recommended; no training needed).
 
-**Option B — build them locally:** follow the recipes in
-[data/README.md](data/README.md) (download sources → `clean_aksharantar.py` →
-`build_corpus.py` → `build_wordfreq_text` → `train_model`).
+**Option B — train end-to-end with one command:**
+```bash
+cargo run --release --bin train
+# or simply:
+make train
+```
+This ingests the cleaned corpus, trains the EM transliteration model, builds the vocabulary, trains the reranker, packages `data/akshar.model`, and runs a self-verifying smoke test.
 
 ### Step 3 — Build and install
 
@@ -117,9 +116,8 @@ make restart-ibus
 ```
 
 `make` compiles the Rust core and the C engine. `sudo make install` copies the
-engine binary + library + IBus component + model artifacts into the system
-directories (it only re-runs `make` if the artifacts aren't built, so you don't
-need a Rust toolchain under `sudo`). `make restart-ibus` (no sudo) reloads your
+engine binary + library + IBus component + `akshar.model` into the system
+directories (and automatically cleans up any legacy multi-file binaries from `/usr/share/akshar-ime/`). `make restart-ibus` (no sudo) reloads your
 IBus session.
 
 > If `make install` ever needs to build under `sudo` on a rustup-managed
@@ -167,7 +165,7 @@ Type `namaste` → popup `नमस्ते` → `Enter`/`Tab`/`1`. Learned wor
 akshar-ime/
 ├── docs/                               # Comprehensive engineering & mathematical documentation
 │   ├── ARCHITECTURE.md                 # System architecture, runtime sequence diagrams & memory specs
-│   ├── MODULES.md                      # Complete algorithmic & mathematical spec for all 15 modules
+│   ├── MODULES.md                      # Complete algorithmic & mathematical spec for all 16 modules
 │   ├── WASM.md                         # WebAssembly architecture, performance & browser integration
 │   └── plans/                          # Historical design RFCs, math notes & milestone roadmaps
 ├── src/                                # Core Rust engine & platform bindings
@@ -187,6 +185,7 @@ akshar-ime/
 │   │   ├── translit_model.rs           # EM emissions table + Kneser-Ney syllable LM
 │   │   ├── trie.rs                     # Dynamic Trie for user-learned vocabulary & Roman variants
 │   │   ├── types.rs                    # Core type definitions (WordId, WordMetadata, TranslitModel)
+│   │   ├── unified.rs                  # Atomic single-file model container (akshar.model)
 │   │   └── wordtrie.rs                 # Compressed prefix Trie over Devanagari vocabulary
 │   ├── fuzzy/                          # Typo-tolerant candidate generation (SymSpell & orthography)
 │   │   ├── grammar.rs                  # Phonetic Roman canonicalization & skeletonization
@@ -198,36 +197,23 @@ akshar-ime/
 │   ├── wasm.rs                         # WebAssembly FFI bindings & localStorage persistence
 │   ├── lib.rs                          # Root crate library definition
 │   ├── ibus_engine.c                   # Native Linux IBus engine integration (C layer)
-│   └── bin/                            # Command-line tools organized by functional domain
-│       ├── train/                      # Model training pipelines
-│       │   ├── train_model.rs          # EM source-channel transliteration trainer
-│       │   ├── train_reranker.rs       # Streaming discriminative log-linear reranker trainer
-│       │   ├── train_matra.rs          # Factored matra confusion transition probability trainer
-│       │   ├── train_pair_model.rs     # Aligned subword joint pair transliteration trainer
-│       │   └── train_crf.rs            # CRF sequence model trainer
+│   └── bin/                            # Streamlined command-line tools
+│       ├── train/                      # End-to-end model training
+│       │   └── train.rs                # One-shot training & packaging pipeline with smoke test
 │       ├── evaluate/                   # Benchmarks, ablation harnesses & validation
-│       │   ├── evaluate_aksharantar.rs # Held-out Aksharantar test suite evaluation
-│       │   ├── evaluate_model.rs       # Core decoder accuracy & candidate dump harness
-│       │   ├── evaluate_pair_model.rs  # Joint pair model benchmark harness
-│       │   ├── evaluate_context.rs     # Phrase-level bigram context re-ranking harness
-│       │   ├── evaluate_matra.rs       # Factored matra accuracy benchmark
-│       │   ├── evaluate_candidate_union.rs # Multi-source candidate union smoke test
-│       │   ├── evaluate_shrinkage.rs   # Empirical-Bayes frequency shrinkage benchmark
-│       │   ├── evaluate_nepali_transliteration.rs # Out-of-domain Nepali evaluation
-│       │   ├── analyze_errors.rs       # Error taxonomy analyzer & oracle bounds
-│       │   ├── verify_parity.rs        # Cross-pipeline golden test parity verification
-│       │   └── evaluate.rs             # Bootstrap confidence interval evaluation harness
-│       └── build/                      # Data preprocessing & artifact generators
-│           ├── build_wordfreq_text.rs  # Vocabulary frequency builder from 75M+ text tokens
-│           ├── build_wordfreq.rs       # Frequency counter from parallel corpus pairs
-│           ├── build_lexicon.rs        # Roman-to-Devanagari binary lexicon builder
+│       │   ├── evaluate_aksharantar.rs # Held-out Aksharantar test split evaluation
+│       │   ├── evaluate.rs             # Bootstrap confidence intervals & latency benchmark
+│       │   └── analyze_errors.rs       # Error taxonomy analyzer & oracle bounds
+│       └── build/                      # Data preprocessing & artifact packaging
+│           ├── pack_model.rs           # Package binary tables into unified akshar.model container
+│           ├── build_wordfreq_text.rs  # Vocabulary frequency builder from text corpus
 │           ├── build_bigrams.rs        # Word bigram frequency builder from text
-│           ├── build_lm_from_text.rs   # Syllable / word LM builder from running text
-│           ├── build_morph.rs          # MDL morphological prefix/suffix table builder
+│           ├── build_lexicon.rs        # Roman-to-Devanagari binary lexicon builder
 │           ├── romanize.rs             # Backward transliteration / romanization utility
 │           ├── probe_model.rs          # Interactive model emission & prediction inspector
 │           └── prune_model.rs          # Model parameter pruning utility
 ├── data/                               # Dataset directory (gitignored; see data/README.md)
+│   ├── akshar.model                    # Unified production model container (all components bundled)
 │   ├── aksharantar/                    # AI4Bharat Aksharantar parallel word-pairs
 │   ├── raw/                            # Raw text dumps (Wikipedia, CC100, news crawl)
 │   └── pipeline/                       # Data cleaning, deduplication & splitting scripts
@@ -240,45 +226,46 @@ akshar-ime/
 
 ## Training, Evaluation & Build Recipes
 
-All binaries are mapped cleanly and can be executed with `cargo run --release --bin <name>`:
+All tools can be executed directly with `cargo run --release --bin <name>` or via `make`:
 
-### 1. Training Workflows (`src/bin/train/`)
+### 1. Unified One-Shot Training (`src/bin/train/`)
 ```bash
-# Train the generative EM transliteration model & syllable LM:
-cargo run --release --bin train_model -- --train data/corpus_clean.json --output data/translit_model.bin
+# Complete end-to-end training + packaging in a single command:
+cargo run --release --bin train
+# or:
+make train
 
-# Train the discriminative log-linear reranker (dense weights + sparse hash table):
-cargo run --release --bin train_reranker -- --train data/aksharantar/nep_train.json --epochs 5
-
-# Train the factored vowel/matra confusion transition model:
-cargo run --release --bin train_matra -- --train data/aksharantar/nep_train.json --output data/matra_transitions.bin
+# Run a self-verification smoke test:
+cargo run --release --bin train -- --smoke
 ```
 
-### 2. Evaluation & Benchmarking Workflows (`src/bin/evaluate/`)
+### 2. Evaluation & Benchmarks (`src/bin/evaluate/`)
 ```bash
 # Run the official Aksharantar test benchmark (reports Top-1 and Top-5):
 cargo run --release --bin evaluate_aksharantar
 
-# Evaluate the multi-source candidate union oracle coverage:
-cargo run --release --bin evaluate_candidate_union
+# Run full evaluation with bootstrap 95% confidence intervals and latency:
+cargo run --release --bin evaluate
 
-# Evaluate the multi-core empirical-Bayes frequency shrinkage:
-cargo run --release --bin evaluate_shrinkage
-
-# Run error taxonomy and failure analysis:
-cargo run --release --bin analyze_errors -- --dataset data/aksharantar/nep_test.json
+# Run linguistic error taxonomy and oracle bounds analysis:
+cargo run --release --bin analyze_errors
 ```
 
-### 3. Data & Artifact Construction (`src/bin/build/`)
+### 3. Packaging & Utilities (`src/bin/build/`)
 ```bash
-# Build word frequency table from 75M+ cleaned running text tokens:
-cargo run --release --bin build_wordfreq_text -- --input data/raw/nepali_text.txt --output data/word_freq_text.bin
+# Package loose model binaries into a unified data/akshar.model container:
+cargo run --release --bin pack_model
+# or:
+make pack
 
-# Build the exact Roman-to-Devanagari corpus lexicon:
-cargo run --release --bin build_lexicon -- --corpus data/aksharantar/nep_train.json --output data/roman_lexicon.bin
+# Interactive inspector for syllable emissions and candidate completions:
+cargo run --release --bin probe_model -- --roman namaste
 
-# Build MDL morphological prefix/suffix segmenter tables:
-cargo run --release --bin build_morph -- --vocab data/word_freq_text.bin --output data/morph_tables.bin
+# Build vocabulary frequencies from cleaned text:
+cargo run --release --bin build_wordfreq_text -- data/store/corpus_clean.txt
+
+# Build word bigram transitions:
+cargo run --release --bin build_bigrams -- --input data/store/corpus_clean.txt --output data/word_bigrams.bin
 ```
 
 ## Data & Attribution
