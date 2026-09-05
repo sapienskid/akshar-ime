@@ -262,3 +262,12 @@ Result: **80.69% native top-1** — same as the Python version's best, now with
 a reproducible, model-driven, in-repo implementation. Variant expansion is
 neutral at this scale (canonical signal dominates); superseded romanize_vocab.py
 retired to data-pipeline/ history.
+
+## Weighted training pairs (engine change, 2026-09-05)
+
+`Trainer::add_pair_weighted(roman, dev, weight)`: observation weight scales LM
+counts and EM posteriors/transition collection (v1 + v2). train_model accepts
+an optional `"weight"` field in JSONL; romanize.rs now emits DEDUPLICATED
+weighted rows (1.518M rows, 113MB — was 300MB+ of repeated lines).
+Functional equivalence verified: weighted-dedup model = **80.69%**, identical
+to the repetition-encoded version.

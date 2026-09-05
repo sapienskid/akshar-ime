@@ -27,6 +27,14 @@ struct Record<'a> {
     english: &'a str,
     #[serde(rename = "native word")]
     native: &'a str,
+    /// Observation weight (default 1).  Lets deduplicated synthetic files
+    /// carry frequency information without repeating lines.
+    #[serde(default = "one")]
+    weight: u32,
+}
+
+fn one() -> u32 {
+    1
 }
 
 struct Args {
@@ -107,7 +115,7 @@ fn ingest(path: &PathBuf, trainer: &mut Trainer, skipped: &mut usize) {
                 continue;
             }
         };
-        trainer.add_pair(rec.english, rec.native);
+        trainer.add_pair_weighted(rec.english, rec.native, rec.weight as f64);
         count += 1;
         if count.is_multiple_of(500_000) {
             eprintln!(

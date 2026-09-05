@@ -68,6 +68,8 @@ fn main() {
     let mut out = std::io::BufWriter::new(std::fs::File::create(&out_path).expect("create out"));
     let mut n_pairs = 0usize;
     let mut n_words = 0usize;
+    // (roman, native) -> weight: deduplicated output, weight carries frequency.
+    let mut weighted: HashMap<(String, String), u32> = HashMap::new();
     for line in BufReader::new(f).lines().map_while(Result::ok) {
         let line = line.trim();
         if line.is_empty() || line.starts_with("word,") {
@@ -111,27 +113,31 @@ fn main() {
         }
         n_words += 1;
         for (rank, (roman, w)) in combos.iter().enumerate() {
-            // weight: canonical gets the word frequency, variants decay
-            let reps = if rank == 0 {
-                freq.min(4)
+            let weight = if rank == 0 {
+                freq.min(20)
             } else {
-                (freq as f64 * (-*w as f64).exp() * 4.0).round() as u64
-            }
-            .max(1)
-            .min(2);
-            for _ in 0..reps {
-                writeln!(
-                    out,
-                    "{}",
-                    json_line(&roman.to_lowercase(), word)
-                )
-                .expect("write");
-                n_pairs += 1;
-            }
+                ((freq as f64 * (-*w as f64).exp() * 4.0).round() as u64).clamp(1, 8)
+            } as u32;
+            let key = (roman.to_lowercase(), word.to_string());
+            *weighted.entry(key).or_insert(0) += weight;
+            n_pairs += 1;
         }
     }
+    for ((roman, native), weight) in &weighted {
+        writeln!(
+            out,
+            "{{\"english\": {}, \"native\": {}, \"weight\": {}}}",
+            serde_json::to_string(roman).unwrap(),
+            serde_json::to_string(native).unwrap(),
+            weight
+        )
+        .expect("write");
+    }
     out.flush().expect("flush");
-    eprintln!("synthetic pairs: {n_pairs} from {n_words} words -> {out_path}");
+    eprintln!(
+        "synthetic: {n_pairs} pairs -> {} deduplicated weighted rows -> {out_path}",
+        weighted.len()
+    );
 }
 
 fn json_line(roman: &str, native: &str) -> String {

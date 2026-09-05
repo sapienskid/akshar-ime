@@ -28,6 +28,8 @@ use std::collections::{BTreeSet, HashMap};
 struct Pair {
     roman: Vec<u8>,
     aks: Vec<u32>,
+    /// Observation weight (frequency): scales LM counts and EM posteriors.
+    weight: f64,
 }
 
 pub struct TrainerConfig {
@@ -136,6 +138,12 @@ impl Trainer {
     /// whose roman is clean lowercase ASCII `a-z` and of sane length also feed
     /// the EM emission model (seeded from the codepoint aligner).
     pub fn add_pair(&mut self, roman: &str, dev: &str) {
+        self.add_pair_weighted(roman, dev, 1.0);
+    }
+
+    /// Add a pair with an observation weight (e.g. corpus frequency of a
+    /// synthetic pair).  Weight scales the LM counts and the EM posteriors.
+    pub fn add_pair_weighted(&mut self, roman: &str, dev: &str, weight: f64) {
         if roman.is_empty() || dev.is_empty() {
             self.skipped += 1;
             return;
@@ -150,12 +158,12 @@ impl Trainer {
             return;
         }
 
-        // LM counts (independent of roman quality).
+        // LM counts (independent of roman quality), scaled by weight.
         for &a in &aks {
-            self.unigram_counts[a as usize] += 1;
+            self.unigram_counts[a as usize] += weight as u64;
         }
-        self.word_initial[aks[0] as usize] += 1;
-        self.total_words += 1;
+        self.word_initial[aks[0] as usize] += weight as u64;
+        self.total_words += weight as u64;
         for w in aks.windows(2) {
             let (b, c) = (w[0], w[1]);
             let e = self.bigram_counts.entry((b, c)).or_insert(0);
@@ -163,7 +171,7 @@ impl Trainer {
                 self.continuation[c as usize] += 1;
                 self.distinct_bigrams += 1;
             }
-            *e += 1;
+            *e += weight as u64;
         }
         for w in aks.windows(3) {
             let (a, b, c) = (w[0], w[1], w[2]);
@@ -171,7 +179,7 @@ impl Trainer {
             if *e == 0 {
                 *self.trigram_successors.entry((a, b)).or_insert(0) += 1;
             }
-            *e += 1;
+            *e += weight as u64;
         }
 
         // EM pairs: clean lowercase a-z roman, bounded lengths.
@@ -225,11 +233,13 @@ impl Trainer {
             self.pairs.push(Pair {
                 roman: roman.as_bytes().to_vec(),
                 aks,
+                weight,
             });
         } else {
             self.pairs[id] = Pair {
                 roman: roman.as_bytes().to_vec(),
                 aks,
+                weight,
             };
         }
         self.ingested += 1;
@@ -557,7 +567,7 @@ fn e_step_chunk(
                     if let Some(&p) = em.get(&key) {
                         let post = f[j - 1][i - l] * p * b[j][i] * inv_z;
                         if post > 0.0 {
-                            *counts_a.entry(key).or_insert(0.0) += post;
+                            *counts_a.entry(key).or_insert(0.0) += post * pair.weight;
                         }
                     }
                 }
@@ -567,7 +577,7 @@ fn e_step_chunk(
                     for i in 0..=m {
                         let post = f[j - 1][i] * p0 * b[j][i] * inv_z;
                         if post > 0.0 {
-                            *counts_a.entry(0u32).or_insert(0.0) += post;
+                            *counts_a.entry(0u32).or_insert(0.0) += post * pair.weight;
                         }
                     }
                 }

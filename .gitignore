@@ -21,3 +21,6 @@ data/roman_lexicon.bin
 # Uncomment to ignore if you prefer not to commit:
 # wasm/pkg/
 # js uses no build step — keep committed
+
+# Private scraping pipeline + data (never tracked)
+data-pipeline/
