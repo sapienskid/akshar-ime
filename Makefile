@@ -122,9 +122,9 @@ wasm-serve: wasm  ## Build WASM and serve demo at http://localhost:PORT/web/ (de
 
 # --- Data system (see data/README.md) — everything builds into data/ ---
 
-data: data-raw data-vocab data-model  ## Build the full data chain: downloads → vocab → model.
+data: data-raw data-clean data-vocab data-model  ## Build the full data chain: downloads → cleaned corpus → vocab → model.
 
-data-raw:  ## Download corpora: Aksharantar splits + Nepali Wikipedia + CC100 → data/.
+data-raw:  ## Download source corpora: Aksharantar splits + Nepali Wikipedia + CC100 → data/raw (transient).
 	@mkdir -p data/aksharantar data/raw
 	@python3 data/pipeline/fetch_corpus.py data/aksharantar
 	@if [ ! -f data/raw/newiki.txt ]; then \
@@ -140,8 +140,16 @@ data-raw:  ## Download corpora: Aksharantar splits + Nepali Wikipedia + CC100 �
 		rm -f /tmp/cc100-ne.txt.xz; \
 	else echo "  > data/raw/cc100ne.txt already present"; fi
 
-data-vocab:  ## Count data/raw/* frequencies → data/word_freq_text.bin.
-	@cargo run --release --bin build_wordfreq_text -- data/raw/newiki.txt data/raw/cc100ne.txt data/raw/news.txt
+data-clean:  ## Compile all sources into the single cleaned corpus (data/store/corpus_clean.txt), then delete the raw inputs.
+	@mkdir -p data/store
+	@python3 data/pipeline/build_corpus.py data/store/corpus_clean.txt \
+		--db data/store/nepali_text.db \
+		data/raw/newiki.txt data/raw/cc100ne.txt data/raw/news.txt
+	@rm -rf data/raw
+	@echo "  > raw sources deleted; corpus_clean.txt is now the only stored text"
+
+data-vocab:  ## Count the cleaned corpus → data/word_freq_text.bin.
+	@cargo run --release --bin build_wordfreq_text -- data/store/corpus_clean.txt
 
 data-model:  ## Train the EM model (train+valid) → data/translit_model.bin.
 	@cargo run --release --bin train_model -- \
@@ -149,9 +157,11 @@ data-model:  ## Train the EM model (train+valid) → data/translit_model.bin.
 		--extra data/aksharantar/nep_valid.json \
 		--out data/translit_model.bin
 
-data-store:  ## Scraping pipeline: incremental crawl + count + export → data/store/.
+data-store:  ## Scraping pipeline: incremental crawl + count + export, then re-clean corpus + vocab.
+	@python3 data/pipeline/pipeline.py crawl
 	@python3 data/pipeline/pipeline.py count
 	@python3 data/pipeline/pipeline.py export --merge-base data/word_freq_text.bin
+	@$(MAKE) data-clean data-vocab
 
 release-upload:  ## Upload locally built model artifacts to a GitHub release (TAG=vX.Y.Z required).
 	@if [ -z "$(TAG)" ]; then echo "usage: make release-upload TAG=vX.Y.Z"; exit 1; fi

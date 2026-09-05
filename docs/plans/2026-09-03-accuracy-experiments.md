@@ -381,3 +381,24 @@ ZWJ/ZWNJ, ASCII). `pipeline.py` WORD regex matched for future DB counts.
 Artifact 25.7 → 18.4 MB. All previous "merged vocab" numbers in this log were
 measured pre-fix; the post-fix merged vocab is the new shipped artifact and
 beats even the wiki-only maximum (80.69).
+
+## Single cleaned corpus + dedup (2026-09-05, night) — 80.98%
+
+Raw sources eliminated: `data/raw/` (1.9 GB dumps) and the 1.4 GB article DB
+are consumed by `data/pipeline/build_corpus.py` and deleted. The only stored
+text is now `data/store/corpus_clean.txt`: 2.89M clean unique sentences,
+86.1M tokens (8.28M raw lines in, 5.39M exact-duplicate lines dropped —
+boilerplate/syndication), every token a pure Devanagari letter run, line
+needs ≥4 words. Word bigrams (word_pairs.csv) remain and are re-derivable
+from the corpus. Synthetic pair files and intermediate vocab CSVs deleted
+(self-training falsified; CSVs re-derivable).
+
+| Vocab | words | AK-Freq top-1 | ALL | NEF | NEI |
+|---|---|---|---|---|---|
+| pre-fix 3-source | 708,833 | 80.65% | 59.94 | 28.40 | 44.73 |
+| de-noised 3-source | 492,365 | 80.83% | 60.38 | — | — |
+| **cleaned + deduped corpus** | **470,012** | **80.98%** | 60.28 | 28.76 | 45.07 |
+
+Cleaning the *input data* is now the cheapest accuracy lever found so far
+(+0.33 total from tokenizer + dedup). `make data` = raw → clean → vocab →
+model; `data-clean` deletes the raw inputs after compiling the corpus.
