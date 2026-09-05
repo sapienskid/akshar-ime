@@ -2,7 +2,6 @@
 
 Date: 2026-09-05
 Status: Reference document. Companion: `2026-09-05-research-agenda.md`.
-Formal version: `docs/paper/akshar-mathematics.tex` (compiled PDF).
 All equations match the implemented code (file references given).
 
 ---
