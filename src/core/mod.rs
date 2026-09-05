@@ -12,3 +12,4 @@ pub mod translit_model;
 pub mod trie;
 pub mod types;
 pub mod v2;
+pub mod wordtrie;

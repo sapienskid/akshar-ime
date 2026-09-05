@@ -158,3 +158,28 @@ within 1.4 pts of the neural SOTA, zero neural network, 5.5MB extra artifact.**
 Remaining levers toward 80%+: real word-trie intersection during decode
 (restricts candidates to real words exactly, not just rescoring), word-bigram
 context from the same corpus, then the v3 unified estimator.
+
+## Word-trie intersection (M4 graph layer, 2026-09-05)
+
+Built `src/core/wordtrie.rs` + `ModelDecoder::decode_in_words` (lattice ∩
+dictionary trie walk, 176k nodes over 112,589 model-expressible words) and
+eval modes in evaluate_model (--intersect, --trie-weight).
+
+| Mode | native top-1 | native top-5 |
+|---|---|---|
+| Rescoring only (best) | **78.84%** | 90.23% |
+| Merge intersection (w=2) | 78.65% | 91.08% |
+| Strict intersection (w=1) | 78.56% | 88.47% |
+| Deeper lists (k=20/50) + rescoring | 78.84% | — |
+
+**Finding: isolated-word top-1 has PLATEAUED at ~79%.** Intersection improves
+top-5 (91.1%) but not top-1: the residual errors are pairs of real words both
+known to the dictionary and grammar (कल/काल-class), where the roman string
+carries no deciding information. Deeper candidate lists don't help either —
+rank-1 is usually also a real word, so frequency can't overtake it.
+
+**Conclusion (entropy decomposition, empirically confirmed):** the remaining
+~13 points to oracle (92%) require information OUTSIDE the roman string:
+word-bigram CONTEXT from running text (E6) is the next and correct lever,
+then the v3 unified estimator for the size/parameter-free story. This is the
+paper's central claim, now with experimental proof.

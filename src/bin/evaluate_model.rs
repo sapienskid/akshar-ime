@@ -66,6 +66,8 @@ fn main() {
     let mut per_chunk = 16usize;
     let mut vocab_weight = 0.0f64;
     let mut vocab: Option<std::collections::HashMap<String, u32>> = None;
+    let mut use_intersection = false;
+    let mut trie_weight = 2.0f64;
 
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -99,6 +101,12 @@ fn main() {
                     .parse::<usize>()
                     .expect("--per-chunk <n>")                    .max(1)
             }
+            "--intersect" => use_intersection = true,
+            "--trie-weight" => {
+                trie_weight = next_value(&arg, args.next())
+                    .parse()
+                    .expect("--trie-weight <f>")
+            }
             "--vocab-weight" => {
                 vocab_weight = next_value(&arg, args.next())
                     .parse()
@@ -124,6 +132,7 @@ fn main() {
         vocab = Some(map);
     }
 
+
     let model = TranslitModel::load(Path::new(&model_path))
         .unwrap_or_else(|e| panic!("load model {model_path}: {e}"));
     assert!(model.validate(), "model failed validation");
@@ -133,7 +142,22 @@ fn main() {
         lm_weight,
         ..Default::default()
     };
-    let decoder = akshar_ime::core::decoder::ModelDecoder::with_config(model, config);
+    let decoder = akshar_ime::core::decoder::ModelDecoder::with_config(model.clone(), config);
+    // The word trie: lattice ∩ dictionary, built over the model's aksharas.
+    let wtrie = if use_intersection {
+        let map: std::collections::HashMap<String, u32> =
+            bincode::deserialize(&std::fs::read("data/word_freq_text.bin").expect("vocab"))
+                .expect("deserialize vocab");
+        let t = akshar_ime::core::wordtrie::WordTrie::from_freq_map(
+            &map,
+            &|a| model.akshara_id(a),
+            1,
+        );
+        eprintln!("word trie: {} words, {} nodes", t.words, t.children.len());
+        Some(t)
+    } else {
+        None
+    };
     eprintln!(
         "Decoder ready (aksharas={}, chunks={}, lm_weight={lm_weight}, beam={beam})",
         decoder.model.aksharas.len(),
@@ -157,6 +181,19 @@ fn main() {
                 }
             }
             scored.sort_by(|a, b| a.1.total_cmp(&b.1));
+        }
+        // Graph intersection: lattice ∩ word-trie, frequency-biased merge.
+        if let Some(trie) = &wtrie {
+            let mut in_words = decoder.decode_in_words(&case.roman, topk.max(8), trie);
+            if !in_words.is_empty() {
+                // Strict intersection: known roman -> rank among real words
+                // only (frequency-tilted decoder scores); OOV -> free decode.
+                for (dev, score, freq) in &mut in_words {
+                    *score -= trie_weight * (1.0 + *freq as f64).ln();
+                }
+                in_words.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+                scored = in_words.into_iter().map(|(d, s, _)| (d, s)).collect();
+            }
         }
         decode_time += t.elapsed().as_secs_f64();
         let top: Vec<String> = scored.into_iter().map(|(d, _)| d).collect();

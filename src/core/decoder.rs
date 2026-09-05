@@ -282,6 +282,113 @@ impl ModelDecoder {
 
     /// Walk a persistent path in the arena back to the root, producing the
     /// Devanagari string and its akshara count.
+    /// M4: decode restricted to paths that stay inside the word trie — the
+    /// lattice ∩ dictionary graph intersection.  Every edge must extend the
+    /// current trie node; only completions on trie terminals (real words with
+    /// a corpus frequency) are returned.  Returns (dev, score, freq).
+    pub fn decode_in_words(
+        &self,
+        roman: &str,
+        k: usize,
+        trie: &crate::core::wordtrie::WordTrie,
+    ) -> Vec<(String, f64, u32)> {
+        let roman = roman.to_ascii_lowercase();
+        let edges_by_pos = self.build_edges(&roman);
+        let m = roman.len();
+        if m == 0 {
+            return vec![];
+        }
+        let k = k.max(1);
+
+        let mut arena: Vec<PathCell> = Vec::with_capacity(256);
+        #[derive(Clone)]
+        struct St {
+            pos: usize,
+            prev: Option<u32>,
+            prev2: Option<u32>,
+            score: f64,
+            path: Option<u32>,
+            wnode: usize,
+        }
+        let mut beam = vec![St {
+            pos: 0,
+            prev: None,
+            prev2: None,
+            score: 0.0,
+            path: None,
+            wnode: 0,
+        }];
+        let mut seen: HashMap<String, (f64, u32)> = HashMap::new();
+
+        for _step in 0..MAX_STEPS {
+            if beam.is_empty() {
+                break;
+            }
+            let mut next: Vec<St> = Vec::with_capacity(beam.len() * 8);
+            for st in &beam {
+                if st.pos == m {
+                    if let Some(f) = trie.freq(st.wnode) {
+                        let (dev, _) = self.reconstruct(&arena, st.path);
+                        seen.entry(dev)
+                            .and_modify(|best| {
+                                if st.score < best.0 {
+                                    *best = (st.score, f);
+                                }
+                            })
+                            .or_insert((st.score, f));
+                    }
+                    continue;
+                }
+                for &e in &edges_by_pos[st.pos] {
+                    if let Some(wn) = trie.child(st.wnode, e.a) {
+                        let fluency = match (st.prev2, st.prev) {
+                            (_, None) => self.model.start_weight(e.a),
+                            (None, Some(b)) => self.model.bigram_weight(b, e.a),
+                            (Some(a), Some(b)) => self.model.trigram_weight(a, b, e.a),
+                        };
+                        let score = st.score + e.w as f64 + fluency * self.config.lm_weight;
+                        let cell = PathCell {
+                            parent: st.path,
+                            akshara: e.a,
+                        };
+                        let idx = arena.len() as u32;
+                        arena.push(cell);
+                        next.push(St {
+                            pos: st.pos + e.len,
+                            prev: Some(e.a),
+                            prev2: st.prev,
+                            score,
+                            path: Some(idx),
+                            wnode: wn,
+                        });
+                    }
+                }
+            }
+            // Trie node identity subsumes the path hash: a node is reached by
+            // exactly one akshara sequence.  Dedup by (pos, prev2, prev, node).
+            next.sort_by(|a, b| {
+                a.pos
+                    .cmp(&b.pos)
+                    .then_with(|| a.prev.cmp(&b.prev))
+                    .then_with(|| a.prev2.cmp(&b.prev2))
+                    .then_with(|| a.wnode.cmp(&b.wnode))
+                    .then_with(|| a.score.total_cmp(&b.score))
+            });
+            next.dedup_by(|a, b| {
+                a.pos == b.pos && a.prev == b.prev && a.prev2 == b.prev2 && a.wnode == b.wnode
+            });
+            next.sort_by(|a, b| a.score.total_cmp(&b.score));
+            next.truncate(self.config.beam_width.max(64) * 2);
+            beam = next;
+        }
+
+        let mut out: Vec<(String, f64, u32)> =
+            seen.into_iter().map(|(d, (s, f))| (d, s, f)).collect();
+        out.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+        out.truncate(k);
+        out
+    }
+
     fn reconstruct(&self, arena: &[PathCell], path: Option<u32>) -> (String, usize) {
         let mut aks = Vec::with_capacity(12);
         let mut cur = path;
