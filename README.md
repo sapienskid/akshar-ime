@@ -81,15 +81,30 @@ The dataset is published by AI4Bharat on
 [Hugging Face](https://huggingface.co/datasets/ai4bharat/Aksharantar) (Nepali
 files: `nep_train.json`, `nep_valid.json`, `nep_test.json`).
 
-### Step 2 — Build the model artifacts
+### Step 2 — Get the model artifacts
 
-The transliteration model and lexicon are generated from the corpus (they are
-gitignored), so build them once:
+Two artifacts power the engine (both are gitignored):
+
+- `translit_model.bin` (~22 MB) — the EM-trained transliteration table and
+  syllable language model (built from the Aksharantar word pairs).
+- `word_freq_text.bin` (~20 MB) — the vocabulary: 570k real Devanagari words
+  with usage frequencies (counted from Nepali Wikipedia + CC100 running text).
+
+**Option A — download prebuilt artifacts** from the
+[GitHub Releases](https://github.com/sapienskid/akshar-ime/releases) page into
+`data/` (recommended; no training needed).
+
+**Option B — build them locally:**
 
 ```bash
-cargo run --release --bin train_model      # ~2-3 min (threaded), EM + Kneser-Ney LM
-cargo run --release --bin build_lexicon    # ~5 s, roman → Devanagari dictionary
+# Vocabulary from running text (downloads Wikipedia + CC100 dumps, ~5 min)
+cargo run --release --bin build_wordfreq_text -- /tmp/newiki.txt /tmp/cc100ne.txt
+# Transliteration model from the corpus (~2-3 min, threaded)
+cargo run --release --bin train_model
 ```
+
+(Word-counting scripts for the raw dumps live in
+`.github/workflows/release.yml` — the release build runs them for you.)
 
 ### Step 3 — Build and install
 
@@ -166,18 +181,25 @@ Type `namaste` → popup `नमस्ते` → `Enter`/`Tab`/`1`. Learned wor
 - `src/bin/`: Training and evaluation tools (`train_model`, `build_lexicon`,
   `train_reranker`, `evaluate`, `evaluate_model`, `evaluate_aksharantar`,
   `evaluate_nepali_transliteration`, `probe_model`).
-- `data/`: Aksharantar corpus (`aksharantar/`) and built artifacts.
+- `data/`: Aksharantar corpus (`aksharantar/`) and built artifacts
+  (`translit_model.bin`, `word_freq_text.bin`).
 - `src/ibus_engine.c`: The C code that integrates the Rust library with IBus.
 - `Makefile`: The build and installation script.
 - `devanagari-smart.xml`: The IBus component registration file.
 
 ## Data & Attribution
 
-The transliteration model is trained on the **[Aksharantar](https://huggingface.co/datasets/ai4bharat/Aksharantar)**
-corpus published by [AI4Bharat](https://ai4bharat.iitm.ac.in/) (IIT Madras), described in
-*IndicXlit: A Transliteration Model for Indic Languages* (arXiv:2205.03018). Aksharantar's
-mined data is released under [CC0](https://creativecommons.org/publicdomain/zero/1.0/), with
-some portions under CC-BY; see the dataset card for details.
+The engine is built from three open datasets:
+
+- **[Aksharantar](https://huggingface.co/datasets/ai4bharat/Aksharantar)** (AI4Bharat,
+  IIT Madras; arXiv:2205.03018) — 2.4M Nepali roman→Devanagari word pairs that train the
+  transliteration model (CC0, some portions CC-BY). The corpus is **not** included in this
+  repository — download it separately (Step 1).
+- **Nepali Wikipedia** (CC-BY-SA) and **CC100 Nepali** (CC0) — 75M tokens of running text
+  providing the 570k-word frequency vocabulary. Only the derived word-frequency counts are
+  shipped (`word_freq_text.bin`).
+- **Your own typing** — the engine's adaptive learning happens entirely on-device
+  (`~/.config/akshar-devanagari/user_dictionary.bin`); it never leaves your machine.
 
 - The corpus itself is **not** included in this repository — download it separately
   (see Step 1 above).

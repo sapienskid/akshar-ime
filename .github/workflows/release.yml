@@ -72,12 +72,46 @@ jobs:
           PY
           ls -lh data/aksharantar/
 
-      - name: Build model artifacts (EM + lexicon + reranker)
+      - name: Build word-frequency vocabulary (Nepali Wikipedia + CC100)
+        run: |
+          curl -sL -o /tmp/newiki.xml.bz2 https://dumps.wikimedia.org/newiki/latest/newiki-latest-pages-articles.xml.bz2
+          python3 - << 'PY'
+          import bz2, re
+          out = open('/tmp/newiki.txt', 'w', encoding='utf-8')
+          text_re = re.compile(r'<text[^>]*>(.*?)</text>', re.DOTALL)
+          tag_re = re.compile(r'\[\[([^|\]]*\|)?([^|\]]*)\]\]')
+          cleanup = re.compile(r'\{\{.*?\}\}|<[^>]+>|\[http\S*\]')
+          with bz2.open('/tmp/newiki.xml.bz2', 'rt', encoding='utf-8', errors='ignore') as f:
+              data = f.read()
+          for m in text_re.finditer(data):
+              t = tag_re.sub(r'\2', m.group(1))
+              t = cleanup.sub(' ', t)
+              for line in t.splitlines():
+                  dev = sum(1 for c in line if '\u0900' <= c <= '\u097f')
+                  if dev >= 10 and len(line.strip()) > 20:
+                      out.write(line.strip() + '\n')
+          out.close()
+          PY
+          curl -sL -o /tmp/cc100-ne.txt.xz https://data.statmt.org/cc-100/ne.txt.xz
+          python3 - << 'PY'
+          import lzma
+          out = open('/tmp/cc100ne.txt', 'w', encoding='utf-8')
+          n = 0
+          with lzma.open('/tmp/cc100-ne.txt.xz', 'rt', encoding='utf-8', errors='ignore') as f:
+              for line in f:
+                  dev = sum(1 for c in line if '\u0900' <= c <= '\u097f')
+                  if dev >= 10 and len(line.strip()) > 20:
+                      out.write(line); n += 1
+                  if n >= 3000000: break
+          out.close()
+          PY
+          cargo run --release --bin build_wordfreq_text -- /tmp/newiki.txt /tmp/cc100ne.txt
+
+      - name: Build model artifacts (EM + reranker)
         run: |
           cargo run --release --bin train_model -- --train data/aksharantar/nep_train.json --extra data/aksharantar/nep_valid.json --out data/translit_model.bin
-          cargo run --release --bin build_lexicon
           cargo run --release --bin train_reranker || echo "train_reranker optional, continue"
-          ls -lh data/translit_model.bin data/roman_lexicon.bin data/reranker_weights.json
+          ls -lh data/translit_model.bin data/word_freq_text.bin data/reranker_weights.json
           echo "Model gzip:"
           gzip -c data/translit_model.bin | wc -c | awk '{printf "%d bytes %.1f MB\n",$1,$1/1024/1024}'
           brotli -c data/translit_model.bin | wc -c | awk '{printf "brotli %d bytes %.1f MB\n",$1,$1/1024/1024}'
@@ -107,7 +141,7 @@ jobs:
             js/akshar-ime.js
             web/index.html
             data/translit_model.bin
-            data/roman_lexicon.bin
+            data/word_freq_text.bin
             data/reranker_weights.json
           fail_on_unmatched_files: false
         env:

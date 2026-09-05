@@ -64,7 +64,7 @@ install:  ## Compile (if needed) and install the engine to system directories.
 	@echo "  > Installing IBus component file..."
 	@sudo cp devanagari-smart.xml $(IBUS_COMPONENT_DIR)/
 	@echo "  > Installing model artifacts..."
-	@sudo cp data/translit_model.bin data/roman_lexicon.bin data/reranker_weights.json $(DATA_DIR)/
+	@sudo cp data/translit_model.bin data/word_freq_text.bin data/reranker_weights.json $(DATA_DIR)/
 	@echo "  > Updating linker cache..."
 	@sudo ldconfig
 	@echo "\nInstallation complete. Run 'make restart-ibus' (no sudo) to reload IBus,"
