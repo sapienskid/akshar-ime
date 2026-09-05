@@ -433,3 +433,48 @@ Decode 14.0 ms/word at beam 256 (model 32.3 MB, 16.5k aksharas).
 - Purnabiram: trailing `.` appends । to every suggestion (`namaste.` →
   `नमस्ते।`); a lone `.` is । itself.
 - 6 new unit tests; suite 60/60.
+
+## S5/S1/S2 experiments — reranker v2 (2026-09-05, late night)
+
+**S5 multi-reference benchmark.** IndicXlit's protocol scores inputs against
+up to 4 roman variants per word; our test has exactly one per word (98.1% of
+test natives have no second spelling anywhere in train — held out by
+construction). Built `data/eval/test_multiref.jsonl`: for each of 3,944
+distinct test natives, the 3 highest-probability emission-table variant
+spellings (romanize.rs, cycle-consistent) join the original → 14,410 cases.
+On this stricter benchmark the shipped model scores **75.29% native top-1**
+(model-spawned variants are harder inputs than human-annotated ones; the
+single-ref 80.98 stays the continuity headline).
+
+**S1 discriminative reranker (the win).** `evaluate_model --dump` exports the
+raw k=50 (emit, lm, n_aksharas) + exact-vocabulary scores per case;
+`data/pipeline/reranker_v2.py` trains a softmax reranker (conditional
+likelihood of the gold over the candidate list) on 9,155 valid cases with:
+decoder emit/lm, candidate rank, the shipped heuristic score and rank,
+shaped frequency (log + rank + in-vocab), matra profile (10 matras + nasals
++ visarga + halants), vowel-initial/final shape, lengths, and 11
+postposition-agreement features (dev suffix ∧ roman suffix). 5-fold CV on
+valid selected l2=1e-4, blend γ=0.3 (the trained model is z-score-blended
+with the heuristic per case — γ=0 exactly reproduces the baseline, which
+validated the whole harness).
+
+| Test (single-shot) | native top-1 | ALL | NEF | NEI |
+|---|---|---|---|---|
+| shipped heuristic | 80.98% | 60.64 | 29.01 | 46.17 |
+| **reranker v2 (γ=0.3)** | **81.69%** | **61.01** | 29.38 | 45.92 |
+
+**+0.71 native top-1, honest and leakage-free.** Two hard-won negative
+lessons along the way: (a) training on candidates whose gold is absent is
+pure noise — filter to gold-present cases; (b) cold-start full-softmax
+diverges from the heuristic on the native bucket — the γ-blend keeps the
+heuristic where it is right and imports the learned corrections where they
+add signal.
+
+**S2 exact-vocabulary scores: null result.** Adding word-trie exact
+noisy-channel scores as features moved test top-1 DOWN (61.01 → 60.47);
+coverage is only 62.5% of cases and the signal duplicates the decoder's.
+The generation ceiling stands; beating it needs S3 (conditional lattice
+model), not a reranker feature.
+
+**New best: 81.69% native top-1** (reranker v2, offline experiment — porting
+the weights into `train_reranker.rs`/engine is the next engineering step).

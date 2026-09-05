@@ -17,7 +17,7 @@ use akshar_ime::core::translit_model::TranslitModel;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
 use std::time::Instant;
 
@@ -68,6 +68,7 @@ fn main() {
     let mut vocab: Option<std::collections::HashMap<String, u32>> = None;
     let mut use_intersection = false;
     let mut trie_weight = 2.0f64;
+    let mut dump_path: Option<String> = None;
 
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -112,6 +113,7 @@ fn main() {
                     .parse()
                     .expect("--vocab-weight <f>")
             }
+            "--dump" => dump_path = Some(next_value(&arg, args.next())),
             "--help" | "-h" => {
                 print_help();
                 return;
@@ -131,6 +133,15 @@ fn main() {
         eprintln!("vocab: {} words", map.len());
         vocab = Some(map);
     }
+    // Dump mode always needs the vocab (frequency features) and the word trie
+    // (exact-vocabulary scores for the S2 experiments).
+    if dump_path.is_some() && vocab.is_none() {
+        let bytes = std::fs::read("data/word_freq_text.bin").expect("word_freq_text.bin");
+        let map: std::collections::HashMap<String, u32> =
+            bincode::deserialize(&bytes).expect("deserialize vocab");
+        eprintln!("vocab: {} words (dump mode)", map.len());
+        vocab = Some(map);
+    }
 
 
     let model = TranslitModel::load(Path::new(&model_path))
@@ -144,7 +155,7 @@ fn main() {
     };
     let decoder = akshar_ime::core::decoder::ModelDecoder::with_config(model.clone(), config);
     // The word trie: lattice ∩ dictionary, built over the model's aksharas.
-    let wtrie = if use_intersection {
+    let wtrie = if use_intersection || dump_path.is_some() {
         let map: std::collections::HashMap<String, u32> =
             bincode::deserialize(&std::fs::read("data/word_freq_text.bin").expect("vocab"))
                 .expect("deserialize vocab");
@@ -169,6 +180,9 @@ fn main() {
     let mut total_stats = Stats::default();
     let mut misses: Vec<(String, String, Vec<String>)> = Vec::new();
     let mut decode_time = 0.0f64;
+    let mut dump_out = dump_path
+        .as_ref()
+        .map(|p| std::io::BufWriter::new(std::fs::File::create(p).expect("create dump file")));
 
     for case in &cases {
         let t = Instant::now();
@@ -206,6 +220,42 @@ fn main() {
         total_stats.add(top1_hit, topk_hit);
         if !topk_hit {
             misses.push((case.roman.clone(), case.target.clone(), top));
+        }
+
+        // S1/S2 experiments: dump raw k-best (emit, lm) + exact vocabulary
+        // scores, with no rescoring applied.
+        if let (Some(out), Some(trie)) = (&mut dump_out, &wtrie) {
+            let detailed = decoder.decode_detailed(&case.roman, 50);
+            let in_words = decoder.decode_in_words(&case.roman, 200, trie);
+            let cands: Vec<serde_json::Value> = detailed
+                .iter()
+                .map(|c| serde_json::json!([c.dev, c.emit, c.lm, c.akshara_count]))
+                .collect();
+            let trie_cands: Vec<serde_json::Value> = in_words
+                .iter()
+                .map(|(d, s, f)| serde_json::json!([d, s, f]))
+                .collect();
+            use serde::Serialize;
+            #[derive(Serialize)]
+            struct Dump<'a> {
+                roman: &'a str,
+                gold: &'a str,
+                source: &'a str,
+                cands: Vec<serde_json::Value>,
+                trie: Vec<serde_json::Value>,
+            }
+            serde_json::to_writer(
+                &mut *out,
+                &Dump {
+                    roman: &case.roman,
+                    gold: &case.target,
+                    source: &case.source,
+                    cands,
+                    trie: trie_cands,
+                },
+            )
+            .expect("serialize dump");
+            writeln!(&mut *out).expect("write dump newline");
         }
     }
 
