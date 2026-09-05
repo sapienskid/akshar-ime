@@ -24,6 +24,7 @@ struct Counts {
     continuation: Vec<u64>,
     distinct_bigrams: u64,
     trigram_successors: HashMap<(u32, u32), u64>,
+    #[allow(dead_code)]
     n: usize,
 }
 
@@ -174,10 +175,10 @@ fn main() {
     let delta = 0.75f64;
     let distinct = c.distinct_bigrams as f64;
     let mut unigram_kn = vec![0.0f32; n];
-    for a in 0..n {
+    for (a, val) in unigram_kn.iter_mut().enumerate().take(n) {
         let cont = c.continuation[a] as f64;
         let p = (cont + 0.5) / (distinct + 0.5 * n as f64);
-        unigram_kn[a] = -p.ln() as f32;
+        *val = -p.ln() as f32;
     }
     let mut by_left: HashMap<u32, Vec<(u32, u64)>> = HashMap::new();
     for (&(b, cc), &cnt) in &c.bigram {

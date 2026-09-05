@@ -21,7 +21,7 @@ use crate::core::alignment::align_emissive;
 use crate::core::translit_model::{
     pack_chunk, pack_chunk_bytes, unpack_chunk, TranslitModel, MAX_CHUNK,
 };
-use crate::core::v2::{pair_akshara, pair_key, AkLm, PairModel};
+use crate::core::pair_model::{pair_akshara, pair_key, AkLm, PairModel};
 use std::collections::{BTreeSet, HashMap};
 
 /// A single training pair held in memory: roman bytes + akshara id sequence.
@@ -608,6 +608,7 @@ impl Default for Trainer {
 /// Posterior mass over consecutive aligned pairs: returns
 /// (prev_pair_key, cur_pair_key, posterior) triples.  The unigram posterior is
 /// the ordinary `e_step_chunk` count, so only transitions are collected here.
+#[allow(clippy::type_complexity)]
 fn pair_transitions(
     pairs: &[Pair],
     emission: &[HashMap<u32, f64>],
@@ -762,16 +763,16 @@ fn pair_transitions(
 }
 
 impl Trainer {
-    /// M1: train the v2 pair-bigram grammar.  Runs the same EM loop as
+    /// Train the pair-bigram grammar.  Runs the same EM loop as
     /// `finalize` (identical unigram emissions — they become the pair unigram
     /// backoff), then accumulates posteriors over consecutive aligned pairs
     /// and normalises them into P(cur | prev) with unigram backoff.
-    pub fn finalize_pair(&mut self, config: &TrainerConfig, alpha_pair: f64) -> PairModel {
+    pub fn finalize_pair(&mut self, config: &TrainerConfig, _alpha_pair: f64) -> PairModel {
         self.init_emissions(config.seed_from_aligner);
         self.run_em(config.iterations, config.em_smoothing);
 
         // --- Collect bigram transition posteriors with the final emissions. ---
-        eprintln!("  [v2] collecting pair-bigram transitions...");
+        eprintln!("  [pair_model] collecting pair-bigram transitions...");
         let n_aksharas = self.akshara_list.len();
         let pairs = &self.pairs;
         let emission = &self.emission;
@@ -822,14 +823,14 @@ impl Trainer {
             }
         }
         eprintln!(
-            "  [v2] {} transitions, {} ak-level, {} tri",
+            "  [pair_model] {} transitions, {} ak-level, {} tri",
             bi.len(),
             bi_ak.len(),
             tri.len()
         );
 
         // Debug: inspect counts for known transitions (na->ma->ste).
-        if std::env::var("AKSHAR_V2_DEBUG").is_ok() {
+        if std::env::var("AKSHAR_PAIR_DEBUG").is_ok() {
             let id = |s: &str| self.akshara_map.get(s).copied();
             let pack = |c: &str| crate::core::translit_model::pack_chunk_bytes(c.as_bytes());
             for (a1s, c1s, a2s, c2s) in [
@@ -896,7 +897,7 @@ impl Trainer {
         // Level-2 stats: per prev-akshara totals/distincts over cur pairs.
         let mut ak_totals: HashMap<u32, f64> = HashMap::new();
         let mut ak_distinct: HashMap<u32, u64> = HashMap::new();
-        for (&(a1, cur), &c) in &bi_ak {
+        for (&(a1, _cur), &c) in &bi_ak {
             *ak_totals.entry(a1).or_insert(0.0) += c;
             *ak_distinct.entry(a1).or_insert(0) += 1;
         }
@@ -921,7 +922,7 @@ impl Trainer {
             *bi_distinct.entry(prev).or_insert(0) += 1;
         }
         let mut bi_out: HashMap<(u64, u64), f32> = HashMap::with_capacity(bi.len());
-        for (&(prev, cur), _) in &bi {
+        for &(prev, cur) in bi.keys() {
             let c = bi.get(&(prev, cur)).copied().unwrap_or(0.0);
             let c_total = bi_totals.get(&prev).copied().unwrap_or(0.0);
             let lam = if c_total > 0.0 {
@@ -936,7 +937,7 @@ impl Trainer {
             }
         }
         let mut bi_ak_out: HashMap<(u32, u64), f32> = HashMap::with_capacity(bi_ak.len());
-        for (&(a1, cur), _) in &bi_ak {
+        for &(a1, cur) in bi_ak.keys() {
             let p = p_ak(a1, cur);
             if p > 1e-12 {
                 bi_ak_out.insert((a1, cur), -p.ln() as f32);
@@ -960,7 +961,7 @@ impl Trainer {
             *tri_distinct.entry(ctx2).or_insert(0) += 1;
         }
         let mut tri_out: HashMap<((u64, u64), u64), f32> = HashMap::with_capacity(tri.len());
-        for (&(ctx2, cur), _) in &tri {
+        for &(ctx2, cur) in tri.keys() {
             let c = tri.get(&(ctx2, cur)).copied().unwrap_or(0.0);
             let c_total = tri_totals.get(&ctx2).copied().unwrap_or(0.0);
             let lam = if c_total > 0.0 {
@@ -974,7 +975,7 @@ impl Trainer {
             }
         }
 
-        // Word-start prior from the same corpus counts as the v1 LM.
+        // Word-start prior from the same corpus counts as the syllable LM.
         let word_start = self
             .word_initial
             .iter()
@@ -984,7 +985,7 @@ impl Trainer {
             })
             .collect();
 
-        // Dense akshara KN LM (v1's tables) — the backbone the pair grammar
+        // Dense akshara KN LM (syllable tables) — the backbone the pair grammar
         // refines.  build_kn_lm writes into a throwaway TranslitModel.
         let mut lm_holder = TranslitModel {
             aksharas: self.akshara_list.clone(),
@@ -1004,7 +1005,7 @@ impl Trainer {
         ak_lm.build_index();
 
         eprintln!(
-            "  [v2] {} emit pairs, {} bi, {} bi_ak, {} tri",
+            "  [pair_model] {} emit pairs, {} bi, {} bi_ak, {} tri",
             emit_w.len(),
             bi_out.len(),
             bi_ak_out.len(),

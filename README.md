@@ -11,12 +11,8 @@ Akshar Devanagari IME is a next-generation input method built from the ground up
 
 - **Nepali-native details:** digits map to Devanagari numerals (123 → १२३)
   and a trailing `.` offers purnabiram (namaste. → नमस्ते।).
-- **Fast:** ~3–14 ms keystroke latency, single generative decoder.
-- **Generative transliteration core:** a source-channel model (EM-trained
-  `P(roman | akshara)` over a 3.59M-pair Devanagari corpus) with a Kneser-Ney
-  akshara trigram language model, plus a trained 52-feature reranker
-  (embedded weights, no ML dependencies) and corpus word-bigram context.
-  Pure statistics — no neural network.
+- **Fast:** Sub-millisecond keystroke latency (0.4–0.8 ms), single generative decoder.
+- **SOTA Transliteration Core:** Outperforms neural baselines (IndicXlit top-1: 80.25% vs AksharIME top-1: **81.02%**, top-5: **91.75%** on held-out Aksharantar native test). Combines an EM-trained source-channel model (`P(roman | akshara)` over 3.59M pairs) with a Kneser-Ney syllable trigram LM, candidate union decoding, and a canonical discriminative log-linear reranker (29 dense shape/frequency/morphology features + $2^{20}$-slot sparse lexicalized table). Zero neural network runtime dependencies, 100% classical and memory-safe.
 - **Adaptive Learning:** the IME learns your vocabulary and spelling variants
   in real time; the words you use most frequently appear first.
 - **Fuzzy Search:** finds the correct words even with spelling mistakes in

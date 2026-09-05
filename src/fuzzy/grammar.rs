@@ -44,6 +44,7 @@ use std::path::Path;
 ///   - ri/rri (ऋ vs रि, ृ vs ्रि)
 ///   - gya (ज्ञ vs ग्य)
 ///   - zero-width characters and nuktas
+///
 /// produce the EXACT SAME skeletal string.
 pub fn orthographic_skeleton(dev: &str) -> String {
     let mut skel = String::with_capacity(dev.len());
@@ -319,20 +320,17 @@ impl GrammarCanonicalizer {
         }
 
         // Verb passive -ीन्छ -> -इन्छ
-        if word.ends_with("ीन्छ") {
-            let prefix = &word[..word.len() - "ीन्छ".len()];
+        if let Some(prefix) = word.strip_suffix("ीन्छ") {
             return format!("{prefix}िन्छ");
         }
 
         // Prefix ब्य- -> व्य-
-        if word.starts_with("ब्य") {
-            let suffix = &word["ब्य".len()..];
+        if let Some(suffix) = word.strip_prefix("ब्य") {
             return format!("व्य{suffix}");
         }
 
         // Prefix ब्या- -> व्या-
-        if word.starts_with("ब्या") {
-            let suffix = &word["ब्या".len()..];
+        if let Some(suffix) = word.strip_prefix("ब्या") {
             return format!("व्या{suffix}");
         }
 

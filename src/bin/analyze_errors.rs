@@ -12,15 +12,24 @@
 //      Quantifies fusion-layer damage.
 //   3. Strict vs multi-reference top-1 (any native observed for the same roman
 //      in the training split counts as correct) -> ambiguity ceiling.
-//   4. Error taxonomy of decoder top-1 misses: matra-only (vowel length /
+//   4. Error taxonomy of top-1 misses -- reported for BOTH the decoder and
+//      the full engine (the shipped 81.40% chain): matra-only (vowel length /
 //      nasal), halant-only (conjunct), or substantive (coverage).
 //   5. Character error rate (CER) of the top-1 candidate.
+//   6. W0 collision bound: the accuracy of a system with perfect generation
+//      and a perfect corpus-frequency prior.  For each test roman R, A(R) is
+//      every native ever paired with R across train + valid + test; the bound
+//      counts the cases where the gold IS the most frequent member of A(R).
+//      No string-only system with a unigram prior can beat it.
 //
 // Usage:
 //   cargo run --release --bin analyze_errors -- [options]
-//     --test <path>   test split (default: data/aksharantar/nep_test.json)
-//     --train <path>  train split for multi-reference sets (default:
-//                     data/aksharantar/nep_train.json)
+//     --test <path>   test split (default: test_devanagari.jsonl)
+//     --train <path>  train split for multi-reference sets + collision bound
+//     --valid <path>  valid split, also folded into the collision bound
+//     --beam <n>      decoder beam width (default 256, the benchmark config)
+//     --lm-weight <f> decoder LM weight (default 0.85)
+//     --vocab-weight <f>  frequency rescoring weight (default 0.75; 0 = off)
 
 use akshar_ime::ImeEngine;
 use akshar_ime::core::decoder::{DecoderConfig, ModelDecoder};
@@ -50,13 +59,23 @@ struct Case {
 const KS: [usize; 8] = [1, 2, 3, 5, 8, 10, 20, 50];
 
 fn main() {
-    let mut test_path = "data/aksharantar/nep_test.json".to_string();
-    let mut train_path = "data/aksharantar/nep_train.json".to_string();
+    let mut test_path = "data/aksharantar/test_devanagari.jsonl".to_string();
+    let mut train_path = "data/aksharantar/train_devanagari.jsonl".to_string();
+    let mut valid_path = "data/aksharantar/valid_devanagari.jsonl".to_string();
+    let mut beam = 256usize;
+    let mut lm_weight = 0.85f64;
+    let mut vocab_weight = 0.75f64;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--test" => test_path = args.next().expect("value"),
             "--train" => train_path = args.next().expect("value"),
+            "--valid" => valid_path = args.next().expect("value"),
+            "--beam" => beam = args.next().expect("value").parse().expect("--beam <n>"),
+            "--lm-weight" => lm_weight = args.next().expect("value").parse().expect("--lm-weight <f>"),
+            "--vocab-weight" => {
+                vocab_weight = args.next().expect("value").parse().expect("--vocab-weight <f>")
+            }
             other => {
                 eprintln!("unknown arg {other}");
                 std::process::exit(2);
@@ -68,8 +87,11 @@ fn main() {
     let n = cases.len();
     println!("cases: {n}");
 
-    // Multi-reference sets from the training split (one streaming pass).
-    let refsets = build_refsets(&train_path, &cases);
+    // Multi-reference sets from train + valid (one streaming pass each).
+    let mut refsets = build_refsets(&train_path, &cases);
+    for (roman, set) in build_refsets(&valid_path, &cases) {
+        refsets.entry(roman).or_default().extend(set);
+    }
     let mut cases = cases;
     for c in &mut cases {
         c.refs.insert(c.target.clone());
@@ -85,15 +107,30 @@ fn main() {
         ambiguous as f64 / n as f64 * 100.0
     );
 
+    // Corpus word frequencies: the prior used both for decoder rescoring and
+    // for the collision bound.
+    let vocab: HashMap<String, u32> = match std::fs::read("data/word_freq_text.bin") {
+        Ok(bytes) => bincode::deserialize(&bytes).expect("deserialize vocab"),
+        Err(e) => {
+            eprintln!("WARNING: no word_freq_text.bin ({e}); frequency prior disabled");
+            HashMap::new()
+        }
+    };
+    eprintln!("vocab: {} words", vocab.len());
+
+    collision_bound(&cases, &vocab);
+
     let model = TranslitModel::load(Path::new("data/translit_model.bin")).expect("load model");
     let decoder = ModelDecoder::with_config(
         model,
         DecoderConfig {
-            beam_width: 64,
+            beam_width: beam,
+            lm_weight,
             ..Default::default()
         },
     );
     let engine = ImeEngine::new();
+    eprintln!("decoder: beam={beam} lm_weight={lm_weight} vocab_weight={vocab_weight}");
 
     // Buckets: AK-Freq (native), NE (NEF+NEI), ALL.
     let bucket = |src: &str| match src {
@@ -118,8 +155,12 @@ fn main() {
         tax_matra: usize,
         tax_halant: usize,
         tax_subst: usize,
+        etax_matra: usize,
+        etax_halant: usize,
+        etax_subst: usize,
         cer_num: usize,
         cer_den: usize,
+        ecer_num: usize,
     }
     let mk = |name: &'static str| Agg {
         name,
@@ -137,21 +178,49 @@ fn main() {
         tax_matra: 0,
         tax_halant: 0,
         tax_subst: 0,
+        etax_matra: 0,
+        etax_halant: 0,
+        etax_subst: 0,
         cer_num: 0,
         cer_den: 0,
+        ecer_num: 0,
     };
     let mut aggs = [mk("ALL"), mk("AK-Freq"), mk("NE")];
+
+    // W4 forensics: for every matra-only engine miss in the AK-Freq bucket,
+    // record (freq(gold), freq(pred)).  This decides whether the matra class is
+    // winnable by a better PRIOR (gold is the more frequent word, the ranker
+    // just failed to use it) or only by CONTEXT (the prior actively prefers the
+    // wrong reading).
+    let mut matra_gold_freq_higher = 0usize;
+    let mut matra_pred_freq_higher = 0usize;
+    let mut matra_gold_oov = 0usize;
+    let mut matra_both_oov = 0usize;
+    let mut matra_in_list = 0usize;
+    let mut matra_examples: Vec<(String, String, u32, String, u32, bool)> = Vec::new();
 
     for case in &cases {
         let b_idx = match bucket(&case.source) {
             "AK-Freq" => 1,
             _ => 2, // fold NE + rare buckets together
         };
-        let dec: Vec<String> = decoder
+        // The benchmark chain: decoder cost + LM, then frequency rescoring --
+        // the same heuristic the engine's reranker blends against.
+        let mut scored: Vec<(String, f64)> = decoder
             .decode_detailed(&case.roman, 50)
             .into_iter()
-            .map(|c| c.dev)
+            .map(|c| {
+                let mut sc = c.emit + lm_weight * c.lm;
+                if vocab_weight > 0.0 {
+                    if let Some(&f) = vocab.get(&c.dev) {
+                        sc -= vocab_weight * (1.0 + f as f64).ln();
+                    }
+                }
+                (c.dev, sc)
+            })
             .collect();
+        scored.sort_by(|a, b| a.1.total_cmp(&b.1));
+        let dec: Vec<String> = scored.into_iter().map(|(d, _)| d).collect();
         let eng: Vec<String> = engine
             .get_suggestions(&case.roman, 10)
             .into_iter()
@@ -210,8 +279,90 @@ fn main() {
                     agg.cer_num += levenshtein(pred, &case.target);
                 }
             }
+            // Same taxonomy on the ENGINE's top-1 -- the shipped chain, and the
+            // one the W4 arithmetic is sized against.
+            if eng.first().is_none_or(|c| *c != case.target) {
+                if let Some(pred) = eng.first() {
+                    match classify(pred, &case.target) {
+                        Tax::Matra => agg.etax_matra += 1,
+                        Tax::Halant => agg.etax_halant += 1,
+                        Tax::Substantive => agg.etax_subst += 1,
+                    }
+                    agg.ecer_num += levenshtein(pred, &case.target);
+                }
+            }
+            // AK-Freq matra forensics (once per case, not per bucket).
+            if idx == b_idx && b_idx == 1 {
+                if let Some(pred) = eng.first() {
+                    if *pred != case.target && matches!(classify(pred, &case.target), Tax::Matra) {
+                        let fg = vocab.get(&case.target).copied().unwrap_or(0);
+                        let fp = vocab.get(pred).copied().unwrap_or(0);
+                        // Was the gold anywhere in the engine's own list?
+                        let in_list = eng.contains(&case.target);
+                        if in_list {
+                            matra_in_list += 1;
+                        }
+                        if fg == 0 && fp == 0 {
+                            matra_both_oov += 1;
+                        } else if fg == 0 {
+                            matra_gold_oov += 1;
+                        } else if fg > fp {
+                            matra_gold_freq_higher += 1;
+                        } else {
+                            matra_pred_freq_higher += 1;
+                        }
+                        if matra_examples.len() < 20 {
+                            matra_examples.push((
+                                case.roman.clone(),
+                                case.target.clone(),
+                                fg,
+                                pred.clone(),
+                                fp,
+                                in_list,
+                            ));
+                        }
+                    }
+                }
+            }
             agg.cer_den += case.target.chars().count();
         }
+    }
+
+    // --- W4 forensics report ------------------------------------------------
+    let mtot = (matra_gold_freq_higher
+        + matra_pred_freq_higher
+        + matra_gold_oov
+        + matra_both_oov)
+        .max(1) as f64;
+    println!("\n=== W4 forensics: AK-Freq matra-only engine misses (n={}) ===", mtot as usize);
+    println!(
+        "gold is the MORE frequent word (winnable by a better prior/ranker): {} ({:.1}%)",
+        matra_gold_freq_higher,
+        matra_gold_freq_higher as f64 / mtot * 100.0
+    );
+    println!(
+        "prediction is more frequent (prior actively misleads; needs context/morph): {} ({:.1}%)",
+        matra_pred_freq_higher,
+        matra_pred_freq_higher as f64 / mtot * 100.0
+    );
+    println!(
+        "gold is OOV in the 470k corpus vocab (needs W2's smoothed prior): {} ({:.1}%)",
+        matra_gold_oov,
+        matra_gold_oov as f64 / mtot * 100.0
+    );
+    println!(
+        "both OOV (no frequency signal at all): {} ({:.1}%)",
+        matra_both_oov,
+        matra_both_oov as f64 / mtot * 100.0
+    );
+    println!(
+        "gold was somewhere in the engine's top-10 (pure ranking loss): {} ({:.1}%)",
+        matra_in_list,
+        matra_in_list as f64 / mtot * 100.0
+    );
+    println!("  examples (roman / gold:freq / predicted:freq / gold-in-list):");
+    for (r, g, fg, p, fp, il) in &matra_examples {
+        println!("    {r:<16} {g}:{fg:<8} {p}:{fp:<8} {il}");
     }
 
     for agg in &aggs {
@@ -229,8 +380,11 @@ fn main() {
             print!("{}:{:.1}% ", k, agg.dec_hits_mr[i] as f64 / t * 100.0);
         }
         println!();
-        print!("engine oracle k: ");
+        print!("engine oracle k (depth 10): ");
         for (i, k) in KS.iter().enumerate() {
+            if *k > 10 {
+                continue; // get_suggestions was called with depth 10; deeper slots are vacuous
+            }
             print!("{}:{:.1}% ", k, agg.eng_hits[i] as f64 / t * 100.0);
         }
         println!();
@@ -242,7 +396,23 @@ fn main() {
             "decoder-miss taxonomy: matra-only {}  halant-only {}  substantive {}",
             agg.tax_matra, agg.tax_halant, agg.tax_subst
         );
+        let etax_tot = (agg.etax_matra + agg.etax_halant + agg.etax_subst).max(1) as f64;
+        println!(
+            "engine-miss  taxonomy: matra-only {} ({:.1}% of misses)  halant-only {}  substantive {}",
+            agg.etax_matra,
+            agg.etax_matra as f64 / etax_tot * 100.0,
+            agg.etax_halant,
+            agg.etax_subst
+        );
+        // W4's headline: what the engine would score if matra assignment were solved.
+        let solved = (agg.eng_top1 + agg.etax_matra) as f64 / t * 100.0;
+        println!(
+            "  -> engine top-1 with matra class solved: {:.2}%  (now {:.2}%)",
+            solved,
+            agg.eng_top1 as f64 / t * 100.0
+        );
         println!("CER (decoder top-1): {:.2}%", agg.cer_num as f64 / agg.cer_den.max(1) as f64 * 100.0);
+        println!("CER (engine  top-1): {:.2}%", agg.ecer_num as f64 / agg.cer_den.max(1) as f64 * 100.0);
     }
 }
 
@@ -300,6 +470,52 @@ fn build_refsets(path: &str, cases: &[Case]) -> HashMap<String, HashSet<String>>
         }
     }
     map
+}
+
+/// W0 collision bound.  A(R) = every native ever paired with this roman
+/// (train + valid + test).  A system with perfect generation whose only
+/// tie-breaker is the corpus unigram prior picks argmax_f over A(R); the gold
+/// is recovered only when it is that argmax.  Cases where |A(R)| = 1 are free.
+fn collision_bound(cases: &[Case], vocab: &HashMap<String, u32>) {
+    let mut n = 0usize;
+    let mut single = 0usize;
+    let mut hit = 0usize;
+    let mut lost_examples: Vec<(String, String, String)> = Vec::new();
+    for case in cases {
+        // refs already holds train+valid variants plus the gold itself.
+        let mut alts: Vec<&String> = case.refs.iter().collect();
+        alts.sort();
+        n += 1;
+        if alts.len() <= 1 {
+            single += 1;
+            hit += 1;
+            continue;
+        }
+        let freq = |w: &str| vocab.get(w).copied().unwrap_or(0);
+        // argmax by frequency, ties broken deterministically by the string.
+        let best = alts
+            .iter()
+            .max_by(|a, b| freq(a).cmp(&freq(b)).then_with(|| b.cmp(a)))
+            .unwrap();
+        if **best == case.target {
+            hit += 1;
+        } else if lost_examples.len() < 15 {
+            lost_examples.push((case.roman.clone(), case.target.clone(), (*best).clone()));
+        }
+    }
+    let d = n.max(1) as f64;
+    println!("\n=== W0 collision bound (perfect generation + perfect unigram prior) ===");
+    println!("cases {n}  unambiguous {single} ({:.1}%)  ambiguous {} ({:.1}%)",
+        single as f64 / d * 100.0, n - single, (n - single) as f64 / d * 100.0);
+    println!("collision bound Acc* = {:.2}%", hit as f64 / d * 100.0);
+    println!("  (i.e. {:.2}% of cases are unwinnable for ANY string-only system", (d - hit as f64) / d * 100.0);
+    println!("   whose only prior is corpus unigram frequency)");
+    if !lost_examples.is_empty() {
+        println!("  examples lost to the prior (roman / gold / frequency-argmax):");
+        for (r, g, b) in &lost_examples {
+            println!("    {r:<16} {g:<14} -> {b}");
+        }
+    }
 }
 
 enum Tax {

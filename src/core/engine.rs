@@ -61,9 +61,11 @@ pub struct ImeEngine {
     pub decoder: ModelDecoder,
     pub reranker: Reranker,
     pub lexicon: Option<RomanLexicon>,
-    /// Corpus-vocabulary data for the v2 reranker (native builds with
+    /// Corpus-vocabulary data for the discriminative reranker (native builds with
     /// word_freq_text.bin present; None on WASM-lite or missing file).
-    v2: Option<crate::core::reranker_v2::RerankerV2Data>,
+    reranker_data: Option<crate::core::reranker::RerankerData>,
+    /// W3: Candidate Union word trie over vocabulary.
+    word_trie: Option<crate::core::wordtrie::WordTrie>,
     /// E6: corpus word-bigram table (data/word_bigrams.bin) for
     /// context-conditioned reranking; None on WASM-lite or missing file.
     corpus_bigrams: Option<HashMap<String, Vec<(String, u32)>>>,
@@ -95,11 +97,16 @@ impl ImeEngine {
         );
         let lexicon = load_lexicon();
         let reranker = load_reranker(lexicon.clone());
+        let reranker_data = load_reranker_data();
+        let word_trie = reranker_data.as_ref().map(|v| {
+            crate::core::wordtrie::WordTrie::from_freq_map(&v.freq, &|a| decoder.model.akshara_id(a), 1)
+        });
         Self {
             decoder,
             reranker,
             lexicon,
-            v2: load_v2(),
+            reranker_data,
+            word_trie,
             corpus_bigrams: load_bigrams(),
             bigram_context_enabled: true,
             bigram_boost: DEFAULT_BIGRAM_BOOST,
@@ -118,7 +125,7 @@ impl ImeEngine {
         {
             let mut engine = load_from_disk(std::path::Path::new(path)).unwrap_or_else(|_| Self::new());
             engine.dictionary_path = Some(path.to_string());
-            return engine;
+            engine
         }
         #[cfg(target_arch = "wasm32")]
         {
@@ -146,11 +153,16 @@ impl ImeEngine {
             },
         );
         let reranker = reranker.unwrap_or_else(|| load_reranker(lexicon.clone()));
+        let reranker_data = load_reranker_data();
+        let word_trie = reranker_data.as_ref().map(|v| {
+            crate::core::wordtrie::WordTrie::from_freq_map(&v.freq, &|a| decoder.model.akshara_id(a), 1)
+        });
         Self {
             decoder,
             reranker,
             lexicon,
-            v2: load_v2(),
+            reranker_data,
+            word_trie,
             corpus_bigrams: load_bigrams(),
             bigram_context_enabled: true,
             bigram_boost: DEFAULT_BIGRAM_BOOST,
@@ -343,18 +355,18 @@ impl ImeEngine {
         };
 
         // 1. Fresh transliterations from the generative decoder.  With the
-        //    corpus vocabulary available, rank them with the trained v2
-        //    reranker (81.69% native top-1 offline); otherwise fall back to
+        //    corpus vocabulary available, rank them with the trained discriminative
+        //    reranker (81.02% native top-1 on test); otherwise fall back to
         //    the 5-feature MERT reranker.  We decode the base roman only: the
         //    model's learned emissions already absorb v/w and vowel-length
         //    spelling variants, so re-decoding soft variants is pure latency.
-        //    Depth 50 matches the depth the v2 model was trained on.
+        //    Depth 50 matches the depth the discriminative model was trained on.
         let mut fresh_scores: HashMap<String, u64> = HashMap::new();
         if let Some(qv) = query_variants.first() {
             let roman = qv.roman.as_str();
-            let cands = self.decoder.decode_detailed(roman, (count * 4).max(50));
-            let ranked: Vec<(String, f64)> = match &self.v2 {
-                Some(v2) => crate::core::reranker_v2::rerank(roman, &cands, &v2.freq, &v2.ranks),
+            let cands = self.decoder.decode_union(roman, (count * 4).max(50), self.word_trie.as_ref());
+            let ranked: Vec<(String, f64)> = match &self.reranker_data {
+                Some(data) => crate::core::reranker::rerank(roman, &cands, &data.freq, &data.ranks),
                 None => self.reranker.rerank(roman, cands),
             };
             // Convert to the engine's higher-better u64 scale, preserving the
@@ -648,16 +660,16 @@ fn load_reranker(lexicon: Option<RomanLexicon>) -> Reranker {
     reranker
 }
 
-/// Reranker-v2 data: the corpus vocabulary plus its frequency-rank index.
+/// Reranker data: the corpus vocabulary plus its frequency-rank index.
 /// None when the vocabulary file is unavailable (WASM-lite, fresh clones).
 #[cfg(not(target_arch = "wasm32"))]
-fn load_v2() -> Option<crate::core::reranker_v2::RerankerV2Data> {
+fn load_reranker_data() -> Option<crate::core::reranker::RerankerData> {
     let bytes = std::fs::read(data_path("word_freq_text.bin")).ok()?;
-    crate::core::reranker_v2::RerankerV2Data::from_bin_bytes(&bytes)
+    crate::core::reranker::RerankerData::from_bin_bytes(&bytes)
 }
 
 #[cfg(target_arch = "wasm32")]
-fn load_v2() -> Option<crate::core::reranker_v2::RerankerV2Data> {
+fn load_reranker_data() -> Option<crate::core::reranker::RerankerData> {
     None
 }
 
@@ -735,7 +747,8 @@ mod tests {
             decoder,
             reranker: Reranker::default(),
             lexicon,
-            v2: None,
+            reranker_data: None,
+            word_trie: None,
             corpus_bigrams: None,
             bigram_context_enabled: true,
             bigram_boost: DEFAULT_BIGRAM_BOOST,

@@ -67,14 +67,17 @@ fn main() {
     let mut vocab_weight = 0.0f64;
     let mut vocab: Option<std::collections::HashMap<String, u32>> = None;
     let mut use_intersection = false;
-    let mut trie_weight = 2.0f64;
     let mut dump_path: Option<String> = None;
+    let mut crf_path: Option<String> = None;
+    let mut trie_weight = 2.0f64;
+
 
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--model" => model_path = next_value(&arg, args.next()),
             "--dataset" => dataset_path = next_value(&arg, args.next()),
+            "--crf" => crf_path = Some(next_value(&arg, args.next())),
             "--topk" => {
                 topk = next_value(&arg, args.next())
                     .parse::<usize>()
@@ -147,10 +150,18 @@ fn main() {
     let model = TranslitModel::load(Path::new(&model_path))
         .unwrap_or_else(|e| panic!("load model {model_path}: {e}"));
     assert!(model.validate(), "model failed validation");
+    let crf: Option<std::sync::Arc<akshar_ime::core::crf::CrfModel>> = crf_path.map(|p| {
+        let bytes = std::fs::read(&p).unwrap_or_else(|e| panic!("read {p}: {e}"));
+        eprintln!("crf: loaded {}", p);
+        std::sync::Arc::new(
+            bincode::deserialize::<akshar_ime::core::crf::CrfModel>(&bytes).expect("crf parse"),
+        )
+    });
     let config = akshar_ime::core::decoder::DecoderConfig {
         beam_width: beam,
         max_aksharas_per_chunk: per_chunk,
         lm_weight,
+        crf,
         ..Default::default()
     };
     let decoder = akshar_ime::core::decoder::ModelDecoder::with_config(model.clone(), config);
@@ -202,7 +213,7 @@ fn main() {
             if !in_words.is_empty() {
                 // Strict intersection: known roman -> rank among real words
                 // only (frequency-tilted decoder scores); OOV -> free decode.
-                for (dev, score, freq) in &mut in_words {
+                for (_dev, score, freq) in &mut in_words {
                     *score -= trie_weight * (1.0 + *freq as f64).ln();
                 }
                 in_words.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));

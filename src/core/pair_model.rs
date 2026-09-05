@@ -1,14 +1,13 @@
-// File: src/core/v2/mod.rs
+// File: src/core/pair_model.rs
 //
-// Akshar v2: context-dependent pair n-gram grammar (Google Gboard-style WFST
+// Context-dependent pair n-gram grammar (Google Gboard-style WFST
 // decoding, Hellsten et al. FSMNLP 2017).
 //
-// v1 scored each edge independently: P(chunk | akshara) + akshara n-gram LM.
-// v2 instead learns P(chunk_j, akshara_j | chunk_{j-1}, akshara_{j-1}) — a
-// bigram over *aligned pairs* — so conjunct/schwa/matra constraints emerge as
+// Learns P(chunk_j, akshara_j | chunk_{j-1}, akshara_{j-1}) — a
+// bigram over aligned pairs — so conjunct/schwa/matra constraints emerge as
 // transitions (a halant pair forces a consonant pair next, etc.).  The model
-// is a weighted graph over pair states, decoded by beam search; encoding as a
-// quantized trie comes in M2.  No neural network, no lookup table of words.
+// is a weighted graph over pair states, decoded by beam search.
+// No neural network, no lookup table of words.
 
 use crate::core::translit_model::{pack_chunk_bytes, MAX_CHUNK};
 use serde::{Deserialize, Serialize};
@@ -31,7 +30,7 @@ pub fn pair_chunk(k: u64) -> u32 {
     k as u32
 }
 
-/// v2 grammar model: bigram over aligned (akshara, chunk) pairs with unigram
+/// Pair grammar model: bigram over aligned (akshara, chunk) pairs with unigram
 /// backoff.  All weights are negative-log probabilities (f32).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PairModel {
@@ -52,11 +51,11 @@ pub struct PairModel {
     /// Dense akshara n-gram LM (word_start prior + KN bigram/trigram over
     /// deterministically segmented corpus words).  The pair grammar is sparse
     /// because EM alignment dilutes transitions; this dense backbone carries
-    /// the akshara-sequence statistics (v1's LM) and the pair terms refine it.
+    /// the akshara-sequence statistics (syllable LM) and the pair terms refine it.
     pub ak_lm: AkLm,
 }
 
-/// Akshara-level Kneser-Ney tables (subset of v1's TranslitModel).
+/// Akshara-level Kneser-Ney tables (subset of TranslitModel).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AkLm {
     pub bigrams: Vec<Vec<(u32, f32)>>,
@@ -190,7 +189,7 @@ impl PairModel {
     }
 }
 
-/// Beam state for v2 decoding.  The merge key must include the *output
+/// Beam state for pair decoding.  The merge key must include the *output
 /// identity*: paths with the same (pos, prev) context can still spell
 /// different strings (न vs ना both consume chunk "na"), so the cheaper
 /// spelling must not silently replace the other — otherwise correct
@@ -226,7 +225,7 @@ fn path_hash(parent: u64, a: u32) -> u64 {
 
 /// A decoded candidate with decomposed scores (reranker-compatible).
 #[derive(Debug, Clone)]
-pub struct V2Candidate {
+pub struct PairCandidate {
     pub dev: String,
     pub emit: f64,
     pub lm: f64,
@@ -255,7 +254,7 @@ impl PairDecoder {
     }
 
     /// Decode a roman string into k ranked candidates.
-    pub fn decode(&self, roman: &str, k: usize) -> Vec<V2Candidate> {
+    pub fn decode(&self, roman: &str, k: usize) -> Vec<PairCandidate> {
         let roman = roman.to_ascii_lowercase();
         let bytes = roman.as_bytes();
         let m = bytes.len();
@@ -288,12 +287,12 @@ impl PairDecoder {
                     let Some(cands) = self.reverse.get(&chunk) else {
                         continue;
                     };
-                    for &(a, emit_w0) in cands {
+                    for &(a, _emit_w0) in cands {
                         let cur = pair_key(a, chunk);
                         let mut emit_w = 0.0f32;
                         let pair_w =
                             self.model.transition(st.prev2, st.prev, cur, &mut emit_w) as f64;
-                        // Dense akshara-LM fluency (v1-style), on top of the
+                        // Dense akshara-LM fluency, on top of the
                         // pair-grammar context term.
                         let fluency = match (st.prev2_ak, st.prev_ak) {
                             (_, None) => self.model.ak_lm.start_weight(a),
@@ -388,9 +387,9 @@ impl PairDecoder {
             }
         }
 
-        let mut out: Vec<V2Candidate> = seen
+        let mut out: Vec<PairCandidate> = seen
             .into_iter()
-            .map(|(dev, (score, emit, lm, count))| V2Candidate {
+            .map(|(dev, (_score, emit, lm, count))| PairCandidate {
                 dev,
                 emit,
                 lm,

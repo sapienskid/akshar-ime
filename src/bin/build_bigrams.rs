@@ -38,7 +38,7 @@ fn main() {
     }
     // Sort successors by frequency descending for compact, cache-friendly lookups.
     for succ in map.values_mut() {
-        succ.sort_unstable_by(|a, b| b.1.cmp(&a.1));
+        succ.sort_unstable_by_key(|b| std::cmp::Reverse(b.1));
     }
     let bytes = bincode::serialize(&map).expect("serialize");
     let out = "data/word_bigrams.bin";

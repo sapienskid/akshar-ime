@@ -1,11 +1,11 @@
-// File: src/bin/evaluate_model_v2.rs
+// File: src/bin/evaluate_pair_model.rs
 //
-// M3 gate: decode-only benchmark of the v2 pair-grammar decoder on the
+// Decode-only benchmark of the pair-grammar decoder on the
 // Aksharantar Nepali test split, same buckets as evaluate_model.
 //
-// Usage: cargo run --release --bin evaluate_model_v2 -- [--model p] [--dataset p]
+// Usage: cargo run --release --bin evaluate_pair_model -- [--model p] [--dataset p]
 
-use akshar_ime::core::v2::{PairDecoder, PairModel};
+use akshar_ime::core::pair_model::{PairDecoder, PairModel};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
@@ -22,9 +22,9 @@ struct Record<'a> {
 }
 
 fn main() {
-    let mut model_path = PathBuf::from("data/pair_model_v2.bin");
+    let mut model_path = PathBuf::from("data/pair_model.bin");
     let mut dataset = PathBuf::from("data/aksharantar/nep_test.json");
-    let mut probe: Option<String> = None;
+    let mut _probe: Option<String> = None;
     let mut trans: Option<String> = None;
     let mut pair_weight: f64 = 0.5;
     // M4 pilot: vocabulary rescoring (freq bonus for real corpus words).
@@ -35,7 +35,7 @@ fn main() {
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--probe" => {
-                probe = args.next();
+                _probe = args.next();
             }
             "--trans" => trans = Some(args.next().expect("chunk")),
             "--pair-weight" => pair_weight = args.next().expect("f").parse().expect("f"),
@@ -51,7 +51,7 @@ fn main() {
         }
     }
 
-    let model = PairModel::load(&model_path).expect("load v2 model");
+    let model = PairModel::load(&model_path).expect("load pair model");
     let mut decoder = PairDecoder::new(model);
     decoder.pair_weight = pair_weight;
 
@@ -93,19 +93,19 @@ fn main() {
             }
             return;
         }
-        // Side-by-side with the v1 decoder on the same word.
-        if let Ok(v1model) =
+        // Side-by-side with the generative decoder on the same word.
+        if let Ok(gen_model) =
             akshar_ime::core::translit_model::TranslitModel::load(std::path::Path::new(
                 "data/translit_model.bin",
             ))
         {
-            let v1 = akshar_ime::core::decoder::ModelDecoder::new(v1model);
-            println!("v1 decode of {word:?}:");
-            for (dev, _s) in v1.decode(&word, 5) {
+            let generative = akshar_ime::core::decoder::ModelDecoder::new(gen_model);
+            println!("Generative decode of {word:?}:");
+            for (dev, _s) in generative.decode(&word, 5) {
                 println!("  {dev}");
             }
         }
-        println!("v2 decode of {word:?}:");
+        println!("Pair-grammar decode of {word:?}:");
         for c in decoder.decode(&word, 10) {
             println!(
                 "{:<20} emit={:.3} lm={:.3} score={:.3}",
@@ -120,7 +120,7 @@ fn main() {
 
     if let Some(cs) = trans {
         use akshar_ime::core::translit_model::pack_chunk_bytes;
-        use akshar_ime::core::v2::{pair_akshara, pair_chunk};
+        use akshar_ime::core::pair_model::{pair_akshara, pair_chunk};
         let ckey = pack_chunk_bytes(cs.as_bytes());
         let curs: Vec<u64> = decoder
             .model
@@ -129,7 +129,6 @@ fn main() {
             .filter(|&&k| pair_chunk(k) == ckey)
             .copied()
             .collect();
-        let mut rows: Vec<(f32, String)> = Vec::new();
         let from_na: Vec<u64> = decoder
             .model
             .emit_w
@@ -212,7 +211,7 @@ fn main() {
         let e = stats.entry("ALL").or_insert([0, 0, 0, 0]);
         e[0] += 1;
         e[3] += us;
-        if cands.first().map_or(false, |c| c.dev == target) {
+        if cands.first().is_some_and(|c| c.dev == target) {
             e[1] += 1;
         }
         if cands.iter().any(|c| c.dev == target) {
@@ -222,7 +221,7 @@ fn main() {
             let e = stats.entry(bucket).or_insert([0, 0, 0, 0]);
             e[0] += 1;
             e[3] += us;
-            if cands.first().map_or(false, |c| c.dev == target) {
+            if cands.first().is_some_and(|c| c.dev == target) {
                 e[1] += 1;
             }
             if cands.iter().any(|c| c.dev == target) {

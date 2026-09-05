@@ -287,7 +287,7 @@ fn main() {
                     if cur / 2500 > prev / 2500 || cur >= total_words {
                         let elapsed = t_start_work.elapsed().as_secs_f64();
                         let rate = if elapsed > 0.0 { cur as f64 / elapsed } else { 0.0 };
-                        let pct = if total_words > 0 { (cur * 100) / total_words } else { 100 };
+                        let pct = (cur * 100).checked_div(total_words).unwrap_or(100);
                         eprintln!(
                             "[{pct:3}%] Processed {cur}/{total_words} words ({rate:.0} words/s)..."
                         );

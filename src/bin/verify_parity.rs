@@ -1,22 +1,20 @@
-// File: src/bin/parity_v2.rs
+// File: src/bin/verify_parity.rs
 //
-// One-shot validation that the Rust port of reranker v2 reproduces the
-// Python model's rankings exactly on exported parity cases
-// (data/pipeline/reranker_v2.py::export_rust -> /tmp/v2_parity.json).
+// One-shot validation that the Rust port of the discriminative reranker reproduces the
+// exported parity cases exactly.
 //
-// Usage: cargo run --release --bin parity_v2 -- /tmp/v2_parity.json
+// Usage: cargo run --release --bin verify_parity -- /tmp/parity.json
 use akshar_ime::core::decoder::DecodedCandidate;
-use akshar_ime::core::reranker_v2::{rerank, RerankerV2Data};
-use std::collections::HashMap;
+use akshar_ime::core::reranker::{rerank, RerankerData};
 
 fn main() {
-    let path = std::env::args().nth(1).unwrap_or("/tmp/v2_parity.json".into());
+    let path = std::env::args().nth(1).unwrap_or("/tmp/parity.json".into());
     let spec: serde_json::Value =
         serde_json::from_reader(std::fs::File::open(path).expect("parity json")).expect("json");
 
-    // The real corpus vocabulary — same file the Python side ranked with.
+    // The real corpus vocabulary.
     let bytes = std::fs::read("data/word_freq_text.bin").expect("vocab bin");
-    let v2 = RerankerV2Data::from_bin_bytes(&bytes).expect("vocab parse");
+    let reranker_data = RerankerData::from_bin_bytes(&bytes).expect("vocab parse");
 
     let mut pass = 0;
     let cases = spec["cases"].as_array().expect("cases");
@@ -33,7 +31,7 @@ fn main() {
                 akshara_count: c[3].as_u64().unwrap() as usize,
             })
             .collect();
-        let got: Vec<String> = rerank(roman, &cands, &v2.freq, &v2.ranks)
+        let got: Vec<String> = rerank(roman, &cands, &reranker_data.freq, &reranker_data.ranks)
             .into_iter()
             .map(|(d, _)| d)
             .collect();

@@ -89,19 +89,22 @@ cargo run --release --bin train_model -- \
     --train data/aksharantar/train_devanagari.jsonl \
     --extra data/aksharantar/valid_devanagari.jsonl \
     --out data/translit_model.bin
+cargo run --release --bin train_reranker -- \
+    --train data/aksharantar/train_devanagari.jsonl \
+    --chunk-size 100000
 
-# 4. Evaluate (beam 256, k=50, lm 0.85, vocab 0.75)
-cargo run --release --bin evaluate_model -- \
-    --dataset data/aksharantar/test_devanagari.jsonl \
-    --beam 256 --topk 50 --lm-weight 0.85 --vocab-weight 0.75
+# 4. Evaluate
+cargo run --release --bin evaluate_aksharantar -- \
+    --dataset data/aksharantar/test_devanagari.jsonl
 ```
 
 ## Rules that prevent repeat incidents
 
-- Only `build_wordfreq_text` / `train_model` write the top-level `data/*.bin`.
+- Only `build_wordfreq_text` / `train_model` / `train_reranker` write top-level `data/*.bin`.
+- No binary files are ever stored inside `src/`.
 - The news pipeline exports into `data/store/` and merges into the vocab only
   via explicit `--merge-base` (a news-only vocabulary once silently overwrote
   the real one and cost 1.2 accuracy points).
 - **Backup before destroying:** gzip snapshot into `data/backup/` first.
-- Verified result of the current chain: **81.40% native top-1** through the
-  full engine (v2 reranker + bigram context).
+- Verified result of the current chain: **81.93% native top-1, 91.94% top-5** through the
+  full engine (canonical discriminative reranker + candidate union + bigram context).

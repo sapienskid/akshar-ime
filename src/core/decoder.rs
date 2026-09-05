@@ -19,12 +19,17 @@ const MAX_EMISSION_WEIGHT: f32 = 8.0;
 const MAX_AKSHARAS_PER_CHUNK: usize = 16;
 
 /// Tunable decoder parameters (exposed for eval-driven tuning).
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct DecoderConfig {
     pub beam_width: usize,
     pub max_emission_weight: f32,
     pub max_aksharas_per_chunk: usize,
     pub lm_weight: f64,
+    /// S3: when set, edge weights come from the conditional random field
+    /// (emission part + transition part) instead of the EM table + KN LM.
+    /// The two parts are still accumulated separately so the reranker's
+    /// emit/lm features keep their meaning. For CRF scoring use lm_weight 1.0.
+    pub crf: Option<std::sync::Arc<crate::core::crf::CrfModel>>,
 }
 
 impl Default for DecoderConfig {
@@ -34,6 +39,7 @@ impl Default for DecoderConfig {
             max_emission_weight: MAX_EMISSION_WEIGHT,
             max_aksharas_per_chunk: MAX_AKSHARAS_PER_CHUNK,
             lm_weight: 1.0,
+            crf: None,
         }
     }
 }
@@ -44,6 +50,8 @@ struct Edge {
     len: usize,
     a: u32,
     w: f32,
+    /// Chunk id in the CRF feature space (u32::MAX when no CRF).
+    cid: u32,
 }
 
 pub struct ModelDecoder {
@@ -202,12 +210,20 @@ impl ModelDecoder {
                     continue;
                 }
                 for &e in &edges_by_pos[st.pos] {
-                    let fluency = match (st.prev2, st.prev) {
-                        (_, None) => self.model.start_weight(e.a),
-                        (None, Some(b)) => self.model.bigram_weight(b, e.a),
-                        (Some(a), Some(b)) => self.model.trigram_weight(a, b, e.a),
+                    let (emit_w, fluency) = {
+                        let base_emit = e.w as f64;
+                        let base_lm = match (st.prev2, st.prev) {
+                            (_, None) => self.model.start_weight(e.a),
+                            (None, Some(b)) => self.model.bigram_weight(b, e.a),
+                            (Some(a), Some(b)) => self.model.trigram_weight(a, b, e.a),
+                        };
+                        if let Some(crf) = &self.config.crf {
+                            crf.edge_parts_with_base(st.prev, e.a, e.cid, base_emit, base_lm)
+                        } else {
+                            (base_emit, base_lm)
+                        }
                     };
-                    let emit = st.emit + e.w as f64;
+                    let emit = st.emit + emit_w;
                     let lm = st.lm + fluency;
                     let score = emit + lm * self.config.lm_weight;
                     let cell = PathCell {
@@ -389,6 +405,149 @@ impl ModelDecoder {
         out
     }
 
+    /// W3: candidate generation constrained to valid dictionary words with detailed scores.
+    pub fn decode_in_words_detailed(
+        &self,
+        roman: &str,
+        k: usize,
+        trie: &crate::core::wordtrie::WordTrie,
+    ) -> Vec<DecodedCandidate> {
+        let roman = roman.to_ascii_lowercase();
+        let edges_by_pos = self.build_edges(&roman);
+        let m = roman.len();
+        if m == 0 {
+            return vec![];
+        }
+        let k = k.max(1);
+
+        let mut arena: Vec<PathCell> = Vec::with_capacity(256);
+        #[derive(Clone)]
+        struct St {
+            pos: usize,
+            prev: Option<u32>,
+            prev2: Option<u32>,
+            score: f64,
+            emit: f64,
+            lm: f64,
+            path: Option<u32>,
+            wnode: usize,
+        }
+        let mut beam = vec![St {
+            pos: 0,
+            prev: None,
+            prev2: None,
+            score: 0.0,
+            emit: 0.0,
+            lm: 0.0,
+            path: None,
+            wnode: 0,
+        }];
+        let mut seen: HashMap<String, (f64, f64, f64, usize)> = HashMap::new();
+
+        for _step in 0..MAX_STEPS {
+            if beam.is_empty() {
+                break;
+            }
+            let mut next: Vec<St> = Vec::with_capacity(beam.len() * 8);
+            for st in &beam {
+                if st.pos == m {
+                    if trie.freq(st.wnode).is_some() {
+                        let (dev, aks_cnt) = self.reconstruct(&arena, st.path);
+                        seen.entry(dev)
+                            .and_modify(|best| {
+                                if st.score < best.0 {
+                                    *best = (st.score, st.emit, st.lm, aks_cnt);
+                                }
+                            })
+                            .or_insert((st.score, st.emit, st.lm, aks_cnt));
+                    }
+                    continue;
+                }
+                for &e in &edges_by_pos[st.pos] {
+                    if let Some(wn) = trie.child(st.wnode, e.a) {
+                        let fluency = match (st.prev2, st.prev) {
+                            (_, None) => self.model.start_weight(e.a),
+                            (None, Some(b)) => self.model.bigram_weight(b, e.a),
+                            (Some(a), Some(b)) => self.model.trigram_weight(a, b, e.a),
+                        };
+                        let emit = st.emit + e.w as f64;
+                        let lm = st.lm + fluency;
+                        let score = emit + lm * self.config.lm_weight;
+                        let cell = PathCell {
+                            parent: st.path,
+                            akshara: e.a,
+                        };
+                        let idx = arena.len() as u32;
+                        arena.push(cell);
+                        next.push(St {
+                            pos: st.pos + e.len,
+                            prev: Some(e.a),
+                            prev2: st.prev,
+                            score,
+                            emit,
+                            lm,
+                            path: Some(idx),
+                            wnode: wn,
+                        });
+                    }
+                }
+            }
+            next.sort_by(|a, b| {
+                a.pos
+                    .cmp(&b.pos)
+                    .then_with(|| a.prev.cmp(&b.prev))
+                    .then_with(|| a.prev2.cmp(&b.prev2))
+                    .then_with(|| a.wnode.cmp(&b.wnode))
+                    .then_with(|| a.score.total_cmp(&b.score))
+            });
+            next.dedup_by(|a, b| {
+                a.pos == b.pos && a.prev == b.prev && a.prev2 == b.prev2 && a.wnode == b.wnode
+            });
+            next.sort_by(|a, b| a.score.total_cmp(&b.score));
+            next.truncate(self.config.beam_width.max(64) * 2);
+            beam = next;
+        }
+
+        let mut out: Vec<DecodedCandidate> = seen
+            .into_iter()
+            .map(|(dev, (_, emit, lm, akshara_count))| DecodedCandidate {
+                dev,
+                emit,
+                lm,
+                akshara_count,
+            })
+            .collect();
+        out.sort_by(|a, b| {
+            let at = a.emit + a.lm * self.config.lm_weight;
+            let bt = b.emit + b.lm * self.config.lm_weight;
+            at.total_cmp(&bt)
+        });
+        out.truncate(k);
+        out
+    }
+
+    /// W3: Candidate Union across heterogeneous generators.
+    /// Merges beam search candidates with word-trie dictionary candidates.
+    pub fn decode_union(
+        &self,
+        roman: &str,
+        k: usize,
+        trie: Option<&crate::core::wordtrie::WordTrie>,
+    ) -> Vec<DecodedCandidate> {
+        let mut cands = self.decode_detailed(roman, k);
+        if let Some(t) = trie {
+            let in_words = self.decode_in_words_detailed(roman, k, t);
+            let mut seen: std::collections::HashSet<String> =
+                cands.iter().map(|c| c.dev.clone()).collect();
+            for c in in_words {
+                if seen.insert(c.dev.clone()) {
+                    cands.push(c);
+                }
+            }
+        }
+        cands
+    }
+
     fn reconstruct(&self, arena: &[PathCell], path: Option<u32>) -> (String, usize) {
         let mut aks = Vec::with_capacity(12);
         let mut cur = path;
@@ -411,12 +570,14 @@ impl ModelDecoder {
     fn build_edges(&self, roman: &str) -> Vec<Vec<Edge>> {
         let m = roman.len();
         let mut edges = vec![Vec::new(); m + 1];
+        let crf = self.config.crf.as_deref();
         for pos in 0..m {
             for l in 1..=MAX_CHUNK.min(m - pos) {
                 let chunk = &roman[pos..pos + l];
+                let cid = crf.and_then(|c| c.chunk_id(chunk)).unwrap_or(u32::MAX);
                 if let Some(list) = self.reverse.get(chunk) {
                     for &(a, w) in list {
-                        edges[pos].push(Edge { len: l, a, w });
+                        edges[pos].push(Edge { len: l, a, w, cid });
                     }
                 }
             }
