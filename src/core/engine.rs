@@ -40,6 +40,9 @@ const DECODER_BEAM: usize = 64;
 const FRESH_SCALE: f64 = 800_000.0;
 /// Purnabiram (।, U+0964) — mapped from a trailing '.'.
 const PURNABIRAM: char = '\u{0964}';
+/// Default per-ln-unit boost for candidates forming a corpus bigram with the
+/// previously committed word (E6). Calibrated by evaluate_context.
+const DEFAULT_BIGRAM_BOOST: f64 = 40_000.0;
 /// Bonus for a candidate that is both decoder-generated AND an exact corpus
 /// word.  Additive on top of the fresh score so the decoder's ranking among
 /// corpus words is preserved (a flat absolute score made arbitrary-order
@@ -61,6 +64,16 @@ pub struct ImeEngine {
     /// Corpus-vocabulary data for the v2 reranker (native builds with
     /// word_freq_text.bin present; None on WASM-lite or missing file).
     v2: Option<crate::core::reranker_v2::RerankerV2Data>,
+    /// E6: corpus word-bigram table (data/word_bigrams.bin) for
+    /// context-conditioned reranking; None on WASM-lite or missing file.
+    corpus_bigrams: Option<HashMap<String, Vec<(String, u32)>>>,
+    /// Whether the corpus-bigram context boost is applied (harness A/B).
+    bigram_context_enabled: bool,
+    /// Per-ln-unit boost applied to candidates forming a bigram with the
+    /// previously committed word. Tunable via set_bigram_boost.
+    bigram_boost: f64,
+    /// Last word the user committed (drives the corpus-bigram context).
+    last_word: Option<String>,
     pub trie: Trie,
     pub context_model: ContextModel,
     pub symspell: SymSpell,
@@ -87,6 +100,10 @@ impl ImeEngine {
             reranker,
             lexicon,
             v2: load_v2(),
+            corpus_bigrams: load_bigrams(),
+            bigram_context_enabled: true,
+            bigram_boost: DEFAULT_BIGRAM_BOOST,
+            last_word: None,
             trie: Trie::new(),
             context_model: ContextModel::new(CONTEXT_WINDOW_SIZE),
             symspell: SymSpell::new(MAX_EDIT_DISTANCE),
@@ -134,6 +151,10 @@ impl ImeEngine {
             reranker,
             lexicon,
             v2: load_v2(),
+            corpus_bigrams: load_bigrams(),
+            bigram_context_enabled: true,
+            bigram_boost: DEFAULT_BIGRAM_BOOST,
+            last_word: None,
             trie: Trie::new(),
             context_model: ContextModel::new(CONTEXT_WINDOW_SIZE),
             symspell: SymSpell::new(MAX_EDIT_DISTANCE),
@@ -387,6 +408,28 @@ impl ImeEngine {
             }
         }
 
+        // 4b. E6: corpus-bigram context — candidates that commonly follow the
+        //     previously committed word get a boost (Kirov-calibrated lever).
+        if self.bigram_context_enabled {
+            if let (Some(prev), Some(bigrams)) = (&self.last_word, &self.corpus_bigrams) {
+                if let Some(succ) = bigrams.get(prev) {
+                    let mut boosted: Vec<(String, u64)> = candidates.drain().collect();
+                    for (dev, score) in boosted.iter_mut() {
+                        // successors sorted by freq desc; linear scan is fine
+                        // (few dozen entries per context word)
+                        // linear scan: successor lists are short and sorted
+                        // by frequency, not by word
+                        if let Some(&(_, f)) = succ.iter().find(|(w, _)| w == dev) {
+                            *score = score.saturating_add(
+                                (self.bigram_boost * (1.0 + f as f64).ln()) as u64,
+                            );
+                        }
+                    }
+                    candidates = boosted.into_iter().collect();
+                }
+            }
+        }
+
         // 5. Context re-rank for words the user has typed before.
         let mut with_ids: Vec<(WordId, u64)> = candidates
             .iter()
@@ -411,10 +454,21 @@ impl ImeEngine {
         out
     }
 
+    /// E6 harness controls: enable/disable and tune the corpus-bigram
+    /// context boost (A/B measurement via evaluate_context).
+    pub fn set_bigram_context_enabled(&mut self, on: bool) {
+        self.bigram_context_enabled = on;
+    }
+
+    pub fn set_bigram_boost(&mut self, scale: f64) {
+        self.bigram_boost = scale;
+    }
+
     pub fn user_confirms(&mut self, roman: &str, devanagari: &str) {
         if roman.is_empty() || devanagari.is_empty() {
             return;
         }
+        self.last_word = Some(devanagari.to_string());
         let confirmation = WordConfirmation {
             roman: roman.to_string(),
             devanagari: devanagari.to_string(),
@@ -607,6 +661,17 @@ fn load_v2() -> Option<crate::core::reranker_v2::RerankerV2Data> {
     None
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+fn load_bigrams() -> Option<HashMap<String, Vec<(String, u32)>>> {
+    let bytes = std::fs::read(data_path("word_bigrams.bin")).ok()?;
+    bincode::deserialize(&bytes).ok()
+}
+
+#[cfg(target_arch = "wasm32")]
+fn load_bigrams() -> Option<HashMap<String, Vec<(String, u32)>>> {
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -671,6 +736,10 @@ mod tests {
             reranker: Reranker::default(),
             lexicon,
             v2: None,
+            corpus_bigrams: None,
+            bigram_context_enabled: true,
+            bigram_boost: DEFAULT_BIGRAM_BOOST,
+            last_word: None,
             trie: Trie::new(),
             context_model: ContextModel::new(3),
             symspell: SymSpell::new(2),

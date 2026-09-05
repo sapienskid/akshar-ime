@@ -501,3 +501,36 @@ load; WASM builds unaffected (v2 auto-off without the vocab file).
 
 The port removed the engine's old ranking deficit entirely: the full engine
 now *exceeds* the raw decoder+heuristic (80.98%). Suite 60/60; WASM build OK.
+
+## E6 corpus-bigram context + data-derived suffix features (2026-09-05, late night)
+
+**Suffix-agreement features de-hardcoded.** The 11 hand-picked postposition
+slots (को/का/की/लाई/ले/मा/बाट/हरू/सँग/भन्दा/कै) were replaced by a
+**data-derived short-word table**: the 24 most frequent ≤3-char Devanagari
+words (postpositions/clitics dominate short-token frequency) with the two
+most common roman tails users actually typed for them, mined from train+valid
+by proportional-tail attribution. Same accuracy as the hand list
+(61.01% offline) but zero hardcoded linguistics; the table and weights
+regenerate together (`reranker_v2.py::export_rust`, N_FEATS 39→52).
+Rust parity re-verified 5/5; engine bench with the regenerated model:
+**native 81.40%, NEF 29.25, NEI 45.32** (vs 81.36/29.01/45.24 pre-change).
+
+**E6 context layer wired.** `build_bigrams.rs` → `data/word_bigrams.bin`
+(1.25M pairs over 102,534 context words, 41 MB). The engine tracks the last
+committed word and boosts candidates forming a corpus bigram with it
+(40k·ln(1+f) additive, tuned). `evaluate_context` A/B harness romanizes
+corpus sentences and walks two identical engines in lockstep (context is the
+only difference):
+
+| sentences | A context OFF | B context ON | Δ |
+|---|---|---|---|
+| 0–800 (tune) | 89.75% | 90.21% (boost 60k) | +0.46 |
+| 800–1600 (held-out) | 89.40% | 89.80% (boost 60k) | **+0.40** |
+| 800–1600 (held-out) | 89.40% | 89.75% (boost 40k) | +0.35 |
+
+Held-out **+0.35–0.40** sentence-level accuracy. Modest here because
+canonical romanizations of corpus words already decode at ~90% (little
+ambiguity left); on real user input (variants, typos) the context term has
+more errors to fix. Default boost set to 40k. Benchmark note: this lever is
+invisible to the isolated-word benchmark by construction — it exists for
+real typing flow.

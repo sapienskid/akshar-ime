@@ -18,10 +18,12 @@
 //   6 log1p(freq)  7 freq_rank_pct  8 in_vocab  9 len(dev)  10 matra_total
 //   11..20 matra profile (10)  21 nasals  22 visarga  23 halants
 //   24 vowel_initial  25 ends_matra  26 ends_nasal_visarga  27 len(roman)
-//   28..38 postposition agreement (11)
+//   28..51 short-word suffix agreement (24, data-derived table)
 
 use crate::core::decoder::DecodedCandidate;
-use crate::core::reranker_v2_weights::{GAMMA, LM_W, MEAN, N_FEATS, STD, VOCAB_W, W};
+use crate::core::reranker_v2_weights::{
+    GAMMA, LM_W, MEAN, N_FEATS, SHORT_WORDS, STD, VOCAB_W, W,
+};
 use std::collections::HashMap;
 
 const MATRAS: [char; 10] = [
@@ -37,21 +39,11 @@ const MATRAS: [char; 10] = [
     '\u{0943}', // ृ
 ];
 
-/// (devanagari suffix, roman suffix) postposition-agreement pairs, in the
-/// exact order the model was trained on.
-const POSTPOSITIONS: [(&str, &str); 11] = [
-    ("को", "ko"),
-    ("का", "ka"),
-    ("की", "ki"),
-    ("लाई", "lai"),
-    ("ले", "le"),
-    ("मा", "ma"),
-    ("बाट", "baat"),
-    ("हरू", "haru"),
-    ("सँग", "sanga"),
-    ("भन्दा", "bhanda"),
-    ("कै", "kai"),
-];
+// Suffix-agreement features come from the data-derived SHORT_WORDS table
+// (reranker_v2_weights.rs): frequent short Devanagari words (postpositions
+// and clitics dominate) with the roman spellings users actually typed for
+// them. No hardcoded linguistics — the table and its slot order are
+// generated together with the weights.
 
 /// Word-frequency ranks (position in the vocabulary sorted by frequency,
 /// descending) — the model's freq_rank_pct feature. Built once from the
@@ -181,9 +173,10 @@ pub fn rerank(
             .is_some_and(|ch| MATRAS.contains(&ch)) as i32 as f64;
         feats[26] = c.dev.chars().last().is_some_and(|ch| ch == '\u{0902}' || ch == '\u{0901}' || ch == '\u{0903}') as i32 as f64;
         feats[27] = roman.chars().count() as f64;
-        for (k, (d, r)) in POSTPOSITIONS.iter().enumerate() {
-            feats[28 + k] =
-                (c.dev.ends_with(d) && roman.ends_with(r)) as i32 as f64;
+        for (k, (word, variants)) in SHORT_WORDS.iter().enumerate() {
+            feats[28 + k] = (c.dev.ends_with(word)
+                && variants.iter().any(|r| !r.is_empty() && roman.ends_with(r)))
+                as i32 as f64;
         }
         xs.push(feats);
     }
