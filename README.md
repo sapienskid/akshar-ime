@@ -76,39 +76,33 @@ git clone https://github.com/sapienskid/akshar-ime.git
 cd akshar-ime
 ```
 
-All data lives under `data/` (never committed to the repo — see
-[data/README.md](data/README.md) for the layout). One command fetches
-everything: the Aksharantar Nepali split, Nepali Wikipedia, and CC100:
+All data lives under `data/` (never committed to the repo). Because no data
+is in the repository, there are no `make` targets for it — the download and
+cleaning pipeline is private and documented with exact commands in
+[data/README.md](data/README.md). For users, Option A below needs nothing
+more.
 
-```bash
-make data-raw
-```
-
-(The Aksharantar dataset is published by AI4Bharat on
-[Hugging Face](https://huggingface.co/datasets/ai4bharat/Aksharantar); the
-`nep_*.json` files land in `data/aksharantar/`.)
+(The word-pair corpus is the Aksharantar dataset, published by AI4Bharat on
+[Hugging Face](https://huggingface.co/datasets/ai4bharat/Aksharantar);
+running text comes from Nepali Wikipedia, CC100, and an akshar-ime news crawl.)
 
 ### Step 2 — Get the model artifacts
 
 Two artifacts power the engine (both are gitignored):
 
-- `translit_model.bin` (~22 MB) — the EM-trained transliteration table and
-  syllable language model (built from the Aksharantar word pairs).
-- `word_freq_text.bin` (~20 MB) — the vocabulary: 570k real Devanagari words
-  with usage frequencies (counted from Nepali Wikipedia + CC100 running text).
+- `translit_model.bin` (~32 MB) — the EM-trained transliteration table and
+  syllable language model (built from the merged Devanagari word-pair set).
+- `word_freq_text.bin` (~17 MB) — the vocabulary: 470k clean Devanagari words
+  with usage frequencies (counted from the cleaned Wikipedia + CC100 + news
+  corpus).
 
 **Option A — download prebuilt artifacts** from the
 [GitHub Releases](https://github.com/sapienskid/akshar-ime/releases) page into
 `data/` (recommended; no training needed).
 
-**Option B — build them locally:**
-
-```bash
-make data-vocab   # count data/raw/* -> data/word_freq_text.bin
-make data-model   # train the EM model -> data/translit_model.bin
-# or everything at once (downloads included):
-make data
-```
+**Option B — build them locally:** follow the recipes in
+[data/README.md](data/README.md) (download sources → `clean_aksharantar.py` →
+`build_corpus.py` → `build_wordfreq_text` → `train_model`).
 
 ### Step 3 — Build and install
 
@@ -206,9 +200,8 @@ The engine is built from three open datasets:
 - **Your own typing** — the engine's adaptive learning happens entirely on-device
   (`~/.config/akshar-devanagari/user_dictionary.bin`); it never leaves your machine.
 
-- The corpus itself is **not** included in this repository — download it with
-  `make data-raw` (see Step 1 above). No data files are committed to the repo;
-  `data/` is fully gitignored (only its README is tracked).
+- The corpus itself is **not** included in this repository — data provenance,
+  cleaning rules, and rebuild recipes are documented in [data/README.md](data/README.md).
 - The 75M-token text vocabulary now also includes an akshar-ime news crawl
   (~34M tokens of current Nepali news) merged on top of Wikipedia + CC100 —
   see `data/README.md` and the scraping pipeline in `data/pipeline/` (private,

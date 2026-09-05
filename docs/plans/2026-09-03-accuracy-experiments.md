@@ -402,3 +402,34 @@ from the corpus. Synthetic pair files and intermediate vocab CSVs deleted
 Cleaning the *input data* is now the cheapest accuracy lever found so far
 (+0.33 total from tokenizer + dedup). `make data` = raw → clean → vocab →
 model; `data-clean` deletes the raw inputs after compiling the corpus.
+
+## Aksharantar cleaned & merged + engine input mappings (2026-09-05, night)
+
+**Corpus (user decision: one language-agnostic Devanagari set, strict filter
+everywhere).** `clean_aksharantar.py`: native word must be a pure letter run
+(U+0900..0963), roman pure a-z, exact dupes dropped. Result: train 3,588,793
+(18 bad natives, 107,758 cross-language dupes removed), valid 9,155,
+**test 4,101 unchanged** (0 drops — benchmark comparability preserved).
+Originals deleted after a gzip snapshot to `data/backup/` (99 MB).
+
+**Model D (merged hin+nep, cleaned): native top-1 80.98% — ties the record
+while lifting every other bucket** vs the Nepali-only model on identical
+vocabulary and config:
+
+| Model | AK-Freq top-1 | AK-Freq top-50 | ALL | NEF | NEI |
+|---|---|---|---|---|---|
+| Nepali-only (previous best) | 80.83% | 93.55 | 60.38 | 28.76 | 45.07 |
+| **Merged cleaned (D, shipped)** | **80.98%** | **94.40** | **60.64** | **29.01** | **46.17** |
+
+E2's "Hindi pooling negative" is superseded: on deduplicated, cleaned data,
+merging helps the candidate set (NE top-50 +4.1/4.1) at no native cost.
+Decode 14.0 ms/word at beam 256 (model 32.3 MB, 16.5k aksharas).
+
+**Engine input mappings (both runtimes via `ImeEngine::get_suggestions`):**
+- ASCII digits → Devanagari digits (pure mapping, model never sees them):
+  all-digit input maps directly (`123` → `१२३`), leading/trailing digit runs
+  wrap the decoded word (`namaste1` → `नमस्ते१`), mid-word digits interleave
+  top-1s (`na2ma` → `न२म`).
+- Purnabiram: trailing `.` appends । to every suggestion (`namaste.` →
+  `नमस्ते।`); a lone `.` is । itself.
+- 6 new unit tests; suite 60/60.

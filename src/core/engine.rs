@@ -38,6 +38,8 @@ const QUERY_VARIANT_LIMIT: usize = 6;
 const DECODER_BEAM: usize = 64;
 /// Scale converting a reranker log-score into the engine's higher-better u64 score.
 const FRESH_SCALE: f64 = 800_000.0;
+/// Purnabiram (।, U+0964) — mapped from a trailing '.'.
+const PURNABIRAM: char = '\u{0964}';
 /// Bonus for a candidate that is both decoder-generated AND an exact corpus
 /// word.  Additive on top of the fresh score so the decoder's ranking among
 /// corpus words is preserved (a flat absolute score made arbitrary-order
@@ -188,11 +190,122 @@ impl ImeEngine {
         Ok(())
     }
 
+    /// Entry point for every runtime (IBus C layer, WASM): applies the pure
+    /// mappings (ASCII digits → Devanagari digits, trailing '.' → purnabiram)
+    /// before the roman goes through the statistical model.
     pub fn get_suggestions(&self, prefix: &str, count: usize) -> Vec<(String, u64)> {
         if prefix.is_empty() {
             return vec![];
         }
         let count = count.max(1);
+
+        // Purnabiram (।): a trailing '.' asks for it on the result; a lone
+        // '.' *is* purnabiram.
+        let (base, purnabiram) = match prefix.strip_suffix('.') {
+            Some("") => return vec![(PURNABIRAM.to_string(), FRESH_SCALE as u64)],
+            Some(b) => (b, true),
+            None => (prefix, false),
+        };
+        let finish = |mut out: Vec<(String, u64)>| {
+            if purnabiram {
+                for (s, _) in out.iter_mut() {
+                    s.push(PURNABIRAM);
+                }
+            }
+            out
+        };
+
+        // Split the input into letter runs and digit runs. Digits never enter
+        // the model — they map to Devanagari digits directly.
+        let mut segments: Vec<Result<String, String>> = Vec::new(); // Ok(letters) / Err(digits)
+        for part in base.split_inclusive(|c: char| c.is_ascii_digit()) {
+            if part.is_empty() {
+                continue;
+            }
+            if part.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+                let last = segments.last_mut();
+                match last {
+                    Some(Err(d)) => d.push_str(part),
+                    _ => segments.push(Err(part.to_string())),
+                }
+            } else {
+                let mut digits_end = part.len();
+                for (i, c) in part.char_indices() {
+                    if c.is_ascii_digit() {
+                        digits_end = i;
+                        break;
+                    }
+                }
+                let (letters, trailing_digits) = part.split_at(digits_end);
+                segments.push(Ok(letters.to_string()));
+                if !trailing_digits.is_empty() {
+                    segments.push(Err(trailing_digits.to_string()));
+                }
+            }
+        }
+        let map_digits = |d: &str| -> String {
+            d.chars()
+                .map(|c| {
+                    if c.is_ascii_digit() {
+                        char::from_u32('\u{0966}' as u32 + c as u32 - '0' as u32)
+                            .unwrap_or(c)
+                    } else {
+                        c
+                    }
+                })
+                .collect()
+        };
+
+        let letter_runs: Vec<&String> = segments.iter().filter_map(|s| s.as_ref().ok()).collect();
+        if letter_runs.is_empty() {
+            // Pure number: 123 -> १२३ (no model involved).
+            let digits = segments
+                .iter()
+                .filter_map(|s| s.as_ref().err())
+                .cloned()
+                .collect::<Vec<_>>()
+                .join("");
+            return finish(vec![(map_digits(&digits), FRESH_SCALE as u64)]);
+        }
+        if letter_runs.len() == 1 {
+            // Single word with optional leading/trailing digits: decode the
+            // word, then place the mapped digit runs at their original edges.
+            let roman = letter_runs[0].as_str();
+            let lead_digits = match segments.first() {
+                Some(Err(d)) => map_digits(d),
+                _ => String::new(),
+            };
+            let trail_digits = match segments.last() {
+                Some(Err(d)) => map_digits(d),
+                _ => String::new(),
+            };
+            let mut out = self.suggestions_for_roman(roman, count);
+            for (s, _) in out.iter_mut() {
+                *s = format!("{lead_digits}{s}{trail_digits}");
+            }
+            return finish(out);
+        }
+        // Digits between words ("ka2024ma"): decode each letter run to its
+        // top choice and interleave the mapped digits — one combined result.
+        let mut combined = String::new();
+        for seg in &segments {
+            match seg {
+                Ok(roman) => {
+                    if let Some((top, _)) = self.suggestions_for_roman(roman, 1).first() {
+                        combined.push_str(top);
+                    }
+                }
+                Err(d) => combined.push_str(&map_digits(d)),
+            }
+        }
+        finish(vec![(combined, FRESH_SCALE as u64)])
+    }
+
+    /// The statistical path: roman (letters only) -> ranked Devanagari words.
+    fn suggestions_for_roman(&self, prefix: &str, count: usize) -> Vec<(String, u64)> {
+        if prefix.is_empty() {
+            return vec![];
+        }
         let query_variants = expand_query_variants(prefix, QUERY_VARIANT_LIMIT);
 
         let mut candidates: HashMap<String, u64> = HashMap::new();
@@ -579,5 +692,70 @@ mod tests {
         assert_eq!(ImeEngine::bounded_levenshtein("kal", "kal", 2), Some(0));
         assert_eq!(ImeEngine::bounded_levenshtein("kal", "kall", 2), Some(1));
         assert_eq!(ImeEngine::bounded_levenshtein("kal", "xyz", 2), None);
+    }
+
+    #[test]
+    fn lone_dot_is_purnabiram() {
+        let engine = engine_with(tiny_decoder().model, None);
+        let out = engine.get_suggestions(".", 8);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].0, "।");
+    }
+
+    #[test]
+    fn trailing_dot_appends_purnabiram() {
+        let engine = engine_with(tiny_decoder().model, None);
+        let out = engine.get_suggestions("namaste.", 8);
+        assert!(!out.is_empty(), "purnabiram input should still decode");
+        assert!(out.iter().all(|(d, _)| d.ends_with('।')));
+        // and the plain word still decodes identically underneath
+        let plain: Vec<String> = engine
+            .get_suggestions("namaste", 8)
+            .into_iter()
+            .map(|(d, _)| d)
+            .collect();
+        let dotted: Vec<String> = out
+            .into_iter()
+            .map(|(d, _)| d.strip_suffix('।').map(|s| s.to_string()).unwrap_or(d))
+            .collect();
+        assert_eq!(
+            plain, dotted,
+            "suggestions with '.' must equal plain suggestions + ।"
+        );
+    }
+
+    #[test]
+    fn all_digits_map_to_devanagari() {
+        let engine = engine_with(tiny_decoder().model, None);
+        let out = engine.get_suggestions("123", 8);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].0, "१२३");
+        // year with purnabiram
+        let out = engine.get_suggestions("2081.", 8);
+        assert_eq!(out[0].0, "२०८१।");
+    }
+
+    #[test]
+    fn trailing_digits_map_onto_suggestions() {
+        let engine = engine_with(tiny_decoder().model, None);
+        let out = engine.get_suggestions("namaste1", 8);
+        assert!(out.iter().any(|(d, _)| d.ends_with('१')));
+        assert!(out.iter().any(|(d, _)| d.starts_with("नमस्ते")));
+    }
+
+    #[test]
+    fn leading_digits_prepend_mapping() {
+        let engine = engine_with(tiny_decoder().model, None);
+        let out = engine.get_suggestions("12na", 8);
+        assert!(!out.is_empty());
+        assert!(out.iter().all(|(d, _)| d.starts_with("१२")));
+    }
+
+    #[test]
+    fn digits_between_words_interleave() {
+        let engine = engine_with(tiny_decoder().model, None);
+        let out = engine.get_suggestions("na2ma", 8);
+        assert!(!out.is_empty());
+        assert_eq!(out[0].0, "न२म");
     }
 }

@@ -18,7 +18,7 @@ IBUS_ENGINE_DIR   := $(PREFIX)/lib/ibus/engines
 IBUS_COMPONENT_DIR:= $(PREFIX)/share/ibus/component
 DATA_DIR          := $(PREFIX)/share/akshar-ime
 
-.PHONY: all release debug install uninstall reinstall clean reset-learning restart-ibus help wasm wasm-clean wasm-serve data data-raw data-vocab data-model data-store
+.PHONY: all release debug install uninstall reinstall clean reset-learning restart-ibus help wasm wasm-clean wasm-serve release-upload
 
 # --- Main Targets ---
 
@@ -120,53 +120,10 @@ wasm-serve: wasm  ## Build WASM and serve demo at http://localhost:PORT/web/ (de
 	echo "  (override with: make wasm-serve PORT=9000)"; \
 	python3 -m http.server $$PORT
 
-# --- Data system (see data/README.md) — everything builds into data/ ---
-
-data: data-raw data-clean data-vocab data-model  ## Build the full data chain: downloads → cleaned corpus → vocab → model.
-
-data-raw:  ## Download source corpora: Aksharantar splits + Nepali Wikipedia + CC100 → data/raw (transient).
-	@mkdir -p data/aksharantar data/raw
-	@python3 data/pipeline/fetch_corpus.py data/aksharantar
-	@if [ ! -f data/raw/newiki.txt ]; then \
-		echo "  > Downloading + extracting Nepali Wikipedia..."; \
-		curl -sL -o /tmp/newiki.xml.bz2 https://dumps.wikimedia.org/newiki/latest/newiki-latest-pages-articles.xml.bz2; \
-		python3 data/pipeline/extract_wiki.py /tmp/newiki.xml.bz2 data/raw/newiki.txt; \
-		rm -f /tmp/newiki.xml.bz2; \
-	else echo "  > data/raw/newiki.txt already present"; fi
-	@if [ ! -f data/raw/cc100ne.txt ]; then \
-		echo "  > Downloading + filtering CC100 Nepali..."; \
-		curl -sL -o /tmp/cc100-ne.txt.xz https://data.statmt.org/cc-100/ne.txt.xz; \
-		python3 data/pipeline/filter_cc100.py /tmp/cc100-ne.txt.xz data/raw/cc100ne.txt; \
-		rm -f /tmp/cc100-ne.txt.xz; \
-	else echo "  > data/raw/cc100ne.txt already present"; fi
-
-data-clean:  ## Compile all sources into the single cleaned corpus (data/store/corpus_clean.txt), then delete the raw inputs.
-	@mkdir -p data/store
-	@python3 data/pipeline/build_corpus.py data/store/corpus_clean.txt \
-		--db data/store/nepali_text.db \
-		data/raw/newiki.txt data/raw/cc100ne.txt data/raw/news.txt
-	@rm -rf data/raw
-	@echo "  > raw sources deleted; corpus_clean.txt is now the only stored text"
-
-data-vocab:  ## Count the cleaned corpus → data/word_freq_text.bin.
-	@cargo run --release --bin build_wordfreq_text -- data/store/corpus_clean.txt
-
-data-model:  ## Train the EM model (train+valid) → data/translit_model.bin.
-	@cargo run --release --bin train_model -- \
-		--train data/aksharantar/nep_train.json \
-		--extra data/aksharantar/nep_valid.json \
-		--out data/translit_model.bin
-
-data-store:  ## Scraping pipeline: incremental crawl + count + export, then re-clean corpus + vocab.
-	@python3 data/pipeline/pipeline.py crawl
-	@python3 data/pipeline/pipeline.py count
-	@python3 data/pipeline/pipeline.py export --merge-base data/word_freq_text.bin
-	@$(MAKE) data-clean data-vocab
-
 release-upload:  ## Upload locally built model artifacts to a GitHub release (TAG=vX.Y.Z required).
 	@if [ -z "$(TAG)" ]; then echo "usage: make release-upload TAG=vX.Y.Z"; exit 1; fi
-	@test -f data/translit_model.bin || { echo "data/translit_model.bin missing — run 'make data-model' first"; exit 1; }
-	@test -f data/word_freq_text.bin || { echo "data/word_freq_text.bin missing — run 'make data-vocab' first"; exit 1; }
+	@test -f data/translit_model.bin || { echo "data/translit_model.bin missing — build via data/README.md"; exit 1; }
+	@test -f data/word_freq_text.bin || { echo "data/word_freq_text.bin missing — build via data/README.md"; exit 1; }
 	@gh release view $(TAG) >/dev/null 2>&1 || gh release create $(TAG) --generate-notes --verify-tag
 	@gh release upload $(TAG) data/translit_model.bin data/word_freq_text.bin --clobber
 	@echo "Uploaded model artifacts to release $(TAG)."
