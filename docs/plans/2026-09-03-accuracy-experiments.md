@@ -358,3 +358,26 @@ erases the human spelling diversity that is the corpus's actual information
 content (model collapse; worse at higher synthetic mass). The E5 entries above
 (+0.23 "sota") were artifacts of the ingestion bug. **Retire E5; the verified
 recipe is nep_train + nep_valid + real-text vocabulary rescoring.**
+
+## Vocabulary de-noising (2026-09-05, night) — NEW BEST 80.83%
+
+Audit of `word_freq_text.bin` (709k words) found heavy tokenizer noise:
+**39,732 tokens with glued danda** (पुगे।, date strings), **67,250 with
+Devanagari digits** (२००८५, १४:१९), **152,630 with ASCII punctuation**
+(सोमाली,, (भोटे)), **2,094 with ZWJ/ZWNJ**. Beyond pollution, glued variants
+*split* a real word's count across keys (पुगे। ≠ पुगे), flattening exactly
+the frequency prior the reranker depends on.
+
+Fix (`build_wordfreq_text.rs`): trim non-word chars from token edges, then
+require every char ∈ U+0900..=U+0963 (letters/matras/nukta/vocalics/
+anusvara-visarga — excludes danda 0964-65, digits 0966-6F, abbrev signs,
+ZWJ/ZWNJ, ASCII). `pipeline.py` WORD regex matched for future DB counts.
+
+| Vocab | words | AK-Freq top-1 | ALL top-1 |
+|---|---|---|---|
+| pre-fix (merged 3-source) | 708,833 | 80.65% | 59.94% |
+| **post-fix (merged 3-source)** | **492,365** | **80.83%** | **60.38%** |
+
+Artifact 25.7 → 18.4 MB. All previous "merged vocab" numbers in this log were
+measured pre-fix; the post-fix merged vocab is the new shipped artifact and
+beats even the wiki-only maximum (80.69).

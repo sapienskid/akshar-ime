@@ -126,17 +126,17 @@ data: data-raw data-vocab data-model  ## Build the full data chain: downloads â†
 
 data-raw:  ## Download corpora: Aksharantar splits + Nepali Wikipedia + CC100 â†’ data/.
 	@mkdir -p data/aksharantar data/raw
-	@python3 scripts/fetch_corpus.py data/aksharantar
+	@python3 data/pipeline/fetch_corpus.py data/aksharantar
 	@if [ ! -f data/raw/newiki.txt ]; then \
 		echo "  > Downloading + extracting Nepali Wikipedia..."; \
 		curl -sL -o /tmp/newiki.xml.bz2 https://dumps.wikimedia.org/newiki/latest/newiki-latest-pages-articles.xml.bz2; \
-		python3 scripts/extract_wiki.py /tmp/newiki.xml.bz2 data/raw/newiki.txt; \
+		python3 data/pipeline/extract_wiki.py /tmp/newiki.xml.bz2 data/raw/newiki.txt; \
 		rm -f /tmp/newiki.xml.bz2; \
 	else echo "  > data/raw/newiki.txt already present"; fi
 	@if [ ! -f data/raw/cc100ne.txt ]; then \
 		echo "  > Downloading + filtering CC100 Nepali..."; \
 		curl -sL -o /tmp/cc100-ne.txt.xz https://data.statmt.org/cc-100/ne.txt.xz; \
-		python3 scripts/filter_cc100.py /tmp/cc100-ne.txt.xz data/raw/cc100ne.txt; \
+		python3 data/pipeline/filter_cc100.py /tmp/cc100-ne.txt.xz data/raw/cc100ne.txt; \
 		rm -f /tmp/cc100-ne.txt.xz; \
 	else echo "  > data/raw/cc100ne.txt already present"; fi
 

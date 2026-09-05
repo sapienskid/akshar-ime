@@ -39,12 +39,5 @@ jobs:
             wasm/pkg/
             js/akshar-ime.js
             web/index.html
-
-      - name: Attach WASM to release (on tag)
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            wasm/pkg/akshar_ime_bg.wasm
-            wasm/pkg/akshar_ime.js
-            wasm/pkg/akshar_ime.d.ts
+      # Release attachment happens in release.yml only (which also documents
+      # the model-artifact upload flow via `make release-upload TAG=...`).
