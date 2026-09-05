@@ -325,7 +325,7 @@ fn main() {
     for ((roman, native), weight) in &weighted {
         writeln!(
             out,
-            "{{\"english\": {}, \"native\": {}, \"weight\": {}}}",
+            "{{\"english word\": {}, \"native word\": {}, \"weight\": {}}}",
             serde_json::to_string(roman).unwrap(),
             serde_json::to_string(native).unwrap(),
             weight

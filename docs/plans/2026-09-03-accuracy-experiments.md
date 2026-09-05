@@ -298,3 +298,42 @@ pairs and the vocabulary file simultaneously; the delta needs diagnosis
 index candidates by JOINT weight $P(a) \cdot P(s \mid a)$ (the v2 §5.2
 lesson — emission-only ranking lets peaked rare aksharas crowd out real
 ones), and/or prune foreign aksharas at training time, and retest.
+
+## Regression diagnosis + data-path bugs (2026-09-05, evening session)
+
+**Regression SOLVED: 80.69% restored.** The 1.2-point drop (80.69 → 79.51) was
+NOT the model: `data-pipeline/pipeline.py export` had overwritten
+`data/word_freq_text.bin` (the engine's vocabulary prior) with a news-crawl-only
+vocab — 198k words, only **58.1% of AK-Freq test targets present** (vs 576,658
+words from Wikipedia+CC100). Rebuilding the wiki+CC100 vocab (75.4M tokens) with
+the SAME model restored **80.69% (1972/2108) exactly, case-identical**.
+
+**Vocabulary merge (all three text sources):** wiki+CC100+news = 109.6M tokens →
+**708,833 words** (news contributed ~34M tokens / 1.42M clean lines from 18,190
+articles). Merged vocab at w=0.75: **80.65%** (w sweep: 0.5→80.46, 1.0→80.60);
+one case below the wiki-only max but +130k words of real-user coverage — kept
+as the shipped artifact. `pipeline.py export` now writes news counts to
+`out/word_freq_news.bin` by default and never clobbers the engine vocabulary;
+`--merge-base` does the additive merge explicitly.
+
+**Bug: synthetic pairs were never ingested.** `romanize.rs` (and
+`pipeline.py romanize`) emit `{"english": ..., "native": ...}` but
+`train_model.rs` parses only `"english word"`/`"native word"` — every
+`--extra synthetic.jsonl` row was silently skipped. All "E5 self-training"
+gains in this log are confounded: the +0.23 attributed to synthetic pairs was
+actually the **valid split** entering training. Fixed: canonical keys in both
+generators, `alias` entries in train_model/train_model_v2/build_lexicon.
+
+**Experiment A (train+valid, zero synthetic): 80.65%** (merged vocab, SOTA
+decode config) — identical to the record within one case. **Experiment B
+(train+valid+918k pipeline-synthetic, first REAL ingestion): 79.51% (−1.14,
+all buckets down)** — the crude sound-table romanizer's conventions conflict
+with the corpus's, and 28% of training mass of off-distribution pairs biases
+the emissions. **The self-training hypothesis is now untested with a
+consistent generator**: engine-native romanize output (emission-argmax
+spellings, consistent by construction) is pending — merged-vocab conversion
+(709k words) running; next session evaluates it as experiment C.
+
+**Current best verified config:** model = nep_train+nep_valid (EM, defaults),
+vocab = merged 3-source (or wiki+CC100 for max benchmark), decode = beam 256,
+k=50, lm 0.85, vocab-weight 0.75 → **80.65–80.69% native top-1**.

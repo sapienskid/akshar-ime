@@ -13,9 +13,9 @@ use std::path::PathBuf;
 
 #[derive(Deserialize)]
 struct Record<'a> {
-    #[serde(rename = "english word")]
+    #[serde(rename = "english word", alias = "english")]
     english: &'a str,
-    #[serde(rename = "native word")]
+    #[serde(rename = "native word", alias = "native")]
     native: &'a str,
 }
 
