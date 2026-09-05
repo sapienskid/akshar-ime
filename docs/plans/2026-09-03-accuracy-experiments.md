@@ -223,3 +223,28 @@ beam 256 (beam 128 = 80.17%, within noise — runtime can trade).
 Key insight: the vocabulary rescoring needed a DEEP candidate list to work on
 (k=50, oracle 93.55%); at k=8 its value was invisible. Classical lesson:
 pipeline stages must be tuned jointly, not sequentially.
+
+## E5 self-training — Nepali→roman backward generation (2026-09-05) — NEW SOTA
+
+The user's idea: since our inverse direction (Devanagari→roman) is
+deterministic via sound tables, romanize the real-text vocabulary to
+manufacture training pairs whose word distribution matches actual usage.
+
+`data-pipeline/romanize_vocab.py` (private, untracked): sound-table romanizer
+(386,770 synthetic pairs from the 570k-word vocabulary; a matra-consonant
+interaction bug was caught in the first sample audit). Mixed into EM training
+via --extra; evaluated at the SOTA decode config (beam 256, k=50, lm 0.85,
+vocab 0.75):
+
+| Model | native top-1 |
+|---|---|
+| Previous SOTA (no synthetic) | 80.46% |
+| **+ 387k synthetic pairs (1/word)** | **80.69%** |
+| + 2.68M freq-weighted synthetic | 80.69% (saturated) |
+
+**80.69% native top-1 — new best, +0.44 over IndicXlit.** The synthetic signal
+saturates at one pair per word. Scraping pipeline (data-pipeline/, untracked):
+BFS crawler over gorkhapatra/onlinekhabar/nayapatrikadaily running in
+background (relative-link bug fixed after first pass; kanunpatrika.com is
+serving a "coming soon" splash — site offline). News vocab feeds the next
+vocab rebuild + context layer.
