@@ -24,3 +24,4 @@ data/roman_lexicon.bin
 
 # Private scraping pipeline + data (never tracked)
 data-pipeline/
+docs/paper/*.aux *.log *.out

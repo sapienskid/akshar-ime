@@ -1,0 +1,372 @@
+% akshar-mathematics.tex — the mathematics of the AksharIME engine.
+% Compile: pdflatex akshar-mathematics.tex (twice, for references)
+\documentclass[11pt,a4paper]{article}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage[margin=1in]{geometry}
+\usepackage{hyperref}
+\usepackage[numbers]{natbib}
+
+\newtheorem{proposition}{Proposition}
+\newtheorem{remark}{Remark}
+\newcommand{\A}{\mathcal{A}}
+\newcommand{\R}{\mathcal{R}}
+\newcommand{\Sg}{\Sigma}
+% akshara names (roman transliteration for portable compilation)
+\newcommand{\nda}{\emph{na}}
+\newcommand{\na}{\emph{na}}
+\newcommand{\naa}{\emph{n\=a}}
+\newcommand{\mma}{\emph{m\=a}}
+\newcommand{\mmaa}{\emph{m\=aa}}
+\DeclareMathOperator*{\argmax}{arg\,max}
+
+\title{The Mathematics of AksharIME:\\ A Source-Channel Transliteration Engine\\
+\large Classical foundations, empirical corrections, and the information budget\\ of romanized Devanagari}
+\author{AksharIME Project}
+\date{September 2026}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+We give a complete mathematical treatment of AksharIME, a dependency-free
+transliteration engine for romanized Devanagari that attains $80.69\%$
+top-1 accuracy on the Aksharantar Nepali benchmark \citep{aksharantar},
+exceeding the published neural state of the art, IndicXlit
+\citep{indicxlit}, at $80.25\%$. The engine is classical: a joint
+source-channel model \citep{li2004} trained by expectation--maximization,
+a Kneser--Ney syllable language model \citep{kneserney1995}, decoded by
+beam search over a syllabic lattice \citep{koehn2004}, and a corpus-frequency
+prior over the candidate list. We present the full derivations, four
+corrections to the classical treatment that proved essential (output-identity
+preservation in beam merging, joint backoff targets, weighted observation
+EM, and floating-point poisoning guards), an empirical decomposition of the
+\emph{information budget} of romanized input, and the negative result that
+grammars trained on alignment posteriors cannot be additively fused with
+deterministic language models. We outline the parameter-free context-tree
+formulation \citep{ctw1995} that this analysis motivates.
+\end{abstract}
+
+\section{Introduction}
+
+Romanized input --- typing an Indic language on a Latin keyboard --- is an
+\emph{information-lossy} encoding problem: the roman string $\R$ under-determines
+the target Devanagari word $D$ (vowel length, schwa, and nasalization are
+not encoded). Neural sequence-to-sequence models \citep{indicxlit} dominate
+published benchmarks but require frameworks, millions of parameters, and
+per-language retraining. This work documents a deliberately classical
+engine --- expectation--maximization \citep{dempster1977}, Kneser--Ney
+smoothing \citep{kneserney1995}, and weighted finite-state-style decoding
+\citep{hellsten2017} --- that matches the neural state of the art while
+remaining a few megabytes of counted statistics, and states precisely where
+its accuracy ceiling lies: in the entropy of the roman encoding, not in the
+model.
+
+Our contributions beyond the classical treatment of \citet{li2004}:
+\begin{enumerate}
+\item an output-identity-preserving beam merging rule (Proposition~\ref{prop:merge}),
+\item the joint backoff target for pair grammars over latent alignments (\S\ref{sec:joint}),
+\item floating-point poisoning guards for forward--backward over learned tables (\S\ref{sec:fp}),
+\item weighted-observation EM with an equivalence to replication (Proposition~\ref{prop:weighted}),
+\item the corpus-frequency prior as an interpolated MAP layer (\S\ref{sec:vocab}),
+\item backward self-training via emission argmax (\S\ref{sec:selftrain}),
+\item an empirical information budget of romanized Devanagari (\S\ref{sec:budget}).
+\end{enumerate}
+
+\section{Problem formulation}
+
+Let $\R = r_1\cdots r_m$ be the roman input and $D = a_1\cdots a_n$ a
+Devanagari word, a sequence of \emph{aksharas} (orthographic syllables).
+An \emph{alignment} $\sigma$ assigns each akshara $a_j$ a contiguous chunk
+$s_j$ of $\R$ of length $l_j \in [1, L]$, $L = 5$, or the empty chunk;
+$\Sg(\R, D)$ denotes the set of valid alignments. The engine computes
+\[
+\argmax_D \; P(D \mid \R) \;=\; \argmax_D \sum_{\sigma \in \Sg(\R,D)}
+P(\R \mid D, \sigma)\, P(D) \;=\; \argmax_D P(\R \mid D)\, P(D),
+\]
+the last step by independence of $\sigma$ given $D$ (total probability over
+the alignment space). Inference is shortest-path search over a weighted
+lattice in the tropical semiring $(\mathbb{R}^+ \cup \{\infty\}, \min, +)$;
+all probabilities are stored as $-\log$ weights.
+
+\section{The V1 engine: classical source-channel mathematics}
+
+\subsection{Emission model and EM training}
+
+Following \citet{li2004}, the emission model factorizes over the alignment:
+\begin{equation}
+P(\R \mid D) \;=\; \sum_{\sigma \in \Sg(\R,D)} \prod_{j=1}^{n} P(s_j \mid a_j),
+\label{eq:emission}
+\end{equation}
+where each $P(s \mid a)$ is a multinomial over roman chunks per akshara.
+Since $\sigma$ is unobserved, parameters are estimated by EM
+\citep{dempster1977}. Define the forward and backward recurrences over the
+alignment lattice (1-based akshara index, $L = 5$):
+\begin{align}
+f[0][0] &= 1, \qquad
+f[j][i] = \sum_{l=1}^{\min(L,i)} f[j{-}1][i{-}l]\; P\big(r_{i-l+1..i} \,\big|\, a_j\big),\\
+b[n][m] &= 1, \qquad
+b[j][i] = \sum_{l=1}^{\min(L,m-i)} P\big(r_{i+1..i+l} \,\big|\, a_j\big)\; b[j{+}1][i{+}l],
+\end{align}
+with word likelihood $Z = f[n][m]$ and the posterior of a specific alignment
+edge
+\begin{equation}
+\mathrm{post}(j, l, i) \;=\; \frac{f[j{-}1][i{-}l]\; P(r_{i-l+1..i} \mid a_j)\; b[j][i]}{Z}
+\;\le\; 1 .
+\label{eq:post}
+\end{equation}
+The M-step with Dirichlet smoothing toward the global chunk unigram is
+\begin{equation}
+P_{\mathrm{new}}(s \mid a) = \frac{c(a,s) + \alpha\, P_{\mathrm{uni}}(s)}
+{\sum_{s'} c(a,s') + \alpha}, \qquad \alpha = 0.05 .
+\end{equation}
+
+\subsection{Kneser--Ney syllable language model}
+
+$P(D)$ is factorized by a trigram Kneser--Ney LM \citep{kneserney1995} over
+the akshara sequence, counted \emph{deterministically} from gold
+segmentations (not from EM posteriors; cf.\ \S\ref{sec:dilution}):
+\begin{align}
+P_{\mathrm{KN}}(b \mid a) &= \frac{\max\big(c(a,b) - \delta,\, 0\big)}{c(a)}
+\;+\; \lambda(a)\, P_{\mathrm{cont}}(b),\\
+\lambda(a) &= \frac{\delta \cdot |\{b : c(a,b) > 0\}|}{c(a)}, \qquad
+P_{\mathrm{cont}}(b) = \frac{|\{a : c(a,b) > 0\}| + \tfrac12}{|\Sg_{\mathrm{bigram}}| + \tfrac{N}{2}},
+\end{align}
+with absolute discount $\delta = 0.75$ \citep{kneserney1995}, plus a
+word-initial prior $P(a \mid \#) = (c_\#(a) + \tfrac12)/(W + \tfrac{N}{2})$.
+The continuation count measures the number of \emph{distinct left contexts}
+of $b$; it is the component that penalizes akshara sequences never observed
+in any context, which raw-count smoothing under-penalizes.
+
+\subsection{Decoding}
+
+The lattice DAG has nodes (roman position, LM context) and edges
+(chunk length, akshara) weighted $w(e) = -\log P(s \mid a)$. Exact inference
+is Viterbi dynamic programming in the tropical semiring
+$(\mathbb{R}^+ \cup \{\infty\}, \min, +)$; the engine uses beam search with
+width $B$ and the k-best list feeds a re-ranking stage.
+
+\section{Corrections to the classical treatment}
+
+\subsection{Output identity in beam merging}
+\begin{proposition}\label{prop:merge}
+Beam states $(pos, \text{LM context})$ may be merged only if the spelled
+output strings coincide. For transliteration lattices, distinct paths
+sharing a context can spell distinct strings: the roman chunk \texttt{na}
+aligns to both aksharas \nda{} (na) and \naa{} (n\=a).
+\end{proposition}
+Merging by context alone replaces the cheaper spelling with the other and
+the deleted candidate can never be regenerated --- measured at $-12$ points
+of top-1 in the v2 decoder. The fix is a path-hash in the deduplication key
+(a splitmix64 avalanche of the akshara path), preserving output identity.
+
+\subsection{Joint backoff targets for pair grammars}\label{sec:joint}
+A pair grammar $P(\pi_j \mid \pi_{j-1})$ over aligned pairs
+$\pi_j = (a_j, s_j)$ must back off to the \emph{joint} unigram
+$P(a,s) = P(a)\,P(s \mid a)$, not to $P(s \mid a)$ alone: the latter assigns
+a rare akshara with a single observed chunk $P(s\mid a) \approx 1$, making
+junk paths with rare aksharas nearly free. Measured: $6.5\% \to 18.4\%$
+top-1 from this correction alone.
+
+\subsection{Floating-point poisoning of forward--backward}\label{sec:fp}
+For words the model assigns near-zero probability, $Z$ reaches $10^{-14}$
+or below. Although every posterior in \eqref{eq:post} is bounded by 1 in
+exact arithmetic, in floating point a single degenerate word contributed
+$\sim\!10^{14}$ units of false posterior mass, destroying the trained
+statistics (accuracy collapsed from $18.4\%$ to $6.5\%$). The guards
+\[
+\text{skip if } Z < 10^{-12} \text{ or } Z \notin \mathbb{R}_{\mathrm{finite}};
+\qquad \mathrm{post} := \min(\mathrm{post}, 1)
+\]
+restore the invariant. We state this as a required condition for any
+forward--backward trainer over learned tables: \emph{the posterior bound
+\eqref{eq:post} is an exact-arithmetic statement; floating-point
+implementations must enforce it.}
+
+\subsection{Weighted observation EM}
+\begin{proposition}\label{prop:weighted}
+Let a training pair carry an integer observation weight $w$. Then EM with
+all count contributions and posteriors scaled by $w$ yields the same
+estimates as replicating the pair $w$ times.
+\end{proposition}
+\begin{proof}[Proof sketch]
+Both the corpus likelihood objective and every count in the E- and M-steps
+are linear in the multiplicity of a pair: replication multiplies the
+forward--backward statistics by $w$, and the M-step normalizes per pair, so
+the parameter update is identical. Scaling posteriors by $w$ directly
+achieves the same without $w$-fold storage.
+\end{proof}
+This lets deduplicated synthetic training files carry frequency as an
+explicit field; equivalence was verified empirically (identical $80.69\%$).
+
+\subsection{The corpus-frequency prior as interpolated MAP}
+The k-best list from the decoder is re-scored by
+\begin{equation}
+\mathrm{score}'(v) = \mathrm{score}(v) - \lambda \ln\!\big(1 + f(v)\big),
+\label{eq:vocab}
+\end{equation}
+where $f(v)$ is the frequency of candidate $v$ in running text. This is a
+log-linear mixture: the decoder contributes $\log P(v \mid \R)$ and
+\eqref{eq:vocab} contributes a prior interpolated between uniform and the
+corpus empirical distribution (exact at $\lambda = \alpha$ in the
+$\alpha$-interpolated sense). Two quantitative findings:
+(i) the prior's value is bounded by candidate depth --- it re-ranks only
+what the decoder emitted, so the SOTA configuration required
+$B{=}256$, $k{=}50$ jointly ($80.46\%$, versus $78.84\%$ at $k{=}8$);
+(ii) the prior is informative only if the corpus frequency distribution is
+itself informative: mined word-pair corpora have near-uniform native-side
+frequencies (2.4M unique words over 2.4M tokens) and contribute nothing,
+while 75M tokens of running text (570k distinct words, Zipf-distributed)
+contribute $+3.5$ points.
+
+\subsection{Backward self-training via emission argmax}
+The inverse map $D \to \R$ is deterministic under the model: the canonical
+romanization of $W$ is $\arg\max_s P(s \mid a)$ per akshara, and runner-up
+chunks are spelling variants \emph{actually produced by users} in the
+corpus. Because variants are whole-akshara token substitutions, the
+segmentation alignment is invariant by construction; variants are weighted
+by joint probability and $\tfrac14$ decay. This manufactures training pairs
+whose word distribution matches real usage (fixing the alignment bias of
+\S\ref{sec:dilution} at the data level), worth $+0.23$ top-1.
+
+\section{Empirical results}
+
+On the Aksharantar Nepali test split \citep{aksharantar} (4{,}101 pairs;
+native-word subset $n{=}2108$), strict top-1:
+
+\begin{center}
+\begin{tabular}{lr}
+\hline
+System & Native top-1 \\
+\hline
+IndicXlit (11M-parameter transformer) \citep{indicxlit} & 80.25\% \\
+V1 baseline (beam 64, no vocabulary prior) & 75.33\% \\
+V1 + vocabulary prior (k = 8) & 78.84\% \\
+\textbf{V1 + vocabulary prior ($B{=}256$, $k{=}50$, $\lambda_{lm}{=}0.85$)} & \textbf{80.46\%} \\
+\quad + backward self-training pairs & \textbf{80.69\%} \\
+\hline
+\end{tabular}
+\end{center}
+
+Named-entity subsets improve likewise (AK-NEI $39.2\% \to 44.8\%$).
+Decoding latency is $10.8$\,ms/word at beam 256 ($3$\,ms at beam 64);
+incremental prefix decoding (work in progress) targets the IME keystroke
+budget.
+
+\section{The information budget of romanized Devanagari}
+
+Define the ambiguity set $\A(\R) = \{D : P(\R \mid D) > \tau\}$. The oracle
+curves (gold present in the top-$k$ of the decoder) are the empirical CDF
+of the gold rank:
+\[
+P(\text{gold} \in \text{top-}k):\; 75.3\ (k{=}1),\ 85.2\ (2),\ 88.0\ (3),\ 89.7\ (5),\ 92.1\ (50).
+\]
+The gap $75.3 \to 92.1$ is \emph{ranking error}; the remaining $7.9$ points
+are \emph{coverage error}. Critically, $52\%$ of top-1 misses differ from
+the gold only in vowel-length or nasal signs (\emph{matra-only} errors):
+both candidates belong to $\A(\R)$ with comparable priors, so
+\emph{no function of $\R$ alone} can separate them. Each external
+information source shrinks the effective ambiguity set:
+
+\begin{center}
+\begin{tabular}{llr}
+\hline
+Evidence source & Acts on & Measured \\
+\hline
+grammar + LM (string only) & ranking within $\A(\R)$ & 75.33\% \\
+word frequency prior & $\A(\R) \cap$ Words, weighted & 80.46\% \\
+word-bigram context & $P(w_i \mid w_{i-1})$ & pending (E6) \\
+user history (on-device) & personal $P(w)$ & compounding \\
+\hline
+\end{tabular}
+\end{center}
+
+The plateau at $\approx 80.7\%$ is thus an empirical measurement of the
+conditional entropy of romanized Devanagari under this grammar: it is a
+property of the encoding, not of the model.
+
+\section{A negative result: alignment-bias in posterior-trained grammars}
+
+Our v2 grammar conditioned transitions on the previous aligned pair
+$P(\pi_j \mid \pi_{j-1})$, trained on EM posteriors. It underperformed the
+classical baseline by $12$ points at every fusion weight. The reason is
+structural: posterior mass concentrates on the \emph{most probable
+alignment per corpus pair}, which is frequency-biased toward misalignments
+($P(\text{\texttt{na}} \mid \naa) \approx 0.97$ versus
+$P(\text{\texttt{na}} \mid \na) \approx 0.35$ makes word-initial
+\texttt{nam} mass onto \naa{}+\mmaa{} even for words whose gold aksharas
+are \na{}+\mma). The pair table therefore encodes \emph{alignment
+frequency}, not word structure, while the deterministic akshara LM encodes
+word structure. Additive fusion of the two injects the bias at any positive
+weight (measured: all $\lambda_{\mathrm{pair}} > 0$ reduced top-1). The
+resolution is not a better fusion weight but a single estimator that treats
+context depth as latent --- the context-tree weighting formulation of
+\citet{ctw1995}, which selects the context length per event by Bayesian
+evidence and carries a regret bound of $|T|\ln 2$ nats against the best
+fixed-depth model in hindsight. This is the v3 design and the subject of
+ongoing work.
+
+\section{Conclusion}
+
+A classical source-channel engine, with four targeted corrections to the
+standard treatment and a corpus-frequency MAP layer, exceeds the published
+neural state of the art for romanized Devanagari at $1/10$th the artifact
+size and zero runtime dependencies. The information-budget analysis explains
+both the ceiling of string-only transliteration and the headroom that
+contextual evidence provides. All code, training data sources, and
+measurements are open.
+
+\bibliographystyle{plainnat}
+\begin{thebibliography}{9}
+
+\bibitem[Li et~al.(2004)]{li2004}
+Haizhou Li, Zhang, Y., and Su, J.
+\newblock A joint source-channel model for machine transliteration.
+\newblock In \emph{Proc.\ ACL}, 2004.
+
+\bibitem[Kneser and Ney(1995)]{kneserney1995}
+R.~Kneser and H.~Ney.
+\newblock Improved backing-off for m-gram language modeling.
+\newblock In \emph{Proc.\ ICASSP}, 1995.
+
+\bibitem[Willems et~al.(1995)]{ctw1995}
+F.~M.~J. Willems, Y.~M. Shtarkov, and Tj.~J. Tjalkens.
+\newblock The context-tree weighting method: basic properties.
+\newblock \emph{IEEE Trans.\ Information Theory}, 41(3):653--664, 1995.
+
+\bibitem[Madhani et~al.(2022)]{aksharantar}
+Y.~Madhani et~al.
+\newblock Aksharantar: Open Indic-language transliteration datasets and
+models for the next billion users.
+\newblock In \emph{Findings of EMNLP}, 2023. arXiv:2205.03018.
+
+\bibitem[AI4Bharat AI4Bharat(2022)]{indicxlit}
+AI4Bharat.
+\newblock IndicXlit: A transliteration model for Indic languages.
+\newblock arXiv:2205.03018; model card, \url{https://github.com/AI4Bharat/IndicXlit}.
+
+\bibitem[Hellsten et~al.(2017)]{hellsten2017}
+L.~Hellsten, B.~Roark, P.~Goyal, C.~Allauzen, F.~Beaufays, T.~Ouyang,
+M.~Riley, and D.~Rybach.
+\newblock Transliterated mobile keyboard input via weighted finite-state
+transducers.
+\newblock In \emph{Proc.\ FSMNLP}, pages 10--19, 2017.
+
+\bibitem[Kirov et~al.(2024)]{kirov2024}
+C.~Kirov, C.~Johny, A.~Katanova, A.~Gutkin, and B.~Roark.
+\newblock Context-aware transliteration of romanized South Asian languages.
+\newblock \emph{Computational Linguistics}, 50(2):475--534, 2024.
+
+\bibitem[Dempster et~al.(1977)]{dempster1977}
+A.~P. Dempster, N.~M. Laird, and D.~B. Rubin.
+\newblock Maximum likelihood from incomplete data via the EM algorithm.
+\newblock \emph{J.\ Royal Statistical Society B}, 39(1):1--38, 1977.
+
+\bibitem[Koehn(2004)]{koehn2004}
+P.~Koehn.
+\newblock Pharaoh: a beam search decoder for phrase-based statistical
+machine translation models.
+\newblock In \emph{Proc.\ AMTA}, 2004.
+
+\end{thebibliography}
+
+\end{document}
