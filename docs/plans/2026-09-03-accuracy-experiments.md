@@ -136,3 +136,25 @@ text (IndicCorp-Nepali / Wikipedia dumps) for (a) word frequencies that
 actually separate candidates and (b) word-bigram context. Word-PAIR corpora
 cannot substitute. Next session: download corpus -> word-trie with counts ->
 full intersection during decode (trie walk parallel to the lattice beam).
+
+## M4-real — vocabulary layer with REAL frequencies (2026-09-03, breakthrough)
+
+Downloaded Nepali Wikipedia dump (55MB bz2) -> extracted 625k clean Devanagari
+lines -> 8.24M tokens -> **164,177 words (count>=3) -> 5.5MB artifact**
+(`build_wordfreq_text`, `data/word_freq_text.bin`).
+
+Rescoring candidates by real frequency (score -= w*ln(1+freq)):
+
+| Decoder | native top-1 | native top-5 |
+|---|---|---|
+| v1 baseline | 75.33% | 89.66% |
+| **v1 + vocab (w=1)** | **78.84%** | **90.23%** |
+| v2 (pw=0) baseline | 63.28% | 86.48% |
+| v2 + vocab (w=2) | 71.82% | 84.91% |
+
+NE bucket: v2 23.8% -> 32.4% with vocab. **78.84% vs IndicXlit's 80.25% —
+within 1.4 pts of the neural SOTA, zero neural network, 5.5MB extra artifact.**
+
+Remaining levers toward 80%+: real word-trie intersection during decode
+(restricts candidates to real words exactly, not just rescoring), word-bigram
+context from the same corpus, then the v3 unified estimator.

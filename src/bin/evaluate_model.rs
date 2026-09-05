@@ -64,6 +64,8 @@ fn main() {
     let mut lm_weight = 1.0f64;
     let mut beam = 64usize;
     let mut per_chunk = 16usize;
+    let mut vocab_weight = 0.0f64;
+    let mut vocab: Option<std::collections::HashMap<String, u32>> = None;
 
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -95,8 +97,12 @@ fn main() {
             "--per-chunk" => {
                 per_chunk = next_value(&arg, args.next())
                     .parse::<usize>()
-                    .expect("--per-chunk <n>")
-                    .max(1)
+                    .expect("--per-chunk <n>")                    .max(1)
+            }
+            "--vocab-weight" => {
+                vocab_weight = next_value(&arg, args.next())
+                    .parse()
+                    .expect("--vocab-weight <f>")
             }
             "--help" | "-h" => {
                 print_help();
@@ -108,6 +114,14 @@ fn main() {
                 std::process::exit(2);
             }
         }
+    }
+
+    if vocab_weight > 0.0 {
+        let bytes = std::fs::read("data/word_freq_text.bin").expect("word_freq_text.bin");
+        let map: std::collections::HashMap<String, u32> =
+            bincode::deserialize(&bytes).expect("deserialize vocab");
+        eprintln!("vocab: {} words", map.len());
+        vocab = Some(map);
     }
 
     let model = TranslitModel::load(Path::new(&model_path))
@@ -134,7 +148,16 @@ fn main() {
 
     for case in &cases {
         let t = Instant::now();
-        let scored = decoder.decode(&case.roman, topk.max(8));
+        let mut scored = decoder.decode(&case.roman, topk.max(8));
+        // M4-real: vocabulary rescoring by real Nepali text frequencies.
+        if vocab_weight > 0.0 {
+            for (dev, score) in &mut scored {
+                if let Some(&f) = vocab.as_ref().and_then(|v| v.get(dev)) {
+                    *score -= vocab_weight * (1.0 + f as f64).ln();
+                }
+            }
+            scored.sort_by(|a, b| a.1.total_cmp(&b.1));
+        }
         decode_time += t.elapsed().as_secs_f64();
         let top: Vec<String> = scored.into_iter().map(|(d, _)| d).collect();
         let top1_hit = top.first().is_some_and(|d| d == &case.target);

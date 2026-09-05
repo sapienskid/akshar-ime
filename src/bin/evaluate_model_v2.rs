@@ -30,6 +30,7 @@ fn main() {
     // M4 pilot: vocabulary rescoring (freq bonus for real corpus words).
     let mut vocab_weight: f64 = 0.0;
     let mut vocab_min_count: u32 = 1;
+    let mut vocab_path = "data/word_freq.bin".to_string();
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -40,6 +41,7 @@ fn main() {
             "--pair-weight" => pair_weight = args.next().expect("f").parse().expect("f"),
             "--vocab-weight" => vocab_weight = args.next().expect("f").parse().expect("f"),
             "--vocab-min" => vocab_min_count = args.next().expect("n").parse().expect("n"),
+            "--vocab-path" => vocab_path = args.next().expect("p"),
             "--model" => model_path = args.next().expect("path").into(),
             "--dataset" => dataset = args.next().expect("path").into(),
             other => {
@@ -55,7 +57,7 @@ fn main() {
 
     // Load the vocabulary map (bincode HashMap<String,u32> from build_wordfreq).
     let vocab: Option<std::collections::HashMap<String, u32>> = if vocab_weight > 0.0 {
-        match std::fs::read("data/word_freq.bin") {
+        match std::fs::read(&vocab_path) {
             Ok(bytes) => match bincode::deserialize::<std::collections::HashMap<String, u32>>(&bytes) {
                 Ok(map) => {
                     let pruned: std::collections::HashMap<String, u32> = map
