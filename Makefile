@@ -65,8 +65,8 @@ install:  ## Compile (if needed) and install the engine to system directories.
 	@if [ -f data/akshar.model ]; then \
 		echo "    * Installing unified model (data/akshar.model)..."; \
 		sudo cp data/akshar.model $(DATA_DIR)/akshar.model; \
-		echo "    * Purging legacy bin files from $(DATA_DIR)..."; \
-		sudo rm -f $(DATA_DIR)/translit_model.bin $(DATA_DIR)/word_freq_text.bin $(DATA_DIR)/reranker_weights_sparse.bin $(DATA_DIR)/word_bigrams.bin $(DATA_DIR)/reranker_weights.json $(DATA_DIR)/crf_model.bin; \
+		echo "    * Purging legacy model files from $(DATA_DIR)..."; \
+		sudo rm -f $(DATA_DIR)/translit_model.bin $(DATA_DIR)/word_freq_text.bin $(DATA_DIR)/reranker_weights_sparse.bin $(DATA_DIR)/word_bigrams.bin $(DATA_DIR)/reranker_weights.json $(DATA_DIR)/crf_model.bin $(DATA_DIR)/roman_lexicon.bin; \
 	else \
 		echo "    * Installing legacy model artifacts..."; \
 		for f in data/translit_model.bin data/word_freq_text.bin data/reranker_weights_sparse.bin data/word_bigrams.bin data/roman_lexicon.bin; do \
