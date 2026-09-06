@@ -328,7 +328,12 @@ pub fn rerank_with_table(
         for &h in &sparse {
             let b = match custom_sparse_table {
                 Some(t) if h < t.len() => t[h],
-                _ => SPARSE_TABLE[h] as i8,
+                // SPARSE_TABLE is empty on a build with no legacy
+                // data/reranker_weights_sparse.bin (see build.rs); index 0
+                // there instead of panicking -- graceful degradation to "no
+                // sparse contribution", matching how the rest of the engine
+                // treats an absent optional data source.
+                _ => SPARSE_TABLE.get(h).copied().unwrap_or(0) as i8,
             };
             s += (b as f64) * SPARSE_SCALE;
         }

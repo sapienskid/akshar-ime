@@ -8,7 +8,14 @@ pub const DENSE_DIM: usize = 29;
 pub const HASH_SIZE: usize = 1048576;
 pub const SPARSE_SCALE: f64 = 0.00094818;
 pub const SPARSE_BIN_PATH: &str = "data/reranker_weights_sparse.bin";
-pub const SPARSE_TABLE: &[u8] = include_bytes!("../../data/reranker_weights_sparse.bin");
+/// Legacy embedded sparse table, last resort when no unified container is
+/// loaded. `data/` is gitignored, so this cannot be a direct `include_bytes!`
+/// on the repo path -- see build.rs, which copies the file into OUT_DIR when
+/// present and writes an empty placeholder otherwise, so the crate always
+/// compiles on a fresh clone. Empty means "no legacy table"; callers must not
+/// index it directly (see reranker::rerank_with_table).
+pub const SPARSE_TABLE: &[u8] =
+    include_bytes!(concat!(env!("OUT_DIR"), "/reranker_weights_sparse.bin"));
 
 pub const W_DENSE: [f64; DENSE_DIM] = [-0.5628643427550817, -0.5116217951919914, -0.4342446191960616, -0.5039296523638619, -0.5044189881431151, -0.49017201238574476, 0.19725841210545117, -0.24641923200734242, 0.3410956272141747, -0.44841034768324545, 4.813479660067954e-7, -0.020541297676334766, -0.16898121448840034, 0.027454130163058792, -0.16657111150070084, 0.24952215075251943, -0.2689452548747861, -0.2669224169601096, 0.42337598382929686, -0.16385659173213543, 0.010395919393880678, 0.4921038457206451, -0.3257508175770568, -0.294273638040134, 0.46046339494639227, 0.4383915855666036, 0.38219732162808545, -0.009913843669527815, 0.23150146446068798];
 
