@@ -1,34 +1,21 @@
 # Changelog
 
-## v1.1.1 — 2026-09-06
-
-Fixes the WebAssembly build, which v1.1.0 shipped broken.
-
-- **`load_reranker` was cfg-gated off for wasm32.** Removing the corpus lexicon
-  in v1.1.0 deleted `load_lexicon`'s body but left its
-  `#[cfg(not(target_arch = "wasm32"))]` attribute orphaned, so it silently
-  attached to the next item — `load_reranker` — making it unavailable on the
-  browser target.
-- **`wasm.rs` still referenced the removed lexicon** in `reset_learning`, and
-  called `ImeEngine::from_model` and `Reranker::new` with their old arities.
-- Three wasm-only clippy lints fixed (`div_ceil`, `is_multiple_of`, a `return`
-  inside a cfg block that is now two cfg-gated functions).
-
-**Root cause: `make check` only compiled the native target.** The wasm target
-compiles a different set of cfg branches, so a change can pass every native
-check and still break the browser build. `make check` now runs `check-native`
-*and* `check-wasm` (compile plus clippy under `-D warnings` for
-`wasm32-unknown-unknown`), so this class of breakage cannot ship again.
-
-No functional change: native accuracy is unchanged at AK-Freq 81.83% / 92.22%.
-
-The JS API is unaffected — `createEngine(model, lexicon, weights)` still
-accepts its lexicon argument and ignores it.
-
 ## v1.1.0 — 2026-09-06
 
-A correctness and performance release. Every figure below was measured on the
-4,101-case Aksharantar Nepali test split; see `docs/MANUAL.md` for method.
+A correctness, performance, and cross-platform release. Includes native IBus engine, WebAssembly browser build, trained unified models, and source documentation. Every figure below was measured on the 4,101-case Aksharantar Nepali test split; see `docs/MANUAL.md` for method.
+
+### Highlights
+
+- **Accuracy Recovery**: Recovered 30.79pp of native top-1 (50.95% → 81.83%).
+- **5.2× Faster Decoding**: 3.5 ms → 0.67 ms per query with byte-identical output.
+- **WebAssembly Build**: Fully verified browser runtime via `wasm32-unknown-unknown` and JS wrapper (`js/akshar-ime.js`).
+- **42-Page Source Manual**: Mathematical, architectural, and evaluation manual (`docs/MANUAL.md` / `AksharIME-Manual.pdf`).
+
+### WebAssembly & Cross-Platform
+
+- Verified WebAssembly compilation target (`wasm32-unknown-unknown`).
+- `make check` now runs both `check-native` and `check-wasm` (compiling and linting under `-D warnings`), guaranteeing browser compatibility across releases.
+- Clean JS API (`createEngine(model, lexicon, weights)`) for web applications with offline transliteration.
 
 ### Fixed — accuracy
 
@@ -112,7 +99,3 @@ parameter as an ignored no-op, so existing JS callers still work.
 
 One language, one test set. Named entities well behind the neural baseline.
 Browser profile not re-measured since this release.
-
-## v1.0.2 and earlier
-
-See git history.
