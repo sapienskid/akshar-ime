@@ -17,6 +17,11 @@ LIB_DIR           := $(PREFIX)/lib
 IBUS_ENGINE_DIR   := $(PREFIX)/lib/ibus/engines
 IBUS_COMPONENT_DIR:= $(PREFIX)/share/ibus/component
 DATA_DIR          := $(PREFIX)/share/akshar-ime
+
+# Relative-entropy pruning threshold for the browser model.  Higher = smaller
+# and less accurate; see docs/WASM.md for the measured curve.  3e-2 keeps 47%
+# of trigram transitions: 4.92 MB Brotli at 81.07% Aksharantar top-1.
+TRIGRAM_THRESHOLD ?= 3e-2
 .PHONY: all release debug install uninstall reinstall clean reset-learning restart-ibus help wasm wasm-clean wasm-serve release-upload train pack
 # --- Main Targets ---
 
@@ -104,10 +109,27 @@ train:  ## Run the end-to-end one-shot model training pipeline.
 pack:  ## Pack model binaries into unified data/akshar.model container.
 	@cargo run --release --bin pack_model
 
+web-model:  ## Build the compact browser model (data/akshar_wasm.model, ~4.9 MB Brotli).
+	@echo "Pruning the syllable trigram LM (half the model's bytes)..."
+	@cargo run --release --bin prune_lm -- \
+		--model data/akshar.model \
+		--trigram-threshold $(TRIGRAM_THRESHOLD) \
+		--out data/akshar_pruned.model
+	@echo "Repacking without word bigrams..."
+	@cargo run --release --bin repack_model -- \
+		--model data/akshar_pruned.model \
+		--out data/akshar_wasm.model \
+		--no-bigrams --compact-aksharas
+	@rm -f data/akshar_pruned.model
+	@if command -v brotli >/dev/null 2>&1; then \
+		brotli -q 11 -c data/akshar_wasm.model | wc -c \
+			| awk '{printf "Brotli wire size: %.2f MB\n", $$1/1048576}'; \
+	fi
+
 clean:  ## Remove all build artifacts and temporary files.
 	@echo "Cleaning build artifacts..."
 	@cargo clean
-	@rm -f data/*.tmp data/smoke.model
+	@rm -f data/*.tmp data/smoke.model data/akshar_pruned.model data/akshar_quantized.model
 
 reset-learning:  ## Delete the user's learned dictionary (start fresh).
 	@echo "Removing user learning data..."

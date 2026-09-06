@@ -86,6 +86,18 @@ name = "romanize"
 path = "src/bin/build/romanize.rs"
 
 [[bin]]
+name = "prune_lm"
+path = "src/bin/build/prune_lm.rs"
+
+[[bin]]
+name = "repack_model"
+path = "src/bin/build/repack_model.rs"
+
+[[bin]]
+name = "quantize_model"
+path = "src/bin/build/quantize_model.rs"
+
+[[bin]]
 name = "probe_model"
 path = "src/bin/build/probe_model.rs"
 
