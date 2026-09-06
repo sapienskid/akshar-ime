@@ -83,8 +83,8 @@ model and language model always use all 3.59M pairs.
 - Named entities are well behind the neural baseline.
 - The discriminative reranker is *worse* than the 3-parameter heuristic when
   used alone; its net contribution is +0.81pp on native words.
-- Current numbers come from a reranker trained on 100k pairs; the first full
-  3.59M run has not been made.
+- 5x more reranker training data was tested and changed nothing; the cause is
+  that `W_DENSE` has never been refit by this pipeline (manual §12.3).
 
 Manual chapter 11 lists every known defect.
 

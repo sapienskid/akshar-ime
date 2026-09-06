@@ -685,8 +685,12 @@ is worth understanding honestly:
 
 **The learned model used alone is 5.36pp worse than the three-parameter
 heuristic.** $\gamma = 0.3$ is not a cautious discount of a good model; it is the
-blend point at which a weak model stops doing damage. This is the clearest open
-problem in the system (§11).
+blend point at which a weak model stops doing damage.
+
+The cause is identified in §12.3: `W_DENSE` has never been retrained by this
+pipeline. It is a frozen constant, and the generator named in its header does
+not exist in the repository. Training more sparse capacity on top of misfitted
+dense weights was tested at 5x the data and did not help.
 
 ## The cascade
 
@@ -1345,20 +1349,82 @@ bugs --- and makes the sources jointly tunable.
 **4. End-of-word symbol.** Cheap, and it targets matra errors, which
 concentrate word-finally.
 
-**5. Retrain the reranker properly.** The first run over all 3.59M pairs with a
-working learning-rate schedule and held-out early stopping. The diagnostic
-afterwards is the $\gamma$ sweep: **if the reranker has genuinely improved,
-$\gamma$'s optimum should move above 0.3.** If it stays at 0.3, more supervision
-is not the answer and the feature set is the problem.
+**5. Refit the dense weights.** See §12.3 --- this replaced "retrain the
+reranker on more data", which was tested and falsified.
 
 **6. Continuation-count trigram backoff.** Textbook correctness; modest gain.
 
-## What would falsify this plan
+## Result: more supervision was tested and does not help
 
-* If $\gamma$ still peaks at 0.3 after a corrected full retrain, the diagnosis
-  in §12.5 is wrong.
-* If a re-measured oracle@50 falls materially below 94.3%, the ranking/generation
-  split is wrong and generation work should take priority.
+The plan above once contained "retrain the reranker on all 3.59M pairs", on the
+theory that a 2^20-parameter table trained on 100k examples was starved. That
+was run and **falsified**, and the negative result is more useful than the
+hypothesis was.
+
+`train-mid` (500,000 reranker pairs --- 5x the released model, with the
+corrected learning-rate schedule and held-out early stopping) produced:
+
+| | `AK-Freq` | `AK-NEF` | `AK-NEI` |
+| :--- | ---: | ---: | ---: |
+| released model (100k pairs) | 81.83% | 31.21% | 47.79% |
+| `train-mid` (500k pairs) | 81.59% | 30.97% | 48.30% |
+
+**Five times the ranking supervision changed nothing measurable.** Held-out dev
+loss during that run never once beat having no sparse table at all:
+
+| after | dev loss | dev top-1 |
+| :--- | ---: | ---: |
+| no table (start) | **1.8582** | **54.18%** |
+| batch 1 | 1.8785 | 47.23% |
+| batch 2 | 1.8719 | 49.07% |
+| batch 3 | 1.9192 | 47.82% |
+| batch 4 | 1.9208 | 48.08% |
+| batch 5 | 1.9182 | 48.67% |
+
+Per-batch training loss on *fresh* data climbed (1.58 $\to$ 1.90 $\to$ 2.46),
+which is the generalisation gap stated directly. The learning rate annealed
+exactly as designed ($0.05 \times 0.631^{n}$: 0.0500, 0.0315, 0.0199, 0.0126,
+0.0079), so this is not a schedule problem.
+
+And the $\gamma$ sweep --- the stated falsification test --- came back unmoved:
+
+| $\gamma$ | released model | `train-mid` |
+| ---: | ---: | ---: |
+| 0.0 (heuristic only) | 81.02% | 80.83% |
+| **0.3 (shipped)** | **81.83%** | **81.59%** |
+| 0.5 | --- | 81.45% |
+| 0.7 | --- | 79.46% |
+| 1.0 (learned only) | 76.47% | **74.05%** |
+
+$\gamma$ still peaks at 0.3, and the standalone learned model got *worse* with
+more data (76.47% $\to$ 74.05%). **The reranker's problem is not data volume.**
+
+## The likely cause, and the corrected next step
+
+`W_DENSE` --- the 29 dense weights --- **has never been retrained by this
+pipeline.** `train.rs` imports it as a frozen constant and fits only the sparse
+table; the generator named in `reranker_weights.rs` does not exist in the
+repository. The v5 container now carries fresh $\mu$ and $\sigma$ so the
+features are standardised against the current model, but the *weights applied to
+them* still come from some earlier, lost training run.
+
+So what the system calls "the learned model" is stale dense weights plus a
+freshly-trained sparse table, and it is unsurprising that the combination loses
+to a three-parameter heuristic. Adding sparse capacity on top of misfitted dense
+weights cannot fix that, which is what the two experiments above measured.
+
+The corrected step is to **fit the dense weights and the sparse table jointly**
+against the current EM/LM output, under the same softmax objective, with L2
+regularisation and the held-out early stopping that already exists. Only after
+that is a full 3.59M run worth its four hours.
+
+## What would falsify the remaining plan
+
+* If a re-measured oracle@50 falls materially below 94.3%, the
+  ranking/generation split is wrong and generation work should take priority.
+* If jointly refitting the dense weights still leaves $\gamma$ peaked at 0.3,
+  the feature set --- not the fitting --- is the limit, and the discriminative
+  stage should be replaced rather than repaired.
 
 \newpage
 
