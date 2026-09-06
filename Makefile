@@ -103,8 +103,11 @@ uninstall:  ## Remove the engine from the system.
 
 reinstall: uninstall install  ## Run uninstall and then install.
 
-train:  ## Run the end-to-end one-shot model training pipeline.
-	@cargo run --release --bin train
+train:  ## Run the end-to-end one-shot model training pipeline (full 3.59M, chunked, ~40min).
+	@cargo run --release --bin train -- --reranker-pairs 0 --epochs 5 --iterations 12
+
+train-quick:  ## Fast training (100k pairs, ~10min).
+	@cargo run --release --bin train -- --reranker-pairs 100000 --epochs 3 --iterations 12
 
 pack:  ## Pack model binaries into unified data/akshar.model container.
 	@cargo run --release --bin pack_model

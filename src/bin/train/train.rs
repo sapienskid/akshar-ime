@@ -3,15 +3,6 @@
 // End-to-End Unified Model Trainer for Akshar Devanagari IME.
 // Ingests training data (word pairs + text) and directly produces
 // a single, low-size, production-ready `akshar.model` artifact.
-//
-// Usage: cargo run --release --bin train -- [options]
-//   --pairs <path>     Parallel roman-devanagari word pairs (JSONL)
-//   --text <path>      Clean running Devanagari text for vocabulary frequencies
-//   --out <path>       Output unified model path (default: data/akshar.model)
-//   --limit <n>        Limit pairs ingested (for quick testing)
-//   --iterations <n>   EM training iterations (default: 10)
-//   --epochs <n>       Reranker training epochs (default: 3)
-//   --smoke            Fast 5-second smoke test training (500 pairs)
 
 use akshar_ime::core::decoder::{DecoderConfig, ModelDecoder};
 use akshar_ime::core::em_trainer::{Trainer, TrainerConfig};
@@ -23,6 +14,7 @@ use akshar_ime::core::reranker_weights::{MEAN_DENSE, STD_DENSE, W_DENSE};
 use akshar_ime::core::unified::UnifiedModel;
 use akshar_ime::core::wordtrie::WordTrie;
 use akshar_ime::ImeEngine;
+use anyhow::{Context, Result};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::fs::File;
@@ -90,15 +82,10 @@ fn auto_detect_text() -> Option<PathBuf> {
     None
 }
 
-/// Decode depth and beam used when pre-decoding reranker training samples.
-/// These mirror the inference path in `core::engine` — the engine requests
-/// `max(count * 4, 50)` candidates with `DECODER_BEAM = 64`.  Training on a
-/// narrower lattice than inference produces weights fitted to a candidate
-/// distribution that never occurs in production.
 const RERANK_DECODE_DEPTH: usize = 50;
 const RERANK_DECODE_BEAM: usize = 64;
 
-fn main() {
+fn main() -> Result<()> {
     let mut pairs_path: Option<PathBuf> = None;
     let mut text_path: Option<PathBuf> = None;
     let mut out_path: Option<PathBuf> = None;
@@ -113,14 +100,53 @@ fn main() {
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
-            "--pairs" | "-p" => pairs_path = Some(PathBuf::from(args.next().expect("value for --pairs"))),
-            "--text" | "-t" => text_path = Some(PathBuf::from(args.next().expect("value for --text"))),
-            "--out" | "-o" => out_path = Some(PathBuf::from(args.next().expect("value for --out"))),
-            "--limit" | "-n" => limit = Some(args.next().expect("value for --limit").parse().unwrap()),
-            "--iterations" | "-i" => iterations = args.next().expect("value for --iterations").parse().unwrap(),
-            "--epochs" | "-e" => epochs = args.next().expect("value for --epochs").parse().unwrap(),
-            "--min-freq" => min_freq = args.next().expect("value for --min-freq").parse().unwrap(),
-            "--reranker-pairs" => reranker_pairs = args.next().expect("value for --reranker-pairs").parse().unwrap(),
+            "--pairs" | "-p" => {
+                pairs_path = Some(PathBuf::from(
+                    args.next().context("value for --pairs")?,
+                ))
+            }
+            "--text" | "-t" => {
+                text_path = Some(PathBuf::from(args.next().context("value for --text")?))
+            }
+            "--out" | "-o" => {
+                out_path = Some(PathBuf::from(args.next().context("value for --out")?))
+            }
+            "--limit" | "-n" => {
+                limit = Some(
+                    args.next()
+                        .context("value for --limit")?
+                        .parse()
+                        .context("parse --limit")?,
+                )
+            }
+            "--iterations" | "-i" => {
+                iterations = args
+                    .next()
+                    .context("value for --iterations")?
+                    .parse()
+                    .context("parse --iterations")?
+            }
+            "--epochs" | "-e" => {
+                epochs = args
+                    .next()
+                    .context("value for --epochs")?
+                    .parse()
+                    .context("parse --epochs")?
+            }
+            "--min-freq" => {
+                min_freq = args
+                    .next()
+                    .context("value for --min-freq")?
+                    .parse()
+                    .context("parse --min-freq")?
+            }
+            "--reranker-pairs" => {
+                reranker_pairs = args
+                    .next()
+                    .context("value for --reranker-pairs")?
+                    .parse()
+                    .context("parse --reranker-pairs")?
+            }
             "--wasm" => wasm_mode = true,
             "--smoke" => smoke = true,
             "-h" | "--help" => {
@@ -136,17 +162,16 @@ fn main() {
                 println!("  --epochs <n>            Reranker epochs (default: 3)");
                 println!("  --wasm                  Export lightweight WASM web profile");
                 println!("  --smoke                 Run fast smoke training validation");
-                return;
+                return Ok(());
             }
             other => {
-                eprintln!("Unknown argument: {other}");
-                std::process::exit(2);
+                anyhow::bail!("Unknown argument: {other}");
             }
         }
     }
 
     if wasm_mode && min_freq == 3 {
-        min_freq = 5; // Default to more aggressive vocabulary pruning for WASM
+        min_freq = 5;
     }
 
     let out_path = out_path.unwrap_or_else(|| {
@@ -165,18 +190,27 @@ fn main() {
         reranker_pairs = 500;
     }
 
-    let pairs_file = pairs_path.or_else(auto_detect_pairs).expect(
-        "No training pairs file found! Specify --pairs <path> (e.g. data/aksharantar/nep_train.json)",
-    );
+    let pairs_file = pairs_path
+        .or_else(auto_detect_pairs)
+        .context("No training pairs file found! Specify --pairs <path>")?;
     let text_file = text_path.or_else(auto_detect_text);
 
     println!("============================================================");
     println!("           Akshar One-Shot Unified Trainer                  ");
     println!("============================================================");
     println!("Training Pairs: {}", pairs_file.display());
-    println!("Text Corpus:    {}", text_file.as_ref().map(|p| p.display().to_string()).unwrap_or_else(|| "Derived from pairs".to_string()));
+    println!(
+        "Text Corpus:    {}",
+        text_file
+            .as_ref()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| "Derived from pairs".to_string())
+    );
     println!("Target Output:  {}", out_path.display());
-    println!("Parameters:     EM iterations={}, Reranker epochs={}", iterations, epochs);
+    println!(
+        "Parameters:     EM iterations={}, Reranker epochs={}",
+        iterations, epochs
+    );
     if let Some(lim) = limit {
         println!("Limit:          {} pairs", lim);
     }
@@ -184,9 +218,7 @@ fn main() {
 
     let start_time = Instant::now();
 
-    // -------------------------------------------------------------------------
-    // Phase 1: Ingest Pairs & Train EM Transliteration Model
-    // -------------------------------------------------------------------------
+    // Phase 1: EM
     println!("\n[Phase 1/4] Training EM Source-Channel Transliteration Model...");
     let em_t0 = Instant::now();
     let em_config = TrainerConfig {
@@ -197,7 +229,7 @@ fn main() {
     };
 
     let mut em_trainer = Trainer::new().with_limit(limit);
-    let f = File::open(&pairs_file).expect("open pairs file");
+    let f = File::open(&pairs_file).context("open pairs file")?;
     let mut raw_pairs: Vec<(String, String)> = Vec::new();
     let mut count = 0usize;
 
@@ -210,7 +242,7 @@ fn main() {
             let eng = rec.english.trim().to_ascii_lowercase();
             let nat = rec.native.trim().to_string();
             if !eng.is_empty() && !nat.is_empty() {
-                em_trainer.add_pair_weighted(&eng, &nat, rec.weight as f64);
+                em_trainer.add_pair_weighted(&eng, &nat, f64::from(rec.weight));
                 raw_pairs.push((eng, nat));
                 count += 1;
                 if let Some(lim) = limit {
@@ -225,11 +257,14 @@ fn main() {
 
     let mut translit_model = em_trainer.finalize(&em_config);
     translit_model.build_trigram_index();
-    println!("EM training finished in {:.2?} (aksharas: {}, chunks: {}).", em_t0.elapsed(), translit_model.aksharas.len(), translit_model.chunks.len());
+    println!(
+        "EM training finished in {:.2?} (aksharas: {}, chunks: {}).",
+        em_t0.elapsed(),
+        translit_model.aksharas.len(),
+        translit_model.chunks.len()
+    );
 
-    // -------------------------------------------------------------------------
-    // Phase 2: Ingest Text & Build Frequency Table
-    // -------------------------------------------------------------------------
+    // Phase 2: vocab
     println!("\n[Phase 2/4] Compiling Vocabulary & Empirical Frequencies...");
     let vocab_t0 = Instant::now();
     let mut vocab_freq: HashMap<String, u32> = HashMap::new();
@@ -237,7 +272,7 @@ fn main() {
     if let Some(ref tp) = text_file {
         if tp.exists() {
             println!("Reading running text from {} ...", tp.display());
-            let tf = File::open(tp).expect("open text file");
+            let tf = File::open(tp).context("open text file")?;
             for line in BufReader::new(tf).lines().map_while(Result::ok) {
                 for token in line.split_whitespace() {
                     if let Some(clean) = clean_devanagari_token(token) {
@@ -259,16 +294,12 @@ fn main() {
         vocab_t0.elapsed()
     );
 
-    // -------------------------------------------------------------------------
-    // Phase 3: Train Discriminative Reranker Weights
-    // -------------------------------------------------------------------------
+    // Phase 3: reranker - chunked for large training sets to avoid OOM
     println!("\n[Phase 3/4] Training Discriminative Reranker...");
     let rank_t0 = Instant::now();
     let decoder = ModelDecoder::with_config(
         translit_model.clone(),
         DecoderConfig {
-            // Match the engine's DECODER_BEAM so the reranker is trained on
-            // the candidate sets it will actually have to rank.
             beam_width: RERANK_DECODE_BEAM,
             ..DecoderConfig::default()
         },
@@ -291,114 +322,224 @@ fn main() {
         sparse: Vec<Vec<usize>>,
     }
 
-    let decode_t0 = Instant::now();
-    let mut samples: Vec<RerankItem> = Vec::with_capacity(num_train_pairs);
-
-    for (roman, gold) in &raw_pairs[..num_train_pairs] {
-        // Decode at the same depth the engine uses at inference time
-        // (engine.rs requests max(count*4, 50) with DECODER_BEAM = 64).  A
-        // shallower training decode changes which candidates compete, and
-        // therefore what the softmax is trained to discriminate.
-        let cands = decoder.decode_union(roman, RERANK_DECODE_DEPTH, Some(&word_trie));
-        // Candidate order, heuristic and heuristic rank must be computed the
-        // same way as at inference — see reranker::rank_candidates.
-        let (order, heur, heur_rank) = rank_candidates(&cands, &vocab_freq);
-        if let Some(target_idx) = order.iter().position(|c| c.dev == *gold) {
-            let n_cand = order.len();
-            let cand_sparse: Vec<Vec<usize>> = order.iter().map(|c| {
-                let aks = akshar_ime::core::akshara::segment(&c.dev);
-                extract_sparse_features(&c.dev, roman, c.akshara_count, &aks)
-            }).collect();
-
-            let mut base_scores = Vec::with_capacity(n_cand);
-            for (idx, c) in order.iter().enumerate() {
-                let dense = extract_dense_features(c, idx, heur[idx], heur_rank[idx], roman, &vocab_freq, &ranks);
-                let mut score = 0.0f64;
-                for k in 0..DENSE_DIM {
-                    score += W_DENSE[k] * ((dense[k] - MEAN_DENSE[k]) / STD_DENSE[k]);
-                }
-                base_scores.push(score);
-            }
-
-            samples.push(RerankItem {
-                target_idx,
-                base_scores,
-                sparse: cand_sparse,
-            });
-        }
-    }
-    println!(
-        "Pre-decoded {} valid samples with targets in candidate list in {:.2?}.",
-        samples.len(),
-        decode_t0.elapsed()
-    );
-
+    // For large training sets, process in batches to keep memory bounded.
+    // Each batch is decoded once and reused for all epochs.
+    const BATCH_SIZE: usize = 100_000;
+    let use_chunked = num_train_pairs > 200_000;
     let mut sparse_table: Vec<f32> = vec![0.0f32; HASH_SIZE];
     let mut grad_sq: Vec<f32> = vec![0.0f32; HASH_SIZE];
-    let mut lr = 0.05f64;
+    let mut lr: f64 = 0.05;
 
-    for ep in 1..=epochs {
-        let mut ep_loss = 0.0f64;
-        let mut ep_hits = 0usize;
-
-        for s in &samples {
-            let mut scores = s.base_scores.clone();
-
-            for (idx, sparse_feats) in s.sparse.iter().enumerate() {
-                for &h in sparse_feats {
-                    scores[idx] += sparse_table[h] as f64;
+    if use_chunked {
+        let total_batches = num_train_pairs.div_ceil(BATCH_SIZE);
+        println!(
+            "  Chunked mode: {} batches of {} (memory bounded)",
+            total_batches, BATCH_SIZE
+        );
+        for ep in 1..=epochs {
+            let mut ep_loss: f64 = 0.0;
+            let mut ep_hits: usize = 0;
+            let mut ep_samples: usize = 0;
+            for batch_idx in 0..total_batches {
+                let start = batch_idx * BATCH_SIZE;
+                let end = (start + BATCH_SIZE).min(num_train_pairs);
+                let batch = &raw_pairs[start..end];
+                // Decode this batch
+                let mut samples: Vec<RerankItem> = Vec::with_capacity(batch.len());
+                for (roman, gold) in batch {
+                    let cands = decoder.decode_union(roman, RERANK_DECODE_DEPTH, Some(&word_trie));
+                    let (order, heur, heur_rank) = rank_candidates(&cands, &vocab_freq);
+                    if let Some(target_idx) = order.iter().position(|c| c.dev == *gold) {
+                        let n_cand = order.len();
+                        let cand_sparse: Vec<Vec<usize>> = order
+                            .iter()
+                            .map(|c| {
+                                let aks = akshar_ime::core::akshara::segment(&c.dev);
+                                extract_sparse_features(&c.dev, roman, c.akshara_count, &aks)
+                            })
+                            .collect();
+                        let mut base_scores = Vec::with_capacity(n_cand);
+                        for (idx, c) in order.iter().enumerate() {
+                            let dense = extract_dense_features(
+                                c, idx, heur[idx], heur_rank[idx], roman, &vocab_freq, &ranks,
+                            );
+                            let mut score: f64 = 0.0;
+                            for k in 0..DENSE_DIM {
+                                score += W_DENSE[k] * ((dense[k] - MEAN_DENSE[k]) / STD_DENSE[k]);
+                            }
+                            base_scores.push(score);
+                        }
+                        samples.push(RerankItem {
+                            target_idx,
+                            base_scores,
+                            sparse: cand_sparse,
+                        });
+                    }
+                }
+                // Train on this batch's samples for this epoch
+                for s in &samples {
+                    let mut scores = s.base_scores.clone();
+                    for (idx, sparse_feats) in s.sparse.iter().enumerate() {
+                        for &h in sparse_feats {
+                            scores[idx] += f64::from(sparse_table[h]);
+                        }
+                    }
+                    let max_s = scores.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+                    let exp_s: Vec<f64> = scores.iter().map(|&sc| (sc - max_s).exp()).collect();
+                    let sum_exp: f64 = exp_s.iter().sum();
+                    let probs: Vec<f64> = exp_s.iter().map(|&e| e / (sum_exp + 1e-12)).collect();
+                    ep_loss += -probs[s.target_idx].max(1e-12).ln();
+                    if probs
+                        .iter()
+                        .enumerate()
+                        .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
+                        .is_some_and(|(i, _)| i == s.target_idx)
+                    {
+                        ep_hits += 1;
+                    }
+                    for (idx, p) in probs.iter().enumerate() {
+                        let grad = if idx == s.target_idx { *p - 1.0 } else { *p };
+                        if grad.abs() > 1e-5 {
+                            for &h in &s.sparse[idx] {
+                                let g = grad as f32;
+                                grad_sq[h] += g * g;
+                                let eff_lr = (lr as f32) / (grad_sq[h].sqrt() + 1e-4);
+                                sparse_table[h] -= eff_lr * g;
+                            }
+                        }
+                    }
+                }
+                ep_samples += samples.len();
+                if batch_idx % 5 == 0 || batch_idx + 1 == total_batches {
+                    println!(
+                        "    Batch {}/{} decoded {} samples (epoch {}/{})",
+                        batch_idx + 1,
+                        total_batches,
+                        samples.len(),
+                        ep,
+                        epochs
+                    );
                 }
             }
-
-            let max_s = scores.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-            let exp_s: Vec<f64> = scores.iter().map(|&sc| (sc - max_s).exp()).collect();
-            let sum_exp: f64 = exp_s.iter().sum();
-            let probs: Vec<f64> = exp_s.iter().map(|&e| e / (sum_exp + 1e-12)).collect();
-
-            ep_loss += -probs[s.target_idx].max(1e-12).ln();
-            if probs.iter().enumerate().max_by(|a, b| a.1.partial_cmp(b.1).unwrap()).unwrap().0 == s.target_idx {
-                ep_hits += 1;
+            lr *= 0.8;
+            if ep_samples > 0 {
+                println!(
+                    "  Epoch {}/{}: loss={:.4}, top-1 accuracy={:.2}%",
+                    ep,
+                    epochs,
+                    ep_loss / ep_samples as f64,
+                    ep_hits as f64 / ep_samples as f64 * 100.0
+                );
             }
+        }
+    } else {
+        // Original in-memory path for smaller training sets (faster)
+        let decode_t0 = Instant::now();
+        let mut samples: Vec<RerankItem> = Vec::with_capacity(num_train_pairs);
+        for (roman, gold) in &raw_pairs[..num_train_pairs] {
+            let cands = decoder.decode_union(roman, RERANK_DECODE_DEPTH, Some(&word_trie));
+            let (order, heur, heur_rank) = rank_candidates(&cands, &vocab_freq);
+            if let Some(target_idx) = order.iter().position(|c| c.dev == *gold) {
+                let n_cand = order.len();
+                let cand_sparse: Vec<Vec<usize>> = order
+                    .iter()
+                    .map(|c| {
+                        let aks = akshar_ime::core::akshara::segment(&c.dev);
+                        extract_sparse_features(&c.dev, roman, c.akshara_count, &aks)
+                    })
+                    .collect();
+                let mut base_scores = Vec::with_capacity(n_cand);
+                for (idx, c) in order.iter().enumerate() {
+                    let dense = extract_dense_features(
+                        c, idx, heur[idx], heur_rank[idx], roman, &vocab_freq, &ranks,
+                    );
+                    let mut score: f64 = 0.0;
+                    for k in 0..DENSE_DIM {
+                        score += W_DENSE[k] * ((dense[k] - MEAN_DENSE[k]) / STD_DENSE[k]);
+                    }
+                    base_scores.push(score);
+                }
+                samples.push(RerankItem {
+                    target_idx,
+                    base_scores,
+                    sparse: cand_sparse,
+                });
+            }
+        }
+        println!(
+            "Pre-decoded {} valid samples with targets in candidate list in {:.2?}.",
+            samples.len(),
+            decode_t0.elapsed()
+        );
 
-            for (idx, p) in probs.iter().enumerate() {
-                let grad = if idx == s.target_idx { *p - 1.0 } else { *p };
-                if grad.abs() > 1e-5 {
-                    for &h in &s.sparse[idx] {
-                        let g = grad as f32;
-                        grad_sq[h] += g * g;
-                        let eff_lr = (lr as f32) / (grad_sq[h].sqrt() + 1e-4);
-                        sparse_table[h] -= eff_lr * g;
+        for ep in 1..=epochs {
+            let mut ep_loss: f64 = 0.0;
+            let mut ep_hits: usize = 0;
+            for s in &samples {
+                let mut scores = s.base_scores.clone();
+                for (idx, sparse_feats) in s.sparse.iter().enumerate() {
+                    for &h in sparse_feats {
+                        scores[idx] += f64::from(sparse_table[h]);
+                    }
+                }
+                let max_s = scores.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+                let exp_s: Vec<f64> = scores.iter().map(|&sc| (sc - max_s).exp()).collect();
+                let sum_exp: f64 = exp_s.iter().sum();
+                let probs: Vec<f64> = exp_s.iter().map(|&e| e / (sum_exp + 1e-12)).collect();
+                ep_loss += -probs[s.target_idx].max(1e-12).ln();
+                if probs
+                    .iter()
+                    .enumerate()
+                    .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
+                    .is_some_and(|(i, _)| i == s.target_idx)
+                {
+                    ep_hits += 1;
+                }
+                for (idx, p) in probs.iter().enumerate() {
+                    let grad = if idx == s.target_idx { *p - 1.0 } else { *p };
+                    if grad.abs() > 1e-5 {
+                        for &h in &s.sparse[idx] {
+                            let g = grad as f32;
+                            grad_sq[h] += g * g;
+                            let eff_lr = (lr as f32) / (grad_sq[h].sqrt() + 1e-4);
+                            sparse_table[h] -= eff_lr * g;
+                        }
                     }
                 }
             }
-        }
-        lr *= 0.8;
-        if !samples.is_empty() {
-            println!(
-                "  Epoch {}/{}: loss={:.4}, top-1 accuracy={:.2}%",
-                ep,
-                epochs,
-                ep_loss / samples.len() as f64,
-                ep_hits as f64 / samples.len() as f64 * 100.0
-            );
+            lr *= 0.8;
+            if !samples.is_empty() {
+                println!(
+                    "  Epoch {}/{}: loss={:.4}, top-1 accuracy={:.2}%",
+                    ep,
+                    epochs,
+                    ep_loss / samples.len() as f64,
+                    ep_hits as f64 / samples.len() as f64 * 100.0
+                );
+            }
         }
     }
     println!("Reranker trained in {:.2?}.", rank_t0.elapsed());
 
-    // -------------------------------------------------------------------------
-    // Phase 4: Pack Unified Model
-    // -------------------------------------------------------------------------
+    // Phase 4: Pack
     println!("\n[Phase 4/4] Packing Unified Model -> {} ...", out_path.display());
     let pack_t0 = Instant::now();
 
     let max_sparse = sparse_table.iter().map(|w| w.abs()).fold(0.0f32, f32::max);
-    let sparse_scale = if max_sparse > 0.0 { 127.0 / max_sparse } else { 1.0 };
+    let sparse_scale = if max_sparse > 0.0 {
+        127.0 / max_sparse
+    } else {
+        1.0
+    };
     let quantized_table: Vec<i8> = sparse_table
         .iter()
         .map(|&w| (w * sparse_scale).round().clamp(-128.0, 127.0) as i8)
         .collect();
     let non_zero = quantized_table.iter().filter(|&&w| w != 0).count();
-    println!("Quantized sparse table: {} non-zero weights (scale: {:.4})", non_zero, sparse_scale);
+    println!(
+        "Quantized sparse table: {} non-zero weights (scale: {:.4})",
+        non_zero, sparse_scale
+    );
 
     println!("Pruning unreferenced aksharas and cleaning non-Nepali transitions...");
     let mut seen_aks = std::collections::HashSet::new();
@@ -409,7 +550,11 @@ fn main() {
             }
         }
     }
-    let before_em = translit_model.emissions.iter().filter(|e| !e.is_empty()).count();
+    let before_em = translit_model
+        .emissions
+        .iter()
+        .filter(|e| !e.is_empty())
+        .count();
     for (a, em) in translit_model.emissions.iter_mut().enumerate() {
         if !seen_aks.contains(&(a as u32)) {
             em.clear();
@@ -440,30 +585,37 @@ fn main() {
     translit_model.trigrams = new_trigrams;
     translit_model.trigram_backoff = new_backoff;
     translit_model.build_trigram_index();
-    let after_em = translit_model.emissions.iter().filter(|e| !e.is_empty()).count();
-    println!("Pruned unused emission rows: {} -> {} (and cleaned transitions)", before_em, after_em);
+    let after_em = translit_model
+        .emissions
+        .iter()
+        .filter(|e| !e.is_empty())
+        .count();
+    println!(
+        "Pruned unused emission rows: {} -> {} (and cleaned transitions)",
+        before_em, after_em
+    );
 
-    // Carry the run's own quantization scale: the table is meaningless
-    // without it (see UnifiedModel::sparse_scale).
     let unified = UnifiedModel::new(
         translit_model,
         quantized_table,
-        1.0 / sparse_scale as f64,
+        1.0 / f64::from(sparse_scale),
         vocab_freq,
     );
-    unified.save(&out_path).expect("save unified model");
-
-    let meta = std::fs::metadata(&out_path).expect("model metadata");
+    unified
+        .save(&out_path)
+        .map_err(|e| anyhow::anyhow!("save unified model: {e}"))?;
+    let meta = std::fs::metadata(&out_path).context("model metadata")?;
     let size_mb = meta.len() as f64 / (1024.0 * 1024.0);
 
-    println!("Unified model container successfully written in {:.2?}!", pack_t0.elapsed());
+    println!(
+        "Unified model container successfully written in {:.2?}!",
+        pack_t0.elapsed()
+    );
     println!("Artifact: {} ({:.2} MB)", out_path.display(), size_mb);
 
-    // -------------------------------------------------------------------------
-    // Self-Verification Smoke Test
-    // -------------------------------------------------------------------------
     println!("\n>>> Running Self-Verification Smoke Test on newly created model...");
-    let engine = ImeEngine::from_unified_file(&out_path).expect("load newly trained model");
+    let engine = ImeEngine::from_unified_file(&out_path)
+        .map_err(|e| anyhow::anyhow!("load newly trained model: {e}"))?;
     let test_queries = ["namaste", "nepal", "kathmandu", "dhanyabad", "pani"];
     println!("Testing top suggestion generation for basic words:");
     for q in test_queries {
@@ -474,6 +626,10 @@ fn main() {
     }
 
     println!("\n============================================================");
-    println!("All done in {:.2?}! Model is 100% verified and ready.", start_time.elapsed());
+    println!(
+        "All done in {:.2?}! Model is 100% verified and ready.",
+        start_time.elapsed()
+    );
     println!("============================================================");
+    Ok(())
 }

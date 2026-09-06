@@ -55,6 +55,7 @@ fn cache_limit() -> usize {
         .unwrap_or(256)
 }
 
+#[allow(dead_code)]
 fn adaptive_beam(roman_len: usize) -> usize {
     let base = decoder_beam();
     if roman_len <= 3 {

@@ -6,6 +6,7 @@ version = 4
 name = "akshar_ime"
 version = "1.0.0"
 dependencies = [
+ "anyhow",
  "bincode",
  "dirs",
  "getrandom 0.2.16",
@@ -15,10 +16,17 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "thiserror",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
 ]
+
+[[package]]
+name = "anyhow"
+version = "1.0.104"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
 name = "bincode"
