@@ -36,6 +36,14 @@ const QUERY_VARIANT_LIMIT: usize = 6;
 
 /// Decoder beam for the IME (accuracy/speed sweet spot, see M2 eval).
 const DECODER_BEAM: usize = 64;
+
+fn decoder_beam() -> usize {
+    std::env::var("AKSHAR_BEAM")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|&v| (16..=512).contains(&v))
+        .unwrap_or(DECODER_BEAM)
+}
 /// Scale converting a reranker log-score into the engine's higher-better u64 score.
 const FRESH_SCALE: f64 = 800_000.0;
 /// Purnabiram (।, U+0964) — mapped from a trailing '.'.
@@ -89,7 +97,7 @@ impl ImeEngine {
         let decoder = ModelDecoder::with_config(
             model,
             DecoderConfig {
-                beam_width: DECODER_BEAM,
+                beam_width: decoder_beam(),
                 ..DecoderConfig::default()
             },
         );
@@ -122,7 +130,7 @@ impl ImeEngine {
         let decoder = ModelDecoder::with_config(
             unified.translit,
             DecoderConfig {
-                beam_width: DECODER_BEAM,
+                beam_width: decoder_beam(),
                 ..DecoderConfig::default()
             },
         );
@@ -203,7 +211,7 @@ impl ImeEngine {
         let decoder = ModelDecoder::with_config(
             model,
             DecoderConfig {
-                beam_width: DECODER_BEAM,
+                beam_width: decoder_beam(),
                 ..DecoderConfig::default()
             },
         );
