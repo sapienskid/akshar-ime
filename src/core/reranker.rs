@@ -253,18 +253,22 @@ pub fn rerank(
     rerank_with_table(roman, candidates, freq, ranks, None)
 }
 
-/// Rank candidates with an optional custom sparse weight table (from UnifiedModel).
-pub fn rerank_with_table(
-    roman: &str,
-    candidates: &[DecodedCandidate],
+/// Candidate ordering and heuristic scores shared by inference and training.
+///
+/// The trainer used to recompute this inline and got it wrong: it filled
+/// `heur_rank` with the identity permutation instead of sorting by `heur`,
+/// so dense feature #5 meant "decoder rank" during training and "heuristic
+/// rank" at inference.  Both callers now go through this function so the two
+/// cannot drift apart again.
+///
+/// Returns `(order, heur, heur_rank)` where `order` is the candidate list
+/// sorted by `emit + lm`, `heur[i]` is the baseline heuristic cost of
+/// `order[i]`, and `heur_rank[i]` is that candidate's 0-based rank once
+/// sorted by `heur` ascending.
+pub fn rank_candidates<'a>(
+    candidates: &'a [DecodedCandidate],
     freq: &HashMap<String, u32>,
-    ranks: &FreqRanks,
-    custom_sparse_table: Option<&[i8]>,
-) -> Vec<(String, f64)> {
-    if candidates.is_empty() {
-        return vec![];
-    }
-
+) -> (Vec<&'a DecodedCandidate>, Vec<f64>, Vec<usize>) {
     let mut order: Vec<&DecodedCandidate> = candidates.iter().collect();
     order.sort_by(|a, b| {
         (a.emit + a.lm)
@@ -279,6 +283,7 @@ pub fn rerank_with_table(
             c.emit + LM_W * c.lm - VOCAB_W * (1.0 + f as f64).ln()
         })
         .collect();
+
     let mut heur_order: Vec<usize> = (0..order.len()).collect();
     heur_order.sort_by(|a, b| {
         heur[*a]
@@ -289,6 +294,23 @@ pub fn rerank_with_table(
     for (r, i) in heur_order.into_iter().enumerate() {
         heur_rank[i] = r;
     }
+
+    (order, heur, heur_rank)
+}
+
+/// Rank candidates with an optional custom sparse weight table (from UnifiedModel).
+pub fn rerank_with_table(
+    roman: &str,
+    candidates: &[DecodedCandidate],
+    freq: &HashMap<String, u32>,
+    ranks: &FreqRanks,
+    custom_sparse_table: Option<&[i8]>,
+) -> Vec<(String, f64)> {
+    if candidates.is_empty() {
+        return vec![];
+    }
+
+    let (order, heur, heur_rank) = rank_candidates(candidates, freq);
 
     let n = order.len();
     let mut scores: Vec<f64> = Vec::with_capacity(n);

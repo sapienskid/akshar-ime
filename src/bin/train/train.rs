@@ -15,8 +15,11 @@
 
 use akshar_ime::core::decoder::{DecoderConfig, ModelDecoder};
 use akshar_ime::core::em_trainer::{Trainer, TrainerConfig};
-use akshar_ime::core::reranker::{extract_dense_features, extract_sparse_features, FreqRanks, DENSE_DIM, HASH_SIZE};
-use akshar_ime::core::reranker_weights::{LM_W, MEAN_DENSE, STD_DENSE, VOCAB_W, W_DENSE};
+use akshar_ime::core::reranker::{
+    extract_dense_features, extract_sparse_features, rank_candidates, FreqRanks, DENSE_DIM,
+    HASH_SIZE,
+};
+use akshar_ime::core::reranker_weights::{MEAN_DENSE, STD_DENSE, W_DENSE};
 use akshar_ime::core::unified::UnifiedModel;
 use akshar_ime::core::wordtrie::WordTrie;
 use akshar_ime::ImeEngine;
@@ -86,6 +89,14 @@ fn auto_detect_text() -> Option<PathBuf> {
     }
     None
 }
+
+/// Decode depth and beam used when pre-decoding reranker training samples.
+/// These mirror the inference path in `core::engine` — the engine requests
+/// `max(count * 4, 50)` candidates with `DECODER_BEAM = 64`.  Training on a
+/// narrower lattice than inference produces weights fitted to a candidate
+/// distribution that never occurs in production.
+const RERANK_DECODE_DEPTH: usize = 50;
+const RERANK_DECODE_BEAM: usize = 64;
 
 fn main() {
     let mut pairs_path: Option<PathBuf> = None;
@@ -261,7 +272,9 @@ fn main() {
     let decoder = ModelDecoder::with_config(
         translit_model.clone(),
         DecoderConfig {
-            beam_width: 32,
+            // Match the engine's DECODER_BEAM so the reranker is trained on
+            // the candidate sets it will actually have to rank.
+            beam_width: RERANK_DECODE_BEAM,
             ..DecoderConfig::default()
         },
     );
@@ -287,24 +300,23 @@ fn main() {
     let mut samples: Vec<RerankItem> = Vec::with_capacity(num_train_pairs);
 
     for (roman, gold) in &raw_pairs[..num_train_pairs] {
-        let cands = decoder.decode_union(roman, 20, Some(&word_trie));
-        if let Some(target_idx) = cands.iter().position(|c| c.dev == *gold) {
-            let n_cand = cands.len();
-            let heur: Vec<f64> = cands.iter().map(|c| {
-                let f = vocab_freq.get(&c.dev).copied().unwrap_or(0);
-                c.emit + LM_W * c.lm - VOCAB_W * (1.0 + f as f64).ln()
-            }).collect();
-            let mut heur_rank = vec![0usize; n_cand];
-            for (r, idx) in (0..n_cand).enumerate() {
-                heur_rank[idx] = r;
-            }
-            let cand_sparse: Vec<Vec<usize>> = cands.iter().map(|c| {
+        // Decode at the same depth the engine uses at inference time
+        // (engine.rs requests max(count*4, 50) with DECODER_BEAM = 64).  A
+        // shallower training decode changes which candidates compete, and
+        // therefore what the softmax is trained to discriminate.
+        let cands = decoder.decode_union(roman, RERANK_DECODE_DEPTH, Some(&word_trie));
+        // Candidate order, heuristic and heuristic rank must be computed the
+        // same way as at inference — see reranker::rank_candidates.
+        let (order, heur, heur_rank) = rank_candidates(&cands, &vocab_freq);
+        if let Some(target_idx) = order.iter().position(|c| c.dev == *gold) {
+            let n_cand = order.len();
+            let cand_sparse: Vec<Vec<usize>> = order.iter().map(|c| {
                 let aks = akshar_ime::core::akshara::segment(&c.dev);
                 extract_sparse_features(&c.dev, roman, c.akshara_count, &aks)
             }).collect();
 
             let mut base_scores = Vec::with_capacity(n_cand);
-            for (idx, c) in cands.iter().enumerate() {
+            for (idx, c) in order.iter().enumerate() {
                 let dense = extract_dense_features(c, idx, heur[idx], heur_rank[idx], roman, &vocab_freq, &ranks);
                 let mut score = 0.0f64;
                 for k in 0..DENSE_DIM {
@@ -460,7 +472,15 @@ fn main() {
         }
     };
 
-    let unified = UnifiedModel::new(translit_model, quantized_table, vocab_freq, bigrams);
+    // Carry the run's own quantization scale: the table is meaningless
+    // without it (see UnifiedModel::sparse_scale).
+    let unified = UnifiedModel::new(
+        translit_model,
+        quantized_table,
+        1.0 / sparse_scale as f64,
+        vocab_freq,
+        bigrams,
+    );
     unified.save(&out_path).expect("save unified model");
 
     let meta = std::fs::metadata(&out_path).expect("model metadata");

@@ -117,7 +117,16 @@ fn main() {
     };
 
     println!("5. Assembling and writing unified model -> {} ...", out_p.display());
-    let unified = UnifiedModel::new(translit, sparse_table, vocab, bigrams);
+    // pack_model assembles loose .bin artifacts and has no record of the
+    // scale the sparse table was quantized against, so it keeps the legacy
+    // compile-time constant.  `train` writes its own measured scale.
+    let unified = UnifiedModel::new(
+        translit,
+        sparse_table,
+        akshar_ime::core::reranker_weights::SPARSE_SCALE,
+        vocab,
+        bigrams,
+    );
     unified.save(&out_p).expect("save unified model");
 
     let metadata = std::fs::metadata(&out_p).expect("metadata");
