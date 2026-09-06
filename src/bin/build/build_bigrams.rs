@@ -65,5 +65,5 @@ fn main() {
 
 fn is_devanagari_word(w: &str) -> bool {
     let count = w.chars().count();
-    count >= 1 && count <= 24 && w.chars().all(|c| ('\u{0900}'..='\u{0963}').contains(&c))
+    (1..=24).contains(&count) && w.chars().all(|c| ('\u{0900}'..='\u{0963}').contains(&c))
 }
