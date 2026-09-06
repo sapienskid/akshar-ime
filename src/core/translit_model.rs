@@ -50,6 +50,9 @@ pub struct TranslitModel {
     /// Runtime index from (a,b) -> position in trigram_keys.  Not serialised.
     #[serde(skip)]
     pub trigram_index: HashMap<(u32, u32), usize>,
+    /// Runtime index from akshara string -> id.  Not serialised; built on load.
+    #[serde(skip)]
+    pub akshara_index: HashMap<String, u32>,
 }
 
 /// Maximum roman characters a single akshara can absorb.
@@ -62,7 +65,13 @@ const LEN_SHIFT: u32 = 26;
 impl TranslitModel {
     /// Return (akshara_id, chunk_id) maps and helper lookup methods.
     pub fn akshara_id(&self, akshara: &str) -> Option<u32> {
-        // Linear scan is fine for the IME-sized vocab; callers cache results.
+        // Indexed lookup.  This used to be a linear scan over the whole akshara
+        // vocabulary; engine start-up calls it hundreds of thousands of times
+        // while building the word trie, which made it the dominant term in a
+        // multi-second cold start.
+        if !self.akshara_index.is_empty() {
+            return self.akshara_index.get(akshara).copied();
+        }
         self.aksharas
             .iter()
             .position(|a| a == akshara)
@@ -204,6 +213,17 @@ impl TranslitModel {
             .enumerate()
             .map(|(i, &k)| (k, i))
             .collect();
+        self.build_akshara_index();
+    }
+
+    /// Rebuild the runtime akshara-string -> id index.
+    pub fn build_akshara_index(&mut self) {
+        self.akshara_index = self
+            .aksharas
+            .iter()
+            .enumerate()
+            .map(|(i, a)| (a.clone(), i as u32))
+            .collect();
     }
 
     /// Basic sanity: model is non-empty and internally consistent.
@@ -300,6 +320,7 @@ mod tests {
             trigrams: vec![],
             trigram_backoff: vec![],
             trigram_index: HashMap::new(),
+            akshara_index: HashMap::new(),
         };
         assert!(m.validate());
         assert_eq!(m.emission_weight(0, "ka"), 0.0);
@@ -321,6 +342,7 @@ mod tests {
             trigrams: vec![],
             trigram_backoff: vec![],
             trigram_index: HashMap::new(),
+            akshara_index: HashMap::new(),
         };
         // seen: direct weight
         assert_eq!(m.bigram_weight(0, 1), 2.0);

@@ -166,7 +166,12 @@ $$
 P_{\mathrm{cont}}(b) = \frac{|\{a : c(a,b) > 0\}| + 0.5}{|\Sigma_{\mathrm{bigram}}| + 0.5N},
 $$
 
-with absolute discount $\delta = 0.75$, plus the word-start prior
+with **modified Kneser-Ney discounts** (Chen & Goodman 1999) rather than a single
+$\delta$: $D_1$, $D_2$, $D_{3+}$ are estimated from the count-of-counts $n_1..n_4$
+via $Y = n_1/(n_1 + 2n_2)$, and $\lambda$ becomes $\sum_b D_{c(a,b)} / c(a)$.
+Each $D_i$ is constrained to $0 \le D_i \le i$ (`em_trainer.rs::modified_discounts`);
+the fixed $\delta = 0.75$ survives only as the fallback when $n_1$, $n_2$ or $n_3$
+is zero. Plus the word-start prior
 
 $$
 P(a \mid \#) = \frac{c_{\#}(a) + 0.5}{W + 0.5N}, \qquad W = \text{corpus word count}.

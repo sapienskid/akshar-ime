@@ -11,23 +11,49 @@ Akshar Devanagari IME is a next-generation input method built from the ground up
 
 - **Nepali-native details:** digits map to Devanagari numerals (123 → १२३)
   and a trailing `.` offers purnabiram (namaste. → नमस्ते।).
-- **Small:** 8.91 MB browser model (**4.92 MB Brotli**), 11.1 MB on desktop, from a single unified container.
-- **SOTA Transliteration Core:** Outperforms neural baselines (IndicXlit top-1: 80.25% vs AksharIME top-1: **81.45%**, top-5: **92.17%** on held-out Aksharantar native test). Combines an EM-trained source-channel model (`P(roman | akshara)` over 3.59M pairs) with a Kneser-Ney syllable trigram LM, candidate union decoding, and a canonical discriminative log-linear reranker (29 dense shape/frequency/morphology features + $2^{20}$-slot sparse lexicalized table). Zero neural network runtime dependencies, 100% classical and memory-safe.
+- **Small:** 8.91 MB browser model (4.94 MB Brotli), 11.37 MB on desktop, from a single unified container.
+- **Transliteration core:** an EM-trained source-channel model (`P(roman | akshara)`, 3.59M pairs) with a modified Kneser-Ney syllable trigram LM, candidate-union decoding, and a discriminative log-linear reranker (29 dense shape/frequency/morphology features + a $2^{20}$-slot sparse lexicalized table). No neural network at runtime; pure safe Rust.
 - **Adaptive Learning:** the IME learns your vocabulary and spelling variants
   in real time; the words you use most frequently appear first.
-- **Fuzzy Search:** finds the correct words even with spelling mistakes in
-  Roman script.
+- **Fuzzy Search:** tolerates Roman spelling mistakes within edit distance 2
+  over words you have confirmed before. Matches are distance-verified. A
+  corpus-wide fuzzy source was removed on 2026-09-06: it cost 30.8pp of native
+  top-1 and contributed no measured recall.
 - **Context (opt-in):** phrase-level bigrams were removed (`19.5 MB` for `+0.16pp`, see `docs/MODEL_TRAINING_AND_OPTIMIZATION.md`). Context now comes from user-learned bigrams only.
+
+## Measured performance
+
+On the held-out AI4Bharat Aksharantar Nepali test split (4,101 cases), via
+`evaluate_aksharantar` and `evaluate`. Measured 2026-09-06 on `data/akshar.model`
+at default settings.
+
+| Split | top-1 | top-5 |
+| :--- | ---: | ---: |
+| `AK-Freq` (native words, n=2,108) | 81.83% | 92.22% |
+| `AK-NEI` (named entities, n=1,176) | 47.5% | 69.6% |
+| `AK-NEF` (named entities, n=817) | 31.2% | 53.0% |
+| All 4,101 cases | 62.0% | 78.0% |
+
+Character error rate on `AK-Freq` top-1 is 3.90%; MRR over all cases is 0.690.
+For reference, IndicXlit (an ~11M-parameter transformer) reports 80.25% top-1 on
+the native split and 52.67% on named entities — so the native figure here is
+comparable and the named-entity figure is well behind.
+
+Query latency is **3.2–3.6 ms** at k=5–10 with beam 64, and cold start is ~2.4 s.
+Neither is sub-millisecond; see `docs/plans/2026-09-06-repair-and-path-to-90.md`
+for what stands between the current numbers and that target.
 
 ## Model profiles
 
-| Profile | File | Size | Brotli | Aksharantar top-1 / top-5 |
-| :--- | :--- | ---: | ---: | ---: |
-| Desktop / IBus | `data/akshar.model` | 30.59 MB | — | 82.02% / 92.17% |
-| Browser | `data/akshar_wasm.model` | 8.91 MB | **4.92 MB** | 81.07% / 92.22% |
+| Profile | File | Size | Brotli |
+| :--- | :--- | ---: | ---: |
+| Desktop / IBus | `data/akshar.model` | 11.37 MB | 6.72 MB |
+| Browser | `data/akshar_wasm.model` | 8.91 MB | 4.94 MB |
 
-Build the browser model with `make web-model`; `TRIGRAM_THRESHOLD` trades size
-against accuracy along a measured curve (see `docs/WASM.md`).
+The browser profile's accuracy has not been re-measured since the 2026-09-06
+engine changes; the desktop figures above should not be assumed to carry over.
+Build it with `make web-model`; `TRIGRAM_THRESHOLD` trades size against accuracy
+along a measured curve (see `docs/WASM.md`).
 
 ## Architectural Overview
 
@@ -151,7 +177,7 @@ with a clean learning history.
 
 ## WASM / Browser (any website, any `<input>`)
 
-The engine also compiles to **WebAssembly** for use on any website — no server, fully offline, ~3 ms per keystroke.
+The engine also compiles to **WebAssembly** for use on any website — no server, fully offline. Browser latency has not been re-measured since 2026-09-06; the last figure was ~3–7 ms per `getSuggestions()` (see `docs/WASM.md`).
 
 ```html
 <input data-akshar placeholder="type: namaste" />

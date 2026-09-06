@@ -75,11 +75,6 @@ struct BeamState {
     path: Option<u32>,  // index of the last cons cell in the path arena
 }
 
-/// Beam dedup key: position, last two aksharas, and the path hash.
-type BeamKey = (usize, Option<u32>, Option<u32>, u64);
-/// Best (score, emit, lm, path) kept per dedup key.
-type BeamBest = (f64, f64, f64, Option<u32>);
-
 /// One cell of a persistent (immutable) path in the arena.
 struct PathCell {
     parent: Option<u32>,
@@ -246,37 +241,15 @@ impl ModelDecoder {
                 }
             }
 
-            // Dedup beam states by (pos, prev2, prev, path-hash) keeping the
-            // best score.
-            let mut best_by_key: FxHashMap<BeamKey, BeamBest> = FxHashMap::default();
-            for cand in next {
-                best_by_key
-                    .entry((cand.pos, cand.prev2, cand.prev, cand.phash))
-                    .and_modify(|best| {
-                        if cand.score < best.0 {
-                            *best = (cand.score, cand.emit, cand.lm, cand.path);
-                        }
-                    })
-                    .or_insert((cand.score, cand.emit, cand.lm, cand.path));
-            }
-            let mut deduped: Vec<BeamState> = best_by_key
-                .into_iter()
-                .map(
-                    |((pos, prev2, prev, phash), (score, emit, lm, path))| BeamState {
-                        pos,
-                        prev,
-                        prev2,
-                        score,
-                        emit,
-                        lm,
-                        phash,
-                        path,
-                    },
-                )
-                .collect();
-            deduped.sort_by(|a, b| a.score.total_cmp(&b.score));
-            deduped.truncate(self.config.beam_width);
-            beam = deduped;
+            // The path hash alone determines (pos, prev2, prev) -- they are all
+            // functions of the akshara sequence -- so keying a merge map on
+            // (pos, prev2, prev, phash) could only ever merge on a hash
+            // collision.  It built and tore down a hash map every step to do
+            // nothing.  Distinct paths are deliberately kept separate here: the
+            // decoder extracts k-best *paths*, not the 1-best path per state.
+            next.sort_by(|a, b| a.score.total_cmp(&b.score));
+            next.truncate(self.config.beam_width);
+            beam = next;
         }
 
         let mut results: Vec<DecodedCandidate> = seen

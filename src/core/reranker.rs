@@ -30,6 +30,25 @@ use crate::core::reranker_weights::{
 };
 use std::collections::HashMap;
 
+/// How many candidates get full dense+sparse feature extraction.
+///
+/// The remainder keep their heuristic ordering below the scored block.  50 (the
+/// decode depth) disables the cascade.
+const DEFAULT_RERANK_FULL_DEPTH: usize = 24;
+
+fn rerank_full_depth() -> usize {
+    #[cfg(target_arch = "wasm32")]
+    {
+        return DEFAULT_RERANK_FULL_DEPTH;
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    std::env::var("AKSHAR_RERANK_DEPTH")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|&v| v > 0 && v <= 512)
+        .unwrap_or(DEFAULT_RERANK_FULL_DEPTH)
+}
+
 pub const MATRAS: [char; 10] = [
     '\u{093E}', // ा
     '\u{093F}', // ि
@@ -207,6 +226,54 @@ pub struct RerankerData {
     pub ranks: FreqRanks,
 }
 
+/// Dense-feature standardisation statistics.
+///
+/// The reranker scores `sum_k W_DENSE[k] * (x_k - mean_k) / std_k`.  The weights
+/// were fitted on standardised features, so the means and stds must describe the
+/// distribution the *current* model produces.  When they are stale — as the
+/// compiled-in constants become the moment the EM/LM is retrained — the same
+/// weights are applied to differently-scaled inputs and the dense model
+/// decalibrates.  A v5+ container carries its own; older ones fall back.
+#[derive(Debug, Clone, Copy)]
+pub struct DenseNorm<'a> {
+    pub mean: &'a [f64],
+    pub std: &'a [f64],
+}
+
+impl DenseNorm<'static> {
+    /// The compiled-in constants, for containers that carry no statistics.
+    pub const fn compiled_in() -> Self {
+        Self {
+            mean: &MEAN_DENSE,
+            std: &STD_DENSE,
+        }
+    }
+}
+
+impl<'a> DenseNorm<'a> {
+    /// Use the model's own statistics when it has them, else the constants.
+    pub fn from_model(mean: &'a [f64], std: &'a [f64]) -> Self {
+        if mean.len() == DENSE_DIM && std.len() == DENSE_DIM {
+            Self { mean, std }
+        } else {
+            Self {
+                mean: &MEAN_DENSE,
+                std: &STD_DENSE,
+            }
+        }
+    }
+
+    #[inline]
+    fn z(&self, k: usize, x: f64) -> f64 {
+        let sd = self.std[k];
+        if sd.abs() < 1e-12 {
+            0.0
+        } else {
+            (x - self.mean[k]) / sd
+        }
+    }
+}
+
 impl RerankerData {
     pub fn from_bin_bytes(bytes: &[u8]) -> Option<Self> {
         let freq: HashMap<String, u32> = bincode::deserialize(bytes).ok()?;
@@ -307,6 +374,28 @@ pub fn rerank_with_table(
     custom_sparse_table: Option<&[i8]>,
     custom_sparse_scale: Option<f64>,
 ) -> Vec<(String, f64)> {
+    rerank_with_norm(
+        roman,
+        candidates,
+        freq,
+        ranks,
+        custom_sparse_table,
+        custom_sparse_scale,
+        DenseNorm::compiled_in(),
+    )
+}
+
+/// As `rerank_with_table`, with explicit dense-feature normalisation statistics.
+#[allow(clippy::too_many_arguments)]
+pub fn rerank_with_norm(
+    roman: &str,
+    candidates: &[DecodedCandidate],
+    freq: &HashMap<String, u32>,
+    ranks: &FreqRanks,
+    custom_sparse_table: Option<&[i8]>,
+    custom_sparse_scale: Option<f64>,
+    norm: DenseNorm<'_>,
+) -> Vec<(String, f64)> {
     if candidates.is_empty() {
         return vec![];
     }
@@ -317,14 +406,29 @@ pub fn rerank_with_table(
     let mut scores: Vec<f64> = Vec::with_capacity(n);
     let mut heur_std: Vec<f64> = Vec::with_capacity(n);
 
+    // Cascade: full feature extraction (akshara segmentation, matra scans,
+    // sparse hashing) costs far more than the heuristic, and candidates the
+    // heuristic already ranks far down never reach the top of the final list.
+    // Score only the most promising `RERANK_FULL_DEPTH` in full and let the
+    // rest keep their heuristic ordering, offset below the scored block so the
+    // two halves cannot interleave.
+    let full_depth = rerank_full_depth().min(n);
+    let mut worst_scored = f64::INFINITY;
+
     for (i, c) in order.iter().enumerate() {
+        if heur_rank[i] >= full_depth {
+            // Not in the cascade: placeholder, filled in after the scored pass.
+            scores.push(f64::NAN);
+            heur_std.push(norm.z(4, heur[i]));
+            continue;
+        }
         let dense = extract_dense_features(c, i, heur[i], heur_rank[i], roman, freq, ranks);
         let aks = akshara::segment(&c.dev);
         let sparse = extract_sparse_features(&c.dev, roman, c.akshara_count, &aks);
 
         let mut s = 0.0f64;
         for k in 0..DENSE_DIM {
-            s += W_DENSE[k] * ((dense[k] - MEAN_DENSE[k]) / STD_DENSE[k]);
+            s += W_DENSE[k] * norm.z(k, dense[k]);
         }
         for &h in &sparse {
             let (b, scale) = match custom_sparse_table {
@@ -338,8 +442,32 @@ pub fn rerank_with_table(
             };
             s += (b as f64) * scale;
         }
+        worst_scored = worst_scored.min(s);
         scores.push(s);
-        heur_std.push((heur[i] - MEAN_DENSE[4]) / STD_DENSE[4]);
+        heur_std.push(norm.z(4, heur[i]));
+    }
+
+    // Place unscored candidates below every scored one, ordered by heuristic
+    // rank, so the cascade only ever affects the tail of the list.
+    //
+    // Note: these synthetic scores do participate in the GAMMA z-blend below,
+    // which shifts the score vector's mean and spread relative to scoring every
+    // candidate.  The ordering among *scored* candidates survives (z-scoring is
+    // affine), but the blend weight against the heuristic moves slightly with
+    // the scored/unscored ratio.  Measured on the 2,108-case AK-Freq split:
+    // depth 24 -> 81.83/92.22, depth 50 (no cascade) -> 81.69/92.22, depth 12
+    // -> 81.78/92.41, depth 6 -> 81.31/91.98.  The effect is within noise down
+    // to depth 12; below that the cascade starts dropping real candidates.
+    if worst_scored.is_finite() {
+        for (i, sc) in scores.iter_mut().enumerate() {
+            if sc.is_nan() {
+                *sc = worst_scored - 1.0 - (heur_rank[i] as f64) * 1e-6;
+            }
+        }
+    } else {
+        for (i, sc) in scores.iter_mut().enumerate() {
+            *sc = -(heur_rank[i] as f64);
+        }
     }
 
     if GAMMA >= 1.0 {

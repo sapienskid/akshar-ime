@@ -2,15 +2,15 @@
 
 ## 1. System Overview & Engineering Principles
 
-Akshar Devanagari IME is an intelligent, high-performance input method engine for the Devanagari script (specifically optimized for Nepali and Hindi orthography). It achieves **state-of-the-art transliteration accuracy (82.02% top-1, 92.17% top-5 on the desktop profile)** on the standard AI4Bharat Aksharantar test benchmark, outperforming neural transliteration baselines (such as IndicXlit at 80.25% top-1) while requiring **zero neural network runtimes**, in a browser bundle of 4.92 MB compressed.
+Akshar Devanagari IME is an intelligent, high-performance input method engine for the Devanagari script (specifically optimized for Nepali and Hindi orthography). On the AI4Bharat Aksharantar Nepali test benchmark it measures **81.83% top-1 / 92.22% top-5 on native words** and **62.0% / 78.0% over all 4,101 cases** (desktop profile, 2026-09-06), with no neural network at runtime and a 4.94 MB Brotli browser bundle. IndicXlit, an ~11M-parameter transformer, reports 80.25% top-1 on the same native split and 52.67% on named entities — comparable on native words, ahead on named entities (where this engine measures 31.2-47.5%).
 
 ### Core Architectural Principles:
 1. **Classical Statistical Transduction over Neural Dependencies:**
    All inference relies on exact shortest-path dynamic programming (Viterbi beam search in the tropical semiring), n-gram language models with Kneser-Ney smoothing, and a log-linear discriminative reranker with hash-table lexicalization. No PyTorch, ONNX, or C++ neural runtimes are needed.
 2. **Strict WebAssembly Compatibility & Memory Budget:**
-   The entire engine compiles to native Linux C-ABI binaries and WebAssembly (`wasm32-unknown-unknown`). The browser model is **4.92 MB Brotli**, with memory consumption around $\approx 25$ MB on browser runtimes and $\approx 40$ MB on native systems.
+   The entire engine compiles to native Linux C-ABI binaries and WebAssembly (`wasm32-unknown-unknown`). The browser model is **4.94 MB Brotli** (8.91 MB raw); the desktop container is 11.37 MB (6.72 MB Brotli). Memory consumption was last measured at $\approx 25$ MB on browser runtimes and $\approx 40$ MB on native systems.
 3. **Low Keystroke Latency:**
-   A keystroke is processed in $2.6 - 4.1$ ms at $k=5$ on standard consumer CPUs — fast enough to feel immediate while typing, with no background thread lag.
+   A keystroke is processed in $3.2 - 3.6$ ms at $k=5-10$ on a desktop CPU (`evaluate`, beam 64, 2026-09-06), with cold start at $\approx 2.4$ s. This is fast enough not to lag typing, but it is not sub-millisecond.
 4. **Local On-Device Adaptive Learning:**
    User selections update a local, persistent prefix trie and frequency table without any telemetry or cloud round-trips.
 
@@ -129,11 +129,16 @@ sequenceDiagram
 
 4. **Multi-Source Evidence Fusion:**
    - Converts the reranker log-score into an unsigned 64-bit integer scale ($0 \dots 800,000$).
-   - Injects contextual bonuses:
-     - **Corpus Bigrams ($+40,000$ per ln unit):** Boosts candidates that form valid word bigrams with the previously committed word.
-     - **User-Confirmed Words ($+500,000$ base):** User-confirmed words from previous sessions immediately outrank unseen transliterations.
-     - **SymSpell Fuzzy Search ($+50,000$ base):** Tolerates roman typing mistakes within Levenshtein distance 2.
+   - Injects contextual bonuses, taking the maximum evidence across sources:
+     - **User-Confirmed Words ($900,000$ base):** words the user has confirmed before outrank unseen transliterations.
+     - **SymSpell Fuzzy Search ($50,000$ base, $-12,000$ per edit):** tolerates roman typing mistakes within Levenshtein distance 2, over the user's *learned* variants only. Matches are distance-verified before scoring.
+     - **Corpus lexicon ($5,000$ for a corpus-only word):** exact roman matches from the mined lexicon.
    - Deduplicates across all candidate generators and returns the top-$K$ suggestions to the UI.
+
+   Two sources that appeared in earlier revisions of this document are gone:
+   corpus word-bigrams (removed in `UnifiedModel` v4 — 19.5 MB for +0.16pp) and
+   the corpus-wide SymSpell path (removed 2026-09-06; it scored above the decoder
+   band and cost 30.8pp of AK-Freq top-1 while contributing no measured recall).
 
 ---
 
@@ -200,7 +205,7 @@ tables, vocabulary and chunk list are re-encoded on save by `core::codec`.
 
 | Component | Desktop | Browser | Algorithmic Complexity |
 | :--- | ---: | ---: | :--- |
-| **Unified Container (`akshar.model`)** | 30.59 MB | 8.91 MB (**4.92 MB** Brotli) | Single read, version-dispatched |
+| **Unified Container (`akshar.model`)** | 11.37 MB (6.72 MB Brotli) | 8.91 MB (**4.94 MB** Brotli) | Single read, version-dispatched |
 | Syllable trigram LM | 5.49 MB | 3.94 MB (entropy-pruned) | $O(M \cdot B \cdot L)$ decode |
 | Vocabulary (front-coded akshara ids) | 2.41 MB | 2.41 MB | $O(M \cdot \Sigma)$ prefix walk |
 | Syllable bigram LM + emissions | 1.54 MB | 1.54 MB | binary search per row |
@@ -209,8 +214,10 @@ tables, vocabulary and chunk list are re-encoded on save by `core::codec`.
 | Word bigram context layer | 19.54 MB | omitted | $O(\text{deg})$ scan |
 | SymSpell & user trie (`user_dictionary.bin`) | $\approx 50$ KB | localStorage | $O(1)$ hash lookup |
 
-**Measured latency** is $2.6 - 4.1$ ms per query at $k=5$ on a desktop CPU, not
-the sub-millisecond figure previously claimed here.
+**Measured latency** is $3.2 - 3.6$ ms per query at $k=5-10$ on a desktop CPU
+(2026-09-06), not the sub-millisecond figure previously claimed here. The
+dominant cost is per-candidate reranker feature extraction; see
+`docs/plans/2026-09-06-repair-and-path-to-90.md` §5.
 
 **Runtime memory is not the same as disk footprint.** The container is decoded
 into the runtime layout on load — `Vec<Vec<(u32, f32)>>` n-gram tables and a

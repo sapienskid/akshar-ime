@@ -223,10 +223,14 @@ $$
 $$
 Where $\beta = 40,000.0$ (calibrated via `evaluate_context`).
 
-### Binary Format (`data/word_bigrams.bin`):
-- Compressed mapping: `HashMap<String, Vec<(String, u32)>>`.
-- Total size: 41 MB containing 1.25M bigram pairs over 102,534 context words.
-- Successor lists are sorted descending by frequency for $O(\log \text{degree})$ binary search.
+### Status: not shipped
+
+The corpus word-bigram table described above was removed in `UnifiedModel` v4.
+It cost 19.5 MB of the container for +0.16pp and is no longer built, packed or
+loaded; `data/word_bigrams.bin` is not produced by the training pipeline.
+Phrase-level context now comes from user-learned bigrams only
+(`src/core/context.rs`). The formulation is kept here because the same additive
+form is used for the user-learned counts.
 
 ---
 

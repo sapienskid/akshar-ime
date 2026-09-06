@@ -33,7 +33,6 @@
 
 use akshar_ime::ImeEngine;
 use akshar_ime::core::decoder::{DecoderConfig, ModelDecoder};
-use akshar_ime::core::translit_model::TranslitModel;
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
@@ -62,13 +61,15 @@ fn main() {
     let mut test_path = "data/aksharantar/test_devanagari.jsonl".to_string();
     let mut train_path = "data/aksharantar/train_devanagari.jsonl".to_string();
     let mut valid_path = "data/aksharantar/valid_devanagari.jsonl".to_string();
+    let mut model_path = "data/akshar.model".to_string();
     let mut beam = 256usize;
     let mut lm_weight = 0.85f64;
     let mut vocab_weight = 0.75f64;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
-            "--test" => test_path = args.next().expect("value"),
+            "--test" | "--dataset" => test_path = args.next().expect("value"),
+            "--model" => model_path = args.next().expect("value"),
             "--train" => train_path = args.next().expect("value"),
             "--valid" => valid_path = args.next().expect("value"),
             "--beam" => beam = args.next().expect("value").parse().expect("--beam <n>"),
@@ -109,18 +110,17 @@ fn main() {
 
     // Corpus word frequencies: the prior used both for decoder rescoring and
     // for the collision bound.
-    let vocab: HashMap<String, u32> = match std::fs::read("data/word_freq_text.bin") {
-        Ok(bytes) => bincode::deserialize(&bytes).expect("deserialize vocab"),
-        Err(e) => {
-            eprintln!("WARNING: no word_freq_text.bin ({e}); frequency prior disabled");
-            HashMap::new()
-        }
-    };
-    eprintln!("vocab: {} words", vocab.len());
+    // Both the vocabulary and the transliteration model come from the unified
+    // container.  The loose `word_freq_text.bin` / `translit_model.bin` files
+    // this used to read are no longer produced by the training pipeline.
+    let unified = akshar_ime::core::unified::UnifiedModel::load(Path::new(&model_path))
+        .unwrap_or_else(|e| panic!("load unified model {model_path}: {e}"));
+    let vocab: HashMap<String, u32> = unified.vocab_freq.clone();
+    eprintln!("model: {model_path} ({} vocab words)", vocab.len());
 
     collision_bound(&cases, &vocab);
 
-    let model = TranslitModel::load(Path::new("data/translit_model.bin")).expect("load model");
+    let model = unified.translit;
     let decoder = ModelDecoder::with_config(
         model,
         DecoderConfig {

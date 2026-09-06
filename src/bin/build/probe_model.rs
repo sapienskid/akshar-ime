@@ -10,7 +10,7 @@ use std::path::Path;
 
 fn main() {
     let mut word: Option<String> = None;
-    let mut model_path = "data/translit_model.bin".to_string();
+    let mut model_path = "data/akshar.model".to_string();
     let mut inspect_mode = false;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {

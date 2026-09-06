@@ -24,9 +24,11 @@ pub const UNIFIED_MAGIC: [u8; 4] = *b"AKSH";
 ///   v3  n-gram tables stored compactly: CSR + delta varints + an 8-bit
 ///       codebook per table, via `core::codec`
 ///   v4  removed word-bigram table (19.5 MB for +0.16pp — not shipped)
+///   v5  carries the reranker's dense-feature normalisation statistics
 ///
-/// v1-v3 still load (bigrams dropped). v4 is what `save` writes.
-pub const UNIFIED_VERSION: u32 = 4;
+/// v1-v4 still load (bigrams dropped; v4 falls back to the compiled-in
+/// normalisation constants). v5 is what `save` writes.
+pub const UNIFIED_VERSION: u32 = 5;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct UnifiedModel {
@@ -38,6 +40,18 @@ pub struct UnifiedModel {
     #[serde(default)]
     pub sparse_scale: f64,
     pub vocab_freq: HashMap<String, u32>,
+    /// Per-feature mean/std used to standardise the reranker's dense features.
+    ///
+    /// These MUST travel with the model.  They were previously compiled-in
+    /// constants (`MEAN_DENSE`/`STD_DENSE`) that no training stage recomputed,
+    /// so retraining the EM/LM shifted the `emit` and `lm` feature
+    /// distributions out from under weights fitted on the old ones, silently
+    /// decalibrating all 29 dense features.  Empty means "use the compiled-in
+    /// constants" (v1-v4 containers).
+    #[serde(default)]
+    pub dense_mean: Vec<f64>,
+    #[serde(default)]
+    pub dense_std: Vec<f64>,
 }
 
 /// The v1 container layout, kept only so existing `akshar.model` files still
@@ -64,6 +78,8 @@ impl From<UnifiedModelV1> for UnifiedModel {
             sparse_reranker_table: v1.sparse_reranker_table,
             sparse_scale: crate::core::reranker_weights::SPARSE_SCALE,
             vocab_freq: v1.vocab_freq,
+            dense_mean: Vec::new(),
+            dense_std: Vec::new(),
         }
     }
 }
@@ -90,6 +106,8 @@ impl From<UnifiedModelV2> for UnifiedModel {
             sparse_reranker_table: v2.sparse_reranker_table,
             sparse_scale: v2.sparse_scale,
             vocab_freq: v2.vocab_freq,
+            dense_mean: Vec::new(),
+            dense_std: Vec::new(),
         }
     }
 }
@@ -141,6 +159,10 @@ impl UnifiedModel {
             sparse_reranker_table,
             sparse_scale,
             vocab_freq,
+            // Callers that build a container directly get the compiled-in
+            // normalisation constants; `train` overwrites these.
+            dense_mean: Vec::new(),
+            dense_std: Vec::new(),
         }
     }
 
@@ -153,6 +175,7 @@ impl UnifiedModel {
         let version = peek_version(bytes)
             .ok_or("Invalid magic header: not an Akshar unified model")?;
         let mut model: Self = match version {
+            5 => bincode::deserialize::<UnifiedModelV5>(bytes)?.try_into()?,
             4 => bincode::deserialize::<UnifiedModelV4>(bytes)?.try_into()?,
             3 => {
                 let raw: UnifiedModelV3Raw = bincode::deserialize(bytes)?;
@@ -170,6 +193,7 @@ impl UnifiedModel {
                     trigrams: codec::decode_adjacency(&raw.trigrams_enc)?,
                     trigram_backoff: codec::decode_weights(&raw.trigram_backoff_enc)?,
                     trigram_index: Default::default(),
+                    akshara_index: Default::default(),
                 };
                 let vocab_freq = codec::decode_vocab(&raw.vocab_enc, &translit.aksharas)?;
                 Self {
@@ -179,6 +203,8 @@ impl UnifiedModel {
                     sparse_reranker_table: raw.sparse_reranker_table,
                     sparse_scale: raw.sparse_scale,
                     vocab_freq,
+                    dense_mean: Vec::new(),
+                    dense_std: Vec::new(),
                 }
             }
             2 => bincode::deserialize::<UnifiedModelV2>(bytes)?.into(),
@@ -195,12 +221,12 @@ impl UnifiedModel {
     pub fn save(&self, path: &Path) -> Result<(), Box<dyn std::error::Error>> {
         let f = File::create(path)?;
         let mut writer = BufWriter::new(f);
-        bincode::serialize_into(&mut writer, &UnifiedModelV4::from(self))?;
+        bincode::serialize_into(&mut writer, &UnifiedModelV5::from(self))?;
         Ok(())
     }
 
     pub fn to_bytes(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-        Ok(bincode::serialize(&UnifiedModelV4::from(self))?)
+        Ok(bincode::serialize(&UnifiedModelV5::from(self))?)
     }
 
     pub fn validate(&self) -> bool {
@@ -263,6 +289,38 @@ impl From<&UnifiedModel> for UnifiedModelV4 {
     }
 }
 
+/// The v5 layout: every v4 field, plus the reranker's dense-feature
+/// normalisation statistics, which must be regenerated whenever the EM/LM
+/// changes and therefore belong in the model rather than in compiled-in
+/// constants.
+#[derive(Serialize, Deserialize)]
+struct UnifiedModelV5 {
+    v4: UnifiedModelV4,
+    dense_mean: Vec<f64>,
+    dense_std: Vec<f64>,
+}
+
+impl From<&UnifiedModel> for UnifiedModelV5 {
+    fn from(m: &UnifiedModel) -> Self {
+        Self {
+            v4: UnifiedModelV4::from(m),
+            dense_mean: m.dense_mean.clone(),
+            dense_std: m.dense_std.clone(),
+        }
+    }
+}
+
+impl TryFrom<UnifiedModelV5> for UnifiedModel {
+    type Error = Box<dyn std::error::Error>;
+
+    fn try_from(v: UnifiedModelV5) -> Result<Self, Self::Error> {
+        let mut m = UnifiedModel::try_from(v.v4)?;
+        m.dense_mean = v.dense_mean;
+        m.dense_std = v.dense_std;
+        Ok(m)
+    }
+}
+
 impl TryFrom<UnifiedModelV4> for UnifiedModel {
     type Error = Box<dyn std::error::Error>;
 
@@ -280,6 +338,7 @@ impl TryFrom<UnifiedModelV4> for UnifiedModel {
             trigrams: codec::decode_adjacency(&v.trigrams_enc)?,
             trigram_backoff: codec::decode_weights(&v.trigram_backoff_enc)?,
             trigram_index: Default::default(),
+            akshara_index: Default::default(),
         };
         let vocab_freq = codec::decode_vocab(&v.vocab_enc, &translit.aksharas)?;
         Ok(Self {
@@ -289,6 +348,8 @@ impl TryFrom<UnifiedModelV4> for UnifiedModel {
             sparse_reranker_table: v.sparse_reranker_table,
             sparse_scale: v.sparse_scale,
             vocab_freq,
+            dense_mean: Vec::new(),
+            dense_std: Vec::new(),
         })
     }
 }

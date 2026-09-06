@@ -170,28 +170,49 @@ impl Trainer {
 
         // LM counts (independent of roman quality), scaled by weight and
         // gated by the phonetic/LM split flag.
-        let lmw = if self.count_lm { weight as u64 } else { 0 };
+        // Counts are integer-weighted; round rather than truncate so a weight
+        // below 1 cannot silently become 0.
+        let lmw = if self.count_lm {
+            weight.round().max(0.0) as u64
+        } else {
+            0
+        };
         for &a in &aks {
             self.unigram_counts[a as usize] += lmw;
         }
         self.word_initial[aks[0] as usize] += lmw;
         self.total_words += lmw;
+        // Continuation counts are TYPE counts: they must increment exactly once,
+        // on the first time an n-gram is seen.  Keying that off `*e == 0` breaks
+        // whenever the added weight is 0 (count_lm disabled, or a sub-1 weight
+        // rounding down): every later occurrence re-counts the same type and
+        // inflates `continuation` / `distinct_bigrams` without bound, corrupting
+        // the Kneser-Ney continuation distribution.  Use Entry::Vacant, which
+        // means "first insertion" regardless of the weight.
         for w in aks.windows(2) {
             let (b, c) = (w[0], w[1]);
-            let e = self.bigram_counts.entry((b, c)).or_insert(0);
-            if *e == 0 {
-                self.continuation[c as usize] += 1;
-                self.distinct_bigrams += 1;
+            match self.bigram_counts.entry((b, c)) {
+                std::collections::hash_map::Entry::Vacant(v) => {
+                    v.insert(lmw);
+                    self.continuation[c as usize] += 1;
+                    self.distinct_bigrams += 1;
+                }
+                std::collections::hash_map::Entry::Occupied(mut o) => {
+                    *o.get_mut() += lmw;
+                }
             }
-            *e += lmw;
         }
         for w in aks.windows(3) {
             let (a, b, c) = (w[0], w[1], w[2]);
-            let e = self.trigram_counts.entry((a, b, c)).or_insert(0);
-            if *e == 0 {
-                *self.trigram_successors.entry((a, b)).or_insert(0) += 1;
+            match self.trigram_counts.entry((a, b, c)) {
+                std::collections::hash_map::Entry::Vacant(v) => {
+                    v.insert(lmw);
+                    *self.trigram_successors.entry((a, b)).or_insert(0) += 1;
+                }
+                std::collections::hash_map::Entry::Occupied(mut o) => {
+                    *o.get_mut() += lmw;
+                }
             }
-            *e += lmw;
         }
 
         // EM pairs: clean lowercase a-z roman, bounded lengths.
@@ -336,7 +357,16 @@ impl Trainer {
         }
     }
 
+    /// Set `AKSHAR_KN_FIXED_DISCOUNT=1` to fall back to a single absolute
+    /// discount, for measuring what modified Kneser-Ney actually buys.
+    fn use_fixed_discount() -> bool {
+        std::env::var("AKSHAR_KN_FIXED_DISCOUNT").is_ok_and(|v| v == "1")
+    }
+
     fn modified_discounts(counts: &HashMap<(u32, u32), u64>, counts_tri: Option<&HashMap<(u32, u32, u32), u64>>) -> (f64, f64, f64) {
+        if Self::use_fixed_discount() {
+            return (0.75, 0.75, 0.75);
+        }
         // Chen-Goodman modified Kneser-Ney: 3 discounts from n1..n4
         let mut n = [0u64; 5];
         if let Some(tri) = counts_tri {
@@ -352,13 +382,22 @@ impl Trainer {
                 }
             }
         }
-        if n[1] == 0 || n[2] == 0 {
+        // Chen & Goodman (1999) constrain each discount to 0 <= D_i <= i.  The
+        // upper bounds are 1/2/3, NOT a common ~0.9: clamping D2 and D3 to 0.9
+        // pins both at the ceiling on any real corpus (typical D2 ~ 1.0-1.4,
+        // D3 ~ 1.5-2.5), which collapses modified Kneser-Ney back into
+        // single-discount absolute discounting at d ~ 0.9 -- worse than the
+        // fixed 0.75 it replaced.
+        //
+        // n[3] == 0 makes D3 degenerate the same way n[1]/n[2] == 0 does, so it
+        // belongs in the same guard.
+        if n[1] == 0 || n[2] == 0 || n[3] == 0 {
             return (0.5, 0.75, 0.95);
         }
         let y = n[1] as f64 / (n[1] as f64 + 2.0 * n[2] as f64);
-        let d1 = (1.0 - 2.0 * y * n[2] as f64 / n[1].max(1) as f64).clamp(0.1, 0.9);
-        let d2 = (2.0 - 3.0 * y * n[3] as f64 / n[2].max(1) as f64).clamp(0.1, 0.9);
-        let d3 = (3.0 - 4.0 * y * n[4] as f64 / n[3].max(1) as f64).clamp(0.1, 0.95);
+        let d1 = (1.0 - 2.0 * y * n[2] as f64 / n[1].max(1) as f64).clamp(0.0, 1.0);
+        let d2 = (2.0 - 3.0 * y * n[3] as f64 / n[2].max(1) as f64).clamp(0.0, 2.0);
+        let d3 = (3.0 - 4.0 * y * n[4] as f64 / n[3].max(1) as f64).clamp(0.0, 3.0);
         (d1, d2, d3)
     }
 
@@ -387,6 +426,7 @@ impl Trainer {
         }
 
         let (d1_bi, d2_bi, d3_bi) = Self::modified_discounts(&self.bigram_counts, None);
+        eprintln!("  [lm] bigram discounts: d1={d1_bi:.4} d2={d2_bi:.4} d3={d3_bi:.4}");
         let mut bigrams = vec![Vec::new(); n];
         let mut backoff = vec![0.0f32; n];
         for a in 0..n {
@@ -436,6 +476,7 @@ impl Trainer {
         let mut trigrams = Vec::with_capacity(ctxs.len());
         let mut trigram_backoff = Vec::with_capacity(ctxs.len());
         let (d1_tri, d2_tri, d3_tri) = Self::modified_discounts(&HashMap::new(), Some(&self.trigram_counts));
+        eprintln!("  [lm] trigram discounts: d1={d1_tri:.4} d2={d2_tri:.4} d3={d3_tri:.4}");
         for &(a, b) in &ctxs {
             let list = &by_ctx[&(a, b)];
             let c_ab = self.bigram_counts.get(&(a, b)).copied().unwrap_or(1) as f64;
@@ -545,6 +586,8 @@ fn e_step_chunk(
     let mut counts: Vec<HashMap<u32, f64>> = (0..n_aksharas).map(|_| HashMap::new()).collect();
     let mut f: Vec<Vec<f64>> = Vec::new();
     let mut b: Vec<Vec<f64>> = Vec::new();
+    // Per-column forward scale factors (see the scaled forward-backward below).
+    let mut scale: Vec<f64> = Vec::new();
 
     for pair in pairs {
         let m = pair.roman.len();
@@ -553,10 +596,16 @@ fn e_step_chunk(
             continue;
         }
 
-        // --- Forward pass. ---
+        // --- Forward pass (scaled). ---
+        // Each column is divided by its own max so the running product stays
+        // O(1); `scale[j]` records the factor.  Without this, a 10-akshara word
+        // with moderately flat emissions underflows any fixed floor and gets
+        // dropped from training entirely.
         f.clear();
         f.resize(n + 1, vec![0.0f64; m + 1]);
         f[0][0] = 1.0;
+        scale.clear();
+        scale.resize(n + 1, 1.0f64);
         for j in 1..=n {
             let em = &emission[pair.aks[j - 1] as usize];
             let prev = f[j - 1].clone();
@@ -572,17 +621,28 @@ fn e_step_chunk(
                 }
                 row[i] = acc;
             }
+            let c = row.iter().cloned().fold(0.0f64, f64::max);
+            if c > 0.0 && c.is_finite() {
+                for v in row.iter_mut() {
+                    *v /= c;
+                }
+                scale[j] = c;
+            }
             f[j] = row;
         }
         let z = f[n][m];
-        // Sub-normal z (model assigns near-zero total probability) makes
-        // inv_z explode and poisons every transition count with ~1e300 junk;
-        // skip such words entirely.
-        if z < 1e-12 || !z.is_finite() {
+        // Guard only against a genuinely degenerate word (the model assigns it
+        // no probability at all, or the arithmetic broke).  The columns are
+        // rescaled above, so `z` here is O(1) and no longer shrinks with word
+        // length: the old 1e-12 floor was ~296 orders of magnitude above the
+        // f64 subnormal limit and silently discarded every long or
+        // flat-emission word from training.
+        if z <= 0.0 || !z.is_finite() {
             continue;
         }
 
-        // --- Backward pass. ---
+        // --- Backward pass (scaled with the SAME factors as the forward pass,
+        //     so they telescope out of the posterior). ---
         b.clear();
         b.resize(n + 1, vec![0.0f64; m + 1]);
         b[n][m] = 1.0;
@@ -601,6 +661,12 @@ fn e_step_chunk(
                 }
                 row[i] = acc;
             }
+            let c = scale[j + 1];
+            if c > 0.0 && c.is_finite() {
+                for v in row.iter_mut() {
+                    *v /= c;
+                }
+            }
             b[j] = row;
         }
 
@@ -608,6 +674,9 @@ fn e_step_chunk(
         let inv_z = 1.0 / z;
         for (idx, &a) in pair.aks.iter().enumerate() {
             let j = idx + 1;
+            // Scaling correction: the forward/backward scale products cancel to
+            // a single 1/c_j for column j.
+            let inv_z = inv_z / scale[j];
             let em = &emission[a as usize];
             let counts_a = &mut counts[a as usize];
             for i in 1..=m {
@@ -687,9 +756,12 @@ fn pair_transitions(
             f[j] = row;
         }
         let z = f[n][m];
-        // Sub-normal z (model assigns near-zero total probability) makes
-        // inv_z explode and poisons every transition count with ~1e300 junk;
-        // skip such words entirely.
+        // Guard only against a genuinely degenerate word (the model assigns it
+        // no probability at all, or the arithmetic broke).  The columns are
+        // rescaled above, so `z` here is O(1) and no longer shrinks with word
+        // length: the old 1e-12 floor was ~296 orders of magnitude above the
+        // f64 subnormal limit and silently discarded every long or
+        // flat-emission word from training.
         if z < 1e-12 || !z.is_finite() {
             continue;
         }
@@ -1165,5 +1237,151 @@ mod tests {
             crate::core::translit_model::pack_chunk("ka")
         );
         assert_eq!(pack_chunk_bytes(b""), 0);
+    }
+}
+
+#[cfg(test)]
+mod scaling_tests {
+    use super::*;
+
+    /// The scaled forward-backward must produce the same posteriors as a naive
+    /// unscaled implementation.  Rescaling each forward column and dividing the
+    /// same factor out of the backward pass makes the scale products telescope,
+    /// leaving a single 1/c_j correction per column; if that correction is wrong
+    /// (or the passes use independent scales) the posteriors silently change.
+    fn unscaled_posteriors(
+        pair: &Pair,
+        emission: &[HashMap<u32, f64>],
+    ) -> Vec<HashMap<u32, f64>> {
+        let m = pair.roman.len();
+        let n = pair.aks.len();
+        let mut f = vec![vec![0.0f64; m + 1]; n + 1];
+        f[0][0] = 1.0;
+        for j in 1..=n {
+            let em = &emission[pair.aks[j - 1] as usize];
+            for i in 0..=m {
+                let mut acc = 0.0;
+                for l in 0..=MAX_CHUNK.min(i) {
+                    if let Some(&p) = em.get(&pack_chunk_bytes(&pair.roman[i - l..i])) {
+                        acc += f[j - 1][i - l] * p;
+                    }
+                }
+                f[j][i] = acc;
+            }
+        }
+        let z = f[n][m];
+        let mut b = vec![vec![0.0f64; m + 1]; n + 1];
+        b[n][m] = 1.0;
+        for j in (0..n).rev() {
+            let em = &emission[pair.aks[j] as usize];
+            for i in 0..=m {
+                let mut acc = 0.0;
+                for l in 0..=MAX_CHUNK.min(m - i) {
+                    if let Some(&p) = em.get(&pack_chunk_bytes(&pair.roman[i..i + l])) {
+                        acc += p * b[j + 1][i + l];
+                    }
+                }
+                b[j][i] = acc;
+            }
+        }
+        let mut out: Vec<HashMap<u32, f64>> = vec![HashMap::new(); emission.len()];
+        for (idx, &a) in pair.aks.iter().enumerate() {
+            let j = idx + 1;
+            let em = &emission[a as usize];
+            for i in 1..=m {
+                for l in 1..=MAX_CHUNK.min(i) {
+                    let key = pack_chunk_bytes(&pair.roman[i - l..i]);
+                    if let Some(&p) = em.get(&key) {
+                        let post = f[j - 1][i - l] * p * b[j][i] / z;
+                        if post > 0.0 {
+                            *out[a as usize].entry(key).or_insert(0.0) += post * pair.weight;
+                        }
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    fn toy_emissions() -> Vec<HashMap<u32, f64>> {
+        let mut a0 = HashMap::new();
+        a0.insert(pack_chunk("ka"), 0.6);
+        a0.insert(pack_chunk("k"), 0.4);
+        let mut a1 = HashMap::new();
+        a1.insert(pack_chunk("th"), 0.5);
+        a1.insert(pack_chunk("t"), 0.3);
+        a1.insert(pack_chunk("tha"), 0.2);
+        let mut a2 = HashMap::new();
+        a2.insert(pack_chunk("ma"), 0.7);
+        a2.insert(pack_chunk("m"), 0.3);
+        vec![a0, a1, a2]
+    }
+
+    #[test]
+    fn scaled_forward_backward_matches_unscaled() {
+        let emission = toy_emissions();
+        let pair = Pair {
+            roman: b"kathma".to_vec(),
+            aks: vec![0, 1, 2],
+            weight: 1.0,
+        };
+        let got = e_step_chunk(std::slice::from_ref(&pair), &emission, emission.len());
+        let want = unscaled_posteriors(&pair, &emission);
+        for a in 0..emission.len() {
+            for (k, v) in &want[a] {
+                let g = got[a].get(k).copied().unwrap_or(0.0);
+                assert!(
+                    (g - v).abs() < 1e-9,
+                    "akshara {a} chunk {k}: scaled {g} vs unscaled {v}"
+                );
+            }
+            assert_eq!(got[a].len(), want[a].len(), "chunk set differs for akshara {a}");
+        }
+    }
+
+    /// Posterior mass over all alignments of one akshara must sum to its weight:
+    /// every position of the word is explained by exactly one chunk per akshara.
+    #[test]
+    fn posteriors_sum_to_weight_per_akshara() {
+        let emission = toy_emissions();
+        let pair = Pair {
+            roman: b"kathma".to_vec(),
+            aks: vec![0, 1, 2],
+            weight: 1.0,
+        };
+        let got = e_step_chunk(std::slice::from_ref(&pair), &emission, emission.len());
+        for (a, counts) in got.iter().enumerate() {
+            let total: f64 = counts.values().sum();
+            assert!(
+                (total - 1.0).abs() < 1e-9,
+                "akshara {a} posterior mass {total}, expected 1.0"
+            );
+        }
+    }
+
+    /// A long word whose forward mass falls far below the old 1e-12 floor must
+    /// still contribute posteriors instead of being silently discarded.
+    #[test]
+    fn long_low_probability_word_is_not_dropped() {
+        // 12 aksharas each emitting at p = 0.05 gives z ~ 2.4e-16, well under
+        // the floor the unscaled implementation used.
+        let mut em = HashMap::new();
+        em.insert(pack_chunk("a"), 0.05);
+        let emission = vec![em];
+        let pair = Pair {
+            roman: b"aaaaaaaaaaaa".to_vec(),
+            aks: vec![0; 12],
+            weight: 1.0,
+        };
+        let got = e_step_chunk(std::slice::from_ref(&pair), &emission, 1);
+        let total: f64 = got[0].values().sum();
+        assert!(
+            total > 0.0,
+            "long low-probability word contributed no posterior mass"
+        );
+        assert!(
+            (total - 12.0).abs() < 1e-6,
+            "expected mass 12.0 (one per akshara), got {total}"
+        );
     }
 }

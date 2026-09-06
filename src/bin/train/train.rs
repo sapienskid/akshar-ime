@@ -11,6 +11,59 @@ use akshar_ime::core::reranker::{
     HASH_SIZE,
 };
 use akshar_ime::core::reranker_weights::{MEAN_DENSE, STD_DENSE, W_DENSE};
+
+/// Online mean/variance accumulator for the reranker's dense features.
+///
+/// `W_DENSE` was fitted on standardised features, so the standardisation must
+/// describe the distribution the model being trained actually produces.  The
+/// compiled-in `MEAN_DENSE`/`STD_DENSE` describe whichever model produced them,
+/// and no training stage ever refreshed them: retraining the EM/LM moves the
+/// `emit`/`lm` features out from under weights fitted on the old scale.  These
+/// statistics are written into the v5 container instead.
+#[derive(Clone)]
+struct DenseStats {
+    n: u64,
+    mean: Vec<f64>,
+    m2: Vec<f64>,
+}
+
+impl DenseStats {
+    fn new() -> Self {
+        Self {
+            n: 0,
+            mean: vec![0.0; DENSE_DIM],
+            m2: vec![0.0; DENSE_DIM],
+        }
+    }
+
+    /// Welford's online update, numerically stable over millions of samples.
+    fn push(&mut self, x: &[f64; DENSE_DIM]) {
+        self.n += 1;
+        let n = self.n as f64;
+        for (k, &xk) in x.iter().enumerate() {
+            let d = xk - self.mean[k];
+            self.mean[k] += d / n;
+            self.m2[k] += d * (xk - self.mean[k]);
+        }
+    }
+
+    /// (mean, std), with a floor so a constant feature cannot divide by zero.
+    fn finish(&self) -> (Vec<f64>, Vec<f64>) {
+        if self.n < 2 {
+            return (MEAN_DENSE.to_vec(), STD_DENSE.to_vec());
+        }
+        let n = self.n as f64;
+        let std = self
+            .m2
+            .iter()
+            .map(|v| {
+                let sd = (v / n).sqrt();
+                if sd < 1e-6 { 1.0 } else { sd }
+            })
+            .collect();
+        (self.mean.clone(), std)
+    }
+}
 use akshar_ime::core::unified::UnifiedModel;
 use akshar_ime::core::wordtrie::WordTrie;
 use akshar_ime::ImeEngine;
@@ -328,7 +381,14 @@ fn main() -> Result<()> {
     let use_chunked = num_train_pairs > 200_000;
     let mut sparse_table: Vec<f32> = vec![0.0f32; HASH_SIZE];
     let mut grad_sq: Vec<f32> = vec![0.0f32; HASH_SIZE];
-    let mut lr: f64 = 0.05;
+    const LR0: f64 = 0.05;
+    // Fraction of the initial learning rate remaining at the end of the run.
+    // AdaGrad already adapts per-slot, so this only needs to be a gentle global
+    // anneal -- the previous schedule decayed by ~1e-9 across a full run, which
+    // silently discarded most of the corpus.
+    const LR_FINAL_FRACTION: f64 = 0.1;
+    let mut lr: f64 = LR0;
+    let mut dense_stats = DenseStats::new();
 
     if use_chunked {
         let total_batches = num_train_pairs.div_ceil(BATCH_SIZE);
@@ -336,6 +396,9 @@ fn main() -> Result<()> {
             "  Chunked mode: {} batches of {} (memory bounded, decode once per batch, {} epochs per batch)",
             total_batches, BATCH_SIZE, epochs
         );
+        // One gentle decay per batch, sized so the final batch runs at
+        // LR_FINAL_FRACTION of the initial rate regardless of batch count.
+        let lr_decay_per_batch = LR_FINAL_FRACTION.powf(1.0 / total_batches.max(1) as f64);
         let mut global_samples: usize = 0;
         // Decode once per batch and train `epochs` passes over that batch before moving to next.
         // This is ~5x faster than re-decoding per global epoch (was 18h for 3.59M) and keeps
@@ -364,6 +427,7 @@ fn main() -> Result<()> {
                             let dense = extract_dense_features(
                                 c, idx, heur[idx], heur_rank[idx], roman, &vocab_freq, &ranks,
                             );
+                            dense_stats.push(&dense);
                             let mut score: f64 = 0.0;
                             for k in 0..DENSE_DIM {
                                 score += W_DENSE[k] * ((dense[k] - MEAN_DENSE[k]) / STD_DENSE[k]);
@@ -384,7 +448,7 @@ fn main() -> Result<()> {
             );
             // Train `epochs` passes over this batch before moving on (~5x less decode)
             let mut batch_loss: f64 = 0.0;
-            for ep in 1..=epochs {
+            for _ep in 1..=epochs {
                 for s in &samples {
                     let mut scores = s.base_scores.clone();
                     for (idx, sparse_feats) in s.sparse.iter().enumerate() {
@@ -409,11 +473,6 @@ fn main() -> Result<()> {
                         }
                     }
                 }
-                // small per-epoch decay inside batch (same as global: 0.8 per epoch, but
-                // reset per batch so overall decay across 36 batches ~= 0.8^4)
-                if ep < epochs {
-                    lr *= 0.8;
-                }
             }
             global_samples += samples.len() * epochs;
             batch_loss /= epochs as f64 * samples.len().max(1) as f64;
@@ -425,8 +484,7 @@ fn main() -> Result<()> {
                 samples.len(),
                 lr
             );
-            // decay across batches to mimic global epoch decay
-            lr *= 0.995;
+            lr *= lr_decay_per_batch;
         }
         println!(
             "  Chunked training done: {} samples processed in {:.2?}",
@@ -454,6 +512,7 @@ fn main() -> Result<()> {
                     let dense = extract_dense_features(
                         c, idx, heur[idx], heur_rank[idx], roman, &vocab_freq, &ranks,
                     );
+                    dense_stats.push(&dense);
                     let mut score: f64 = 0.0;
                     for k in 0..DENSE_DIM {
                         score += W_DENSE[k] * ((dense[k] - MEAN_DENSE[k]) / STD_DENSE[k]);
@@ -526,20 +585,42 @@ fn main() -> Result<()> {
     println!("\n[Phase 4/4] Packing Unified Model -> {} ...", out_path.display());
     let pack_t0 = Instant::now();
 
-    let max_sparse = sparse_table.iter().map(|w| w.abs()).fold(0.0f32, f32::max);
-    let sparse_scale = if max_sparse > 0.0 {
-        127.0 / max_sparse
+    // Set the quantization scale from a high percentile of the non-zero weights
+    // and clip the tail, rather than from the single largest weight.  One
+    // outlier setting the scale compresses every other weight's resolution --
+    // the shipped table had min -127 / max +42, i.e. one weight consuming the
+    // whole negative range while the rest of the distribution sat in a handful
+    // of levels.
+    let mut magnitudes: Vec<f32> = sparse_table
+        .iter()
+        .map(|w| w.abs())
+        .filter(|&w| w > 0.0)
+        .collect();
+    magnitudes.sort_by(f32::total_cmp);
+    let clip = if magnitudes.is_empty() {
+        0.0
     } else {
-        1.0
+        let idx = ((magnitudes.len() as f64 * 0.999) as usize).min(magnitudes.len() - 1);
+        magnitudes[idx]
     };
+    let sparse_scale = if clip > 0.0 { 127.0 / clip } else { 1.0 };
     let quantized_table: Vec<i8> = sparse_table
         .iter()
-        .map(|&w| (w * sparse_scale).round().clamp(-128.0, 127.0) as i8)
+        .map(|&w| (w * sparse_scale).round().clamp(-127.0, 127.0) as i8)
         .collect();
     let non_zero = quantized_table.iter().filter(|&&w| w != 0).count();
+    let saturated = quantized_table
+        .iter()
+        .filter(|&&w| w == 127 || w == -127)
+        .count();
     println!(
-        "Quantized sparse table: {} non-zero weights (scale: {:.4})",
-        non_zero, sparse_scale
+        "Quantized sparse table: {} non-zero of {} slots ({:.2}%), {} saturated, clip {:.5}, scale {:.4}",
+        non_zero,
+        quantized_table.len(),
+        non_zero as f64 / quantized_table.len() as f64 * 100.0,
+        saturated,
+        clip,
+        sparse_scale
     );
 
     println!("Pruning unreferenced aksharas and cleaning non-Nepali transitions...");
@@ -596,12 +677,19 @@ fn main() -> Result<()> {
         before_em, after_em
     );
 
-    let unified = UnifiedModel::new(
+    let (dense_mean, dense_std) = dense_stats.finish();
+    println!(
+        "Dense-feature statistics from {} candidate scorings (emit mean {:.3} std {:.3}, lm mean {:.3} std {:.3})",
+        dense_stats.n, dense_mean[0], dense_std[0], dense_mean[1], dense_std[1]
+    );
+    let mut unified = UnifiedModel::new(
         translit_model,
         quantized_table,
         1.0 / f64::from(sparse_scale),
         vocab_freq,
     );
+    unified.dense_mean = dense_mean;
+    unified.dense_std = dense_std;
     unified
         .save(&out_path)
         .map_err(|e| anyhow::anyhow!("save unified model: {e}"))?;

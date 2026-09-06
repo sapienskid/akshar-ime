@@ -1,6 +1,6 @@
 # Akshar IME — WASM / Browser Guide
 
-Use the Devanagari IME on **any website** via WebAssembly. The engine runs entirely in the browser (no server, offline-capable) and is ~3 ms per keystroke.
+Use the Devanagari IME on **any website** via WebAssembly. The engine runs entirely in the browser (no server, offline-capable). Browser latency was last measured at ~3–7 ms per keystroke; see the benchmark note below.
 
 ---
 
@@ -192,7 +192,7 @@ All computation is local:
 - Lazy-load: call `AksharIME.init()` on first focus, not on page load, to avoid blocking.
 - For offline/PWA, precache `*.wasm` + `*.bin` via Service Worker.
 
-**Benchmarks (browser, M1):** ~3–7 ms per `getSuggestions()` (beam 64), <1 ms for learned-word hits.
+**Benchmarks (browser, M1):** ~3–7 ms per `getSuggestions()` (beam 64), <1 ms for learned-word hits. Not re-measured since the 2026-09-06 engine changes; desktop latency at that date was 3.2–3.6 ms.
 
 ---
 

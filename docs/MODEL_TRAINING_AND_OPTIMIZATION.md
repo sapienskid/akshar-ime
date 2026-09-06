@@ -6,18 +6,42 @@ This document is the definitive technical reference for the model architecture, 
 
 ## 1. Executive Summary & Benchmark State
 
-Akshar Devanagari IME achieves **state-of-the-art transliteration accuracy** on the held-out AI4Bharat Aksharantar Nepali test split (4,101 cases), outperforming neural baselines (such as IndicXlit at 80.25% Top-1) while requiring **zero neural network runtimes**, in a browser bundle of 4.92 MB compressed. Measured latency is $2.6 - 4.1$ ms per query at $k=5$.
+Akshar Devanagari IME transliterates Roman-script Nepali to Devanagari with no
+neural network at runtime, from an 11.37 MB desktop container or a 4.94 MB
+Brotli browser bundle.
 
-### SOTA Benchmark Comparison (Aksharantar Nepali Test Split)
+### Benchmark state (Aksharantar Nepali test split, 4,101 cases)
 
-| System | Technology | Model Footprint | Native (`AK-Freq`) Top-1 | Top-5 | Hard Entities (`AK-NEF`) Top-1 |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| **IndicXlit** (AI4Bharat) | Transformer Seq2Seq (Neural) | ~120 MB | 80.25% | — | ~28% |
-| Akshar IME (pre-compaction) | EM + Kneser-Ney, bincode container | 66.59 MB | 82.12% | 92.13% | 29.74% |
-| **Akshar IME (desktop)** | **+ compact v3 container** | **30.59 MB** | **82.02%** | **92.17%** | **30.35%** |
-| **Akshar IME (browser)** | **+ entropy-pruned trigram LM, no bigrams** | **8.91 MB / 4.92 MB Brotli** | **81.07%** | **92.22%** | **30.84%** |
+Measured 2026-09-06 on `data/akshar.model` at default settings via
+`evaluate_aksharantar` and `evaluate`. Every figure below is from that run;
+rows that have not been re-measured since are marked.
 
-*Measured on the official 4,101-word test split via `evaluate_aksharantar`.*
+| Split | top-1 | top-5 |
+| :--- | ---: | ---: |
+| `AK-Freq` (native, n=2,108) | 81.83% | 92.22% |
+| `AK-NEI` (n=1,176) | 47.5% | 69.6% |
+| `AK-NEF` (n=817) | 31.2% | 53.0% |
+| All cases | 62.0% | 78.0% |
+
+Reference point: **IndicXlit** (AI4Bharat, ~11M-parameter transformer) reports
+80.25% top-1 on the native split and 52.67% on named entities. The native
+figure here is comparable; the named-entity figures are well behind it.
+
+Measured headroom, from `analyze_errors --beam 256`:
+
+| | `AK-Freq` | All |
+| :--- | ---: | ---: |
+| decoder oracle @2 | 89.8% | 71.4% |
+| decoder oracle @50 | 94.3% | 85.1% |
+| matra-only share of top-1 misses | 51.9% | 37.2% |
+| top-1 if the matra class were solved | 91.22% | 76.08% |
+| CER (engine top-1) | 3.90% | 11.66% |
+
+The collision bound — the ceiling for any string-only system whose sole prior is
+corpus unigram frequency — is 99.15%, so the dataset is not the constraint.
+
+Query latency is 3.2-3.6 ms at k=5-10 (beam 64); cold start ~2.4 s. The browser
+profile has **not** been re-measured since the 2026-09-06 engine changes.
 
 Beyond the isolated-word benchmark, two further harnesses exist because it
 cannot see everything that matters:
@@ -45,7 +69,7 @@ chunk list on save, so `bincode::serialized_size` of a decoded field no longer
 describes what is on disk.
 
 ```
-=== Unified Model Inspection: data/akshar.model ===       (desktop, 30.59 MB)
+=== Unified Model Inspection: data/akshar.model ===       (desktop, 11.37 MB)
   Translit Model    :    7.65 MB ( 25.0%)
   Sparse Reranker   :    1.00 MB (  3.3%)
   Vocab Frequency   :    2.41 MB (  7.9%) [470,012 words]
@@ -124,6 +148,11 @@ Through empirical ablation, we discovered two major optimization opportunities t
 * **Empirical Impact:** **0.000% change** in single-word accuracy, with no noticeable degradation in conversational next-word predictions.
 
 ### C. Compact Container Encoding (v3) — 66.59 MB to 30.59 MB, accuracy-neutral
+
+> **Historical.** The sizes and accuracies in this section and the two that
+> follow were measured against the containers of the time. The current desktop
+> container is 11.37 MB (v5); its accuracy is in §1. They are kept as a record
+> of what each compaction step cost, not as a description of the shipped model.
 
 The largest saving came from *encoding*, not from discarding anything. The
 container previously stored `Vec<Vec<(u32, f32)>>` and `HashMap<String, u32>`
@@ -284,7 +313,13 @@ Research (Stanford SLP3 Kneser-Ney C, SymSpell symmetric deletes, Aksharantar In
 
 **Shipped lightweight maths (0 byte wire impact):**
 
-1. **Modified Kneser-Ney (Chen-Goodman 3 discounts)** — single `d=0.75` under-discounts singletons, over-discounts `3+`. Modified uses `d1` for `c=1`, `d2` for `2`, `d3+` for `≥3` with `Y=n1/(n1+2n2)` `d1=1-2Y n2/n1` `d2=2-3Y n3/n2` `d3=3-4Y n4/n3` and continuation `Pcont(w)=|{v:C(vw)>0}|/types`. Fixes `Kong/Hong Kong` narrow frequent words. Applied to `AkLm` syllable `bigram/trigram` and `PairModel` `bi/bi_ak/tri` in `em_trainer.rs:895`.
-2. **Phonetic-weighted SymSpell** — core `SymSpell` stays delete-only `25 vs 3M` `0.033ms` but ranking uses learned `cost(edit|phonetic)` not uniform `1`. `ee→e`, `sh→s`, `ph→f` `0.2`, random `k→z` `1.0` via collapsed variant + `freq_boost ln(1+freq)*1000` with `corpus_fuzzy_base 850k` in `engine.rs:669`. `shubheeksha→shubheksha→शुभेक्षा` now `0.3` not `1`.
+1. **Modified Kneser-Ney (Chen-Goodman 3 discounts)** — single `d=0.75` under-discounts singletons, over-discounts `3+`. Modified uses `d1` for `c=1`, `d2` for `2`, `d3+` for `≥3` with `Y=n1/(n1+2n2)` `d1=1-2Y n2/n1` `d2=2-3Y n3/n2` `d3=3-4Y n4/n3` and continuation `Pcont(w)=|{v:C(vw)>0}|/types`. Fixes `Kong/Hong Kong` narrow frequent words. Applied in `Trainer::modified_discounts` (`em_trainer.rs:339`), consumed by the shipped LM in `build_kn_lm` and by `AkLm`/`PairModel`.
 
-Both keep `8.91 MB / 4.92 MB Brotli` and `sub-ms` `FxHash+cache+beam env` intact.
+   > **Defect found and fixed 2026-09-06.** The discounts had been clamped to `d1≤0.9`, `d2≤0.9`, `d3≤0.95`. Chen-Goodman requires `0 ≤ D_i ≤ i`, i.e. `d2 ≤ 2`, `d3 ≤ 3`; real corpora give `d2 ≈ 1.0-1.4` and `d3 ≈ 1.5-2.5`, so both pinned at the ceiling and modified KN degenerated into single-discount absolute discounting at `d≈0.9` — worse than the `0.75` it replaced. `n[3]==0` also escaped the degenerate guard and yielded `d3=3→0.95`. Bounds are now `0 ≤ D_i ≤ i` and the guard covers `n[3]`. Note that `AkLm`/`PairModel` are built by `finalize_pair`, which has no callers; only `build_kn_lm` ships.
+2. **Corpus SymSpell (removed — see below)** — core `SymSpell` stays delete-only; a collapsed vowel-run variant (`ee→e`, `oo→o`) is indexed alongside each corpus romanization, ranked by `freq_boost = ln(1+freq)*1000` over `corpus_fuzzy_base 850k` in `engine.rs:669`.
+
+   > **Removed 2026-09-06.** `850k` sat above the decoder band (`FRESH_SCALE 800k`), so every corpus-fuzzy hit displaced the reranker's top-1, and the path did no edit-distance verification — `SymSpell::lookup` returns unverified delete-set intersections, and the phonetic edit costs described above were never implemented. Cost: AK-Freq top-1 **81.74% → 50.95%**, top-5 92.27% → 81.07%; NEI 47.62 → 25.68; NEF 31.21 → 20.81.
+   >
+   > It was then given a fair test — distances verified against the indexed roman form, with a per-edit penalty. It still cost 9.6pp top-1 at a band where it could compete, and at any safe band produced results byte-identical to being switched off (1945/2108 either way). It never contributed recall at any setting, and the vowel-length alternations it duplicated (`ee→ii`, `oo→uu`) are already handled upstream in `normalizer.rs`. The whole source was deleted.
+
+Both were 0-byte wire impact. Measured query latency is **3.2-3.6 ms** at k=5-10 (`evaluate`), not sub-ms — see `docs/ARCHITECTURE.md`.
