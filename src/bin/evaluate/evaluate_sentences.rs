@@ -269,13 +269,13 @@ fn main() {
     let mut runs: Vec<(String, bool, Option<f64>)> =
         vec![("context ON".to_string(), true, None), ("context OFF".to_string(), false, None)];
     for b in &boost_sweep {
-        runs.push((format!("boost {b:>9.0}"), true, Some(*b)));
+        runs.push((format!("PMI weight {b:>5.2}"), true, Some(*b)));
     }
 
     for (label, context_on, boost) in runs {
         engine.set_bigram_context_enabled(context_on);
         if let Some(b) = boost {
-            engine.set_bigram_boost(b);
+            engine.set_bigram_weight(b);
         }
         let context_on = context_on && boost.is_none();
         let mut t = Tally::default();

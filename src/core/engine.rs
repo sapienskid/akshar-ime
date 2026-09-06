@@ -40,9 +40,38 @@ const DECODER_BEAM: usize = 64;
 const FRESH_SCALE: f64 = 800_000.0;
 /// Purnabiram (।, U+0964) — mapped from a trailing '.'.
 const PURNABIRAM: char = '\u{0964}';
-/// Default per-ln-unit boost for candidates forming a corpus bigram with the
-/// previously committed word (E6). Calibrated by evaluate_context.
-const DEFAULT_BIGRAM_BOOST: f64 = 40_000.0;
+/// Weight on the corpus-bigram context term, in nats.
+///
+/// The term is a shrunk pointwise mutual information, `ln P(w | prev) - ln P(w)`
+/// scaled by `f / (f + k)`, added to the reranker's log-score *before* it is
+/// squashed onto the u64 scale.  PMI rather than raw `ln P(w | prev)` so that
+/// candidates the table does not cover are neither rewarded nor punished: the
+/// term is 0 exactly when the previous word says nothing about this candidate.
+///
+/// 0.10 is the measured optimum on held-out running text (evaluate_sentences,
+/// 1500 sentences / 40,480 words):
+///
+///   context off        word@1 89.69%   sentence-exact 26.73%
+///   weight 0.10        word@1 89.85%   sentence-exact 26.93%
+///   weight 0.25        word@1 89.78%   sentence-exact 27.07%
+///   weight 0.50        word@1 89.49%   sentence-exact 26.33%
+///   weight 1.00        word@1 88.94%   sentence-exact 25.20%
+///
+/// Note what that curve says: the whole corpus-bigram table is worth about
+/// +0.16pp of word@1.  Three different fusion designs — the original
+/// post-squash `40_000 * ln(1+f)` bonus, unshrunk PMI, and this one — all land
+/// on the same ceiling, so the limit is the table, not the arithmetic.  At
+/// 19.54 MB that is ~122 MB per accuracy point, against 0.4 MB/point for the
+/// sparse reranker and 7 MB/point for the syllable trigram LM.  It is the
+/// first thing to drop for a size-constrained build.
+///
+/// A plausible cause is that the table is built with `--bigram-min-freq 5`,
+/// which preferentially removes pairs involving the rarer of two spelling
+/// variants — exactly the entries needed to settle the dominant error class
+/// (बिच vs बीच).  Worth testing before concluding the table is inherently weak.
+const DEFAULT_BIGRAM_WEIGHT: f64 = 0.10;
+/// Count discount `k` in the PMI shrinkage factor `f / (f + k)`.
+const DEFAULT_BIGRAM_SHRINK: f64 = 10.0;
 /// Bonus for a candidate that is both decoder-generated AND an exact corpus
 /// word.  Additive on top of the fresh score so the decoder's ranking among
 /// corpus words is preserved (a flat absolute score made arbitrary-order
@@ -72,8 +101,13 @@ pub struct ImeEngine {
     /// Whether the corpus-bigram context boost is applied (harness A/B).
     bigram_context_enabled: bool,
     /// Per-ln-unit boost applied to candidates forming a bigram with the
-    /// previously committed word. Tunable via set_bigram_boost.
-    bigram_boost: f64,
+    /// previously committed word. Tunable via set_bigram_weight.
+    bigram_weight: f64,
+    /// Count discount for the PMI term; see DEFAULT_BIGRAM_SHRINK.
+    bigram_shrink: f64,
+    /// Total corpus token count, denominator for the unigram P(w) in the PMI
+    /// context term.  Cached because it is a sum over the whole vocabulary.
+    vocab_total: f64,
     /// Last word the user committed (drives the corpus-bigram context).
     last_word: Option<String>,
     pub trie: Trie,
@@ -111,6 +145,7 @@ impl ImeEngine {
         let word_trie = reranker_data.as_ref().map(|v| {
             crate::core::wordtrie::WordTrie::from_freq_map(&v.freq, &|a| decoder.model.akshara_id(a), 1)
         });
+        let vocab_total = total_tokens(reranker_data.as_ref());
         Self {
             decoder,
             reranker,
@@ -119,7 +154,9 @@ impl ImeEngine {
             word_trie,
             corpus_bigrams: load_bigrams(),
             bigram_context_enabled: true,
-            bigram_boost: DEFAULT_BIGRAM_BOOST,
+            bigram_weight: DEFAULT_BIGRAM_WEIGHT,
+            bigram_shrink: DEFAULT_BIGRAM_SHRINK,
+            vocab_total,
             last_word: None,
             trie: Trie::new(),
             context_model: ContextModel::new(CONTEXT_WINDOW_SIZE),
@@ -149,6 +186,7 @@ impl ImeEngine {
             &|a| decoder.model.akshara_id(a),
             1,
         ));
+        let vocab_total = unified.vocab_freq.values().map(|&f| f as f64).sum();
         let reranker_data = Some(crate::core::reranker::RerankerData {
             freq: unified.vocab_freq,
             ranks,
@@ -161,7 +199,9 @@ impl ImeEngine {
             word_trie,
             corpus_bigrams: unified.bigrams,
             bigram_context_enabled: true,
-            bigram_boost: DEFAULT_BIGRAM_BOOST,
+            bigram_weight: DEFAULT_BIGRAM_WEIGHT,
+            bigram_shrink: DEFAULT_BIGRAM_SHRINK,
+            vocab_total,
             last_word: None,
             trie: Trie::new(),
             context_model: ContextModel::new(CONTEXT_WINDOW_SIZE),
@@ -226,6 +266,7 @@ impl ImeEngine {
         let word_trie = reranker_data.as_ref().map(|v| {
             crate::core::wordtrie::WordTrie::from_freq_map(&v.freq, &|a| decoder.model.akshara_id(a), 1)
         });
+        let vocab_total = total_tokens(reranker_data.as_ref());
         Self {
             decoder,
             reranker,
@@ -234,7 +275,9 @@ impl ImeEngine {
             word_trie,
             corpus_bigrams: load_bigrams(),
             bigram_context_enabled: true,
-            bigram_boost: DEFAULT_BIGRAM_BOOST,
+            bigram_weight: DEFAULT_BIGRAM_WEIGHT,
+            bigram_shrink: DEFAULT_BIGRAM_SHRINK,
+            vocab_total,
             last_word: None,
             trie: Trie::new(),
             context_model: ContextModel::new(CONTEXT_WINDOW_SIZE),
@@ -445,8 +488,20 @@ impl ImeEngine {
                 ),
                 None => self.reranker.rerank(roman, cands),
             };
-            // Convert to the engine's higher-better u64 scale, preserving the
-            // reranked order exactly (relative cost from the winner).
+            // Apply the corpus-bigram context in the reranker's own log space,
+            // then convert to the engine's higher-better u64 scale.  Doing it
+            // in this order is what makes the context term behave like
+            // evidence: after the hyperbolic squash below, equal amounts of
+            // evidence would move candidates by wildly unequal amounts.
+            let mut ranked: Vec<(String, f64)> = ranked
+                .into_iter()
+                .map(|(dev, s)| {
+                    let s = s + self.bigram_weight * self.bigram_pmi(&dev);
+                    (dev, s)
+                })
+                .collect();
+            ranked.sort_by(|a, b| b.1.total_cmp(&a.1));
+
             let s_max = ranked.first().map(|(_, s)| *s).unwrap_or(0.0);
             for (dev, s) in ranked {
                 let cost = (s_max - s).max(0.0);
@@ -496,27 +551,8 @@ impl ImeEngine {
             }
         }
 
-        // 4b. E6: corpus-bigram context — candidates that commonly follow the
-        //     previously committed word get a boost (Kirov-calibrated lever).
-        if self.bigram_context_enabled {
-            if let (Some(prev), Some(bigrams)) = (&self.last_word, &self.corpus_bigrams) {
-                if let Some(succ) = bigrams.get(prev) {
-                    let mut boosted: Vec<(String, u64)> = candidates.drain().collect();
-                    for (dev, score) in boosted.iter_mut() {
-                        // successors sorted by freq desc; linear scan is fine
-                        // (few dozen entries per context word)
-                        // linear scan: successor lists are short and sorted
-                        // by frequency, not by word
-                        if let Some(&(_, f)) = succ.iter().find(|(w, _)| w == dev) {
-                            *score = score.saturating_add(
-                                (self.bigram_boost * (1.0 + f as f64).ln()) as u64,
-                            );
-                        }
-                    }
-                    candidates = boosted.into_iter().collect();
-                }
-            }
-        }
+        // The corpus-bigram context is applied in step 1, inside the reranker's
+        // log space, rather than as a post-hoc bonus on the squashed score.
 
         // 5. Context re-rank for words the user has typed before.
         let mut with_ids: Vec<(WordId, u64)> = candidates
@@ -548,8 +584,67 @@ impl ImeEngine {
         self.bigram_context_enabled = on;
     }
 
-    pub fn set_bigram_boost(&mut self, scale: f64) {
-        self.bigram_boost = scale;
+    /// Weight on the PMI context term, in nats.  1.0 means "trust the corpus
+    /// bigram exactly as much as the reranker's own log-score".
+    pub fn set_bigram_weight(&mut self, weight: f64) {
+        self.bigram_weight = weight;
+    }
+
+    /// Count discount `k` in the PMI shrinkage factor `f / (f + k)`.
+    pub fn set_bigram_shrink(&mut self, k: f64) {
+        self.bigram_shrink = k;
+    }
+
+    /// Pointwise mutual information between the previously committed word and
+    /// a candidate: `ln P(w | prev) - ln P(w)`, in nats.
+    ///
+    /// Returns 0.0 when there is no context, no bigram table, no entry for
+    /// `prev`, or no entry for `(prev, w)` — i.e. whenever the context carries
+    /// no information about this candidate.  That neutrality is the point: an
+    /// absolute `ln P(w | prev)` would systematically punish every candidate
+    /// the table happens not to cover, which is most of them.
+    ///
+    /// The result is added to the reranker's log-score before it is squashed
+    /// onto the u64 evidence scale, so it composes with the reranker's own
+    /// log-linear score instead of fighting a nonlinear transform.
+    fn bigram_pmi(&self, dev: &str) -> f64 {
+        if !self.bigram_context_enabled || self.vocab_total <= 0.0 {
+            return 0.0;
+        }
+        let (Some(prev), Some(bigrams)) = (&self.last_word, &self.corpus_bigrams) else {
+            return 0.0;
+        };
+        let Some(succ) = bigrams.get(prev) else {
+            return 0.0;
+        };
+        // Successor lists are stored frequency-sorted, not key-sorted, so this
+        // is a linear scan.  Lists average ~14 entries; the compact model
+        // format will make this a binary search.
+        let Some(&(_, joint)) = succ.iter().find(|(w, _)| w == dev) else {
+            return 0.0;
+        };
+        let context_total: f64 = succ.iter().map(|(_, f)| *f as f64).sum();
+        if context_total <= 0.0 {
+            return 0.0;
+        }
+        let Some(data) = &self.reranker_data else {
+            return 0.0;
+        };
+        let unigram = data.freq.get(dev).copied().unwrap_or(0) as f64;
+        if unigram <= 0.0 {
+            return 0.0;
+        }
+        let p_cond = joint as f64 / context_total;
+        let p_uni = unigram / self.vocab_total;
+        let pmi = (p_cond / p_uni).ln();
+
+        // Shrink towards 0 by the joint count.  Raw PMI is dominated by its
+        // low-count tail: a pair seen 5 times involving a rare word yields a
+        // huge score and promotes that rare word over the correct frequent
+        // one.  The f/(f+k) factor is the standard discount — it leaves
+        // well-attested pairs almost untouched and suppresses the noise.
+        let f = joint as f64;
+        pmi * (f / (f + self.bigram_shrink))
     }
 
     /// Set the preceding-word context without learning the word.
@@ -755,6 +850,13 @@ fn load_reranker(lexicon: Option<RomanLexicon>) -> Reranker {
     reranker
 }
 
+/// Total corpus tokens across the vocabulary — the denominator of the unigram
+/// P(w) in the PMI context term.  0.0 with no vocabulary, which disables the
+/// term rather than dividing by zero.
+fn total_tokens(data: Option<&crate::core::reranker::RerankerData>) -> f64 {
+    data.map_or(0.0, |d| d.freq.values().map(|&f| f as f64).sum())
+}
+
 /// Reranker data: the corpus vocabulary plus its frequency-rank index.
 /// None when the vocabulary file is unavailable (WASM-lite, fresh clones).
 #[cfg(not(target_arch = "wasm32"))]
@@ -778,6 +880,7 @@ fn load_bigrams() -> Option<HashMap<String, Vec<(String, u32)>>> {
 fn load_bigrams() -> Option<HashMap<String, Vec<(String, u32)>>> {
     None
 }
+
 
 #[cfg(test)]
 mod tests {
@@ -846,7 +949,9 @@ mod tests {
             word_trie: None,
             corpus_bigrams: None,
             bigram_context_enabled: true,
-            bigram_boost: DEFAULT_BIGRAM_BOOST,
+            bigram_weight: DEFAULT_BIGRAM_WEIGHT,
+            bigram_shrink: DEFAULT_BIGRAM_SHRINK,
+            vocab_total: 0.0,
             last_word: None,
             trie: Trie::new(),
             context_model: ContextModel::new(3),
