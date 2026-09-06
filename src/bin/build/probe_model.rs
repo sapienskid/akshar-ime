@@ -9,19 +9,92 @@ use akshar_ime::core::translit_model::TranslitModel;
 use std::path::Path;
 
 fn main() {
-    let mut word = "holi".to_string();
+    let mut word: Option<String> = None;
     let mut model_path = "data/translit_model.bin".to_string();
+    let mut inspect_mode = false;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--model" => model_path = args.next().unwrap_or_else(|| model_path.clone()),
+            "--inspect" => inspect_mode = true,
             "-h" | "--help" => {
-                println!("usage: probe_model <word> [--model path]");
+                println!("usage: probe_model [word] [--model path] [--inspect]");
                 return;
             }
-            other => word = other.to_string(),
+            other => word = Some(other.to_string()),
         }
     }
+
+    if inspect_mode {
+        let p = Path::new(&model_path);
+        // Check if it is a unified model or translit model
+        if let Ok(unified) = akshar_ime::core::unified::UnifiedModel::load(p) {
+            println!("=== Unified Model Inspection: {} ===", p.display());
+            let m_bytes = std::fs::metadata(p).map(|m| m.len()).unwrap_or(0);
+            println!("Total file size: {:.2} MB ({} bytes)", m_bytes as f64 / (1024.0 * 1024.0), m_bytes);
+            
+            let t_sz = bincode::serialized_size(&unified.translit).unwrap_or(0);
+            let s_sz = bincode::serialized_size(&unified.sparse_reranker_table).unwrap_or(0);
+            let v_sz = bincode::serialized_size(&unified.vocab_freq).unwrap_or(0);
+            let b_sz = unified.bigrams.as_ref().map(|b| bincode::serialized_size(b).unwrap_or(0)).unwrap_or(0);
+            
+            println!("  Translit Model    : {:>7.2} MB ({:>5.1}%)", t_sz as f64 / (1024.0 * 1024.0), (t_sz as f64 / m_bytes as f64) * 100.0);
+            println!("  Sparse Reranker   : {:>7.2} MB ({:>5.1}%)", s_sz as f64 / (1024.0 * 1024.0), (s_sz as f64 / m_bytes as f64) * 100.0);
+            println!("  Vocab Frequency   : {:>7.2} MB ({:>5.1}%) [{} words]", v_sz as f64 / (1024.0 * 1024.0), (v_sz as f64 / m_bytes as f64) * 100.0, unified.vocab_freq.len());
+            if let Some(ref bg) = unified.bigrams {
+                println!("  Word Bigrams      : {:>7.2} MB ({:>5.1}%) [{} heads]", b_sz as f64 / (1024.0 * 1024.0), (b_sz as f64 / m_bytes as f64) * 100.0, bg.len());
+            } else {
+                println!("  Word Bigrams      : None (0.0 MB)");
+            }
+
+            println!("\n--- Translit Sub-components ---");
+            let ak_sz = bincode::serialized_size(&unified.translit.aksharas).unwrap_or(0);
+            let ch_sz = bincode::serialized_size(&unified.translit.chunks).unwrap_or(0);
+            let em_sz = bincode::serialized_size(&unified.translit.emissions).unwrap_or(0);
+            let bi_sz = bincode::serialized_size(&unified.translit.bigrams).unwrap_or(0);
+            let tri_k_sz = bincode::serialized_size(&unified.translit.trigram_keys).unwrap_or(0);
+            let tri_v_sz = bincode::serialized_size(&unified.translit.trigrams).unwrap_or(0);
+            let tri_b_sz = bincode::serialized_size(&unified.translit.trigram_backoff).unwrap_or(0);
+            let other_sz = t_sz.saturating_sub(ak_sz + ch_sz + em_sz + bi_sz + tri_k_sz + tri_v_sz + tri_b_sz);
+
+            println!("    Aksharas list   : {:>6.2} MB ({} aksharas)", ak_sz as f64 / (1024.0 * 1024.0), unified.translit.aksharas.len());
+            println!("    Chunks list     : {:>6.2} MB ({} chunks)", ch_sz as f64 / (1024.0 * 1024.0), unified.translit.chunks.len());
+            let em_count: usize = unified.translit.emissions.iter().map(|e| e.len()).sum();
+            println!("    Emissions       : {:>6.2} MB ({} entries across {} aksharas)", em_sz as f64 / (1024.0 * 1024.0), em_count, unified.translit.emissions.len());
+            let bi_count: usize = unified.translit.bigrams.iter().map(|b| b.len()).sum();
+            println!("    Bigram LM       : {:>6.2} MB ({} transitions)", bi_sz as f64 / (1024.0 * 1024.0), bi_count);
+            let tri_count: usize = unified.translit.trigrams.iter().map(|t| t.len()).sum();
+            println!("    Trigram LM      : {:>6.2} MB ({} contexts, {} transitions)", (tri_k_sz + tri_v_sz + tri_b_sz) as f64 / (1024.0 * 1024.0), unified.translit.trigram_keys.len(), tri_count);
+            println!("    Other fields    : {:>6.2} MB", other_sz as f64 / (1024.0 * 1024.0));
+            return;
+        }
+
+        let model = TranslitModel::load(p).expect("load model");
+        let m_bytes = std::fs::metadata(p).map(|m| m.len()).unwrap_or(0);
+        println!("=== Translit Model Inspection: {} ===", p.display());
+        println!("Total file size: {:.2} MB ({} bytes)", m_bytes as f64 / (1024.0 * 1024.0), m_bytes);
+        let ak_sz = bincode::serialized_size(&model.aksharas).unwrap_or(0);
+        let ch_sz = bincode::serialized_size(&model.chunks).unwrap_or(0);
+        let em_sz = bincode::serialized_size(&model.emissions).unwrap_or(0);
+        let bi_sz = bincode::serialized_size(&model.bigrams).unwrap_or(0);
+        let tri_k_sz = bincode::serialized_size(&model.trigram_keys).unwrap_or(0);
+        let tri_v_sz = bincode::serialized_size(&model.trigrams).unwrap_or(0);
+        let tri_b_sz = bincode::serialized_size(&model.trigram_backoff).unwrap_or(0);
+        let other_sz = m_bytes.saturating_sub(ak_sz + ch_sz + em_sz + bi_sz + tri_k_sz + tri_v_sz + tri_b_sz);
+
+        println!("  Aksharas list   : {:>6.2} MB ({} aksharas)", ak_sz as f64 / (1024.0 * 1024.0), model.aksharas.len());
+        println!("  Chunks list     : {:>6.2} MB ({} chunks)", ch_sz as f64 / (1024.0 * 1024.0), model.chunks.len());
+        let em_count: usize = model.emissions.iter().map(|e| e.len()).sum();
+        println!("  Emissions       : {:>6.2} MB ({} entries across {} aksharas)", em_sz as f64 / (1024.0 * 1024.0), em_count, model.emissions.len());
+        let bi_count: usize = model.bigrams.iter().map(|b| b.len()).sum();
+        println!("  Bigram LM       : {:>6.2} MB ({} transitions)", bi_sz as f64 / (1024.0 * 1024.0), bi_count);
+        let tri_count: usize = model.trigrams.iter().map(|t| t.len()).sum();
+        println!("  Trigram LM      : {:>6.2} MB ({} contexts, {} transitions)", (tri_k_sz + tri_v_sz + tri_b_sz) as f64 / (1024.0 * 1024.0), model.trigram_keys.len(), tri_count);
+        println!("  Other fields    : {:>6.2} MB", other_sz as f64 / (1024.0 * 1024.0));
+        return;
+    }
+
+    let word = word.unwrap_or_else(|| "holi".to_string());
 
     let model = TranslitModel::load(Path::new(&model_path)).expect("load model");
     let dec = ModelDecoder::new(model);

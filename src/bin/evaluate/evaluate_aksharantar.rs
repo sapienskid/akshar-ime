@@ -98,11 +98,13 @@ fn main() {
     };
     let mut topk = 5usize;
     let mut show_misses = 15usize;
+    let mut model_path: Option<String> = None;
 
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--dataset" => dataset_path = next_value(&arg, args.next()),
+            "--model" => model_path = Some(next_value(&arg, args.next())),
             "--topk" => {
                 topk = next_value(&arg, args.next())
                     .parse::<usize>()
@@ -128,7 +130,11 @@ fn main() {
 
     let cases = load_cases(&dataset_path);
 
-    let engine = ImeEngine::new();
+    let engine = if let Some(ref mp) = model_path {
+        ImeEngine::from_unified_file(std::path::Path::new(mp)).expect("load model from --model")
+    } else {
+        ImeEngine::new()
+    };
 
     let mut report = Report {
         name: "ImeEngine.get_suggestions",

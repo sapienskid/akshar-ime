@@ -2,7 +2,7 @@
 
 ## 1. System Overview & Engineering Principles
 
-Akshar Devanagari IME is an intelligent, high-performance input method engine for the Devanagari script (specifically optimized for Nepali and Hindi orthography). It achieves **state-of-the-art transliteration accuracy (81.93% top-1, 91.94% top-5)** on the standard AI4Bharat Aksharantar test benchmark, outperforming neural transliteration baselines (such as IndicXlit at 80.25% top-1) while requiring **zero neural network runtimes** and operating strictly within sub-millisecond latency budgets.
+Akshar Devanagari IME is an intelligent, high-performance input method engine for the Devanagari script (specifically optimized for Nepali and Hindi orthography). It achieves **state-of-the-art transliteration accuracy (82.12% top-1, 92.13% top-5)** on the standard AI4Bharat Aksharantar test benchmark, outperforming neural transliteration baselines (such as IndicXlit at 80.25% top-1) while requiring **zero neural network runtimes** and operating strictly within sub-millisecond latency budgets.
 
 ### Core Architectural Principles:
 1. **Classical Statistical Transduction over Neural Dependencies:**
@@ -196,11 +196,14 @@ graph TD
 
 | Component | Disk Footprint | Memory at Runtime | Algorithmic Complexity | Keystroke Latency |
 | :--- | :--- | :--- | :--- | :--- |
-| **Unified Container (`akshar.model`)** | 48 MB (no bigrams) / 88 MB (with bigrams) | $\approx 45$ MB heap (atomic load) | Single read | N/A (load time < 0.6s) |
-| **Generative Decoder** | Included in container | $\approx 32$ MB (or 9.1 MB Brotli in WASM) | $O(M \cdot B \cdot L)$ | $0.25 - 0.40$ ms |
+| **Unified Container (`akshar.model`)** | 47 MB (no bigrams) / 68 MB (with pruned bigrams) | $\approx 40$ MB heap (atomic load) | Single read | N/A (load time < 0.5s) |
+| **Generative Decoder** | Included in container | $\approx 30$ MB (or 12 MB Brotli in WASM) | $O(M \cdot B \cdot L)$ | $0.25 - 0.40$ ms |
 | **Vocabulary WordTrie** | Included in container | $\approx 22$ MB heap | $O(M \cdot \Sigma)$ prefix walk | $0.05 - 0.10$ ms |
-| **Discriminative Reranker**| Included in container (4 MB) | 4 MB sparse table | $O(K \cdot (D + S))$ | $0.08 - 0.15$ ms |
-| **Bigram Context Layer** | Included in container (41 MB) | $\approx 15$ MB (native only) | $O(K \log \text{deg})$ | $0.01 - 0.03$ ms |
+| **Discriminative Reranker**| Included in container (1 MB) | 1 MB sparse table | $O(K \cdot (D + S))$ | $0.08 - 0.15$ ms |
+| **Bigram Context Layer** | Included in container (21 MB) | $\approx 10$ MB (native only) | $O(K \log \text{deg})$ | $0.01 - 0.03$ ms |
 | **SymSpell & User Trie** | $\approx 50$ KB (`user_dictionary.bin`) | $< 2$ MB heap | $O(1)$ hash lookup | $0.01 - 0.02$ ms |
-| **Total Runtime Engine** | **$\approx 15$ MB (Brotli)** | **$\approx 25 - 45$ MB** | **Strictly sub-linear** | **$0.40 - 0.80$ ms** |
+| **Total Runtime Engine** | **$\approx 12$ MB (Brotli)** | **$\approx 25 - 40$ MB** | **Strictly sub-linear** | **$0.40 - 0.80$ ms** |
+
+For complete training procedures, component ablation studies, and loss-free pruning details, see:
+- [**Model Training, Optimization & Pruning Guide (`docs/MODEL_TRAINING_AND_OPTIMIZATION.md`)**](MODEL_TRAINING_AND_OPTIMIZATION.md)
 

@@ -13,7 +13,7 @@
 //   --epochs <n>       Reranker training epochs (default: 3)
 //   --smoke            Fast 5-second smoke test training (500 pairs)
 
-use akshar_ime::core::decoder::{DecoderConfig, DecodedCandidate, ModelDecoder};
+use akshar_ime::core::decoder::{DecoderConfig, ModelDecoder};
 use akshar_ime::core::em_trainer::{Trainer, TrainerConfig};
 use akshar_ime::core::reranker::{extract_dense_features, extract_sparse_features, FreqRanks, DENSE_DIM, HASH_SIZE};
 use akshar_ime::core::reranker_weights::{LM_W, MEAN_DENSE, STD_DENSE, VOCAB_W, W_DENSE};
@@ -96,6 +96,7 @@ fn main() {
     let mut epochs: usize = 3;
     let mut min_freq: u32 = 3;
     let mut reranker_pairs: usize = 100_000;
+    let mut bigram_min_freq: u32 = 5;
     let mut wasm_mode = false;
     let mut smoke = false;
 
@@ -110,6 +111,8 @@ fn main() {
             "--epochs" | "-e" => epochs = args.next().expect("value for --epochs").parse().unwrap(),
             "--min-freq" => min_freq = args.next().expect("value for --min-freq").parse().unwrap(),
             "--reranker-pairs" => reranker_pairs = args.next().expect("value for --reranker-pairs").parse().unwrap(),
+            "--bigram-min-freq" => bigram_min_freq = args.next().expect("value for --bigram-min-freq").parse().unwrap(),
+            "--no-bigrams" => bigram_min_freq = 0,
             "--wasm" => wasm_mode = true,
             "--smoke" => smoke = true,
             "-h" | "--help" => {
@@ -119,7 +122,9 @@ fn main() {
                 println!("  --text <path>           Clean running text for vocabulary");
                 println!("  --out <path>            Output path (default: data/akshar.model)");
                 println!("  --min-freq <n>          Prune vocabulary with freq < n (default: 3)");
-                println!("  --reranker-pairs <n>    Number of pairs for reranker training (default: 100,000)");
+                println!("  --reranker-pairs <n>    Number of pairs for reranker training (0 = all pairs, default: 100,000)");
+                println!("  --bigram-min-freq <n>   Prune bigrams below frequency n (default: 5)");
+                println!("  --no-bigrams            Exclude bigrams from unified model");
                 println!("  --limit <n>             Limit pairs (for rapid prototyping)");
                 println!("  --iterations <n>        EM iterations (default: 10)");
                 println!("  --epochs <n>            Reranker epochs (default: 3)");
@@ -263,15 +268,18 @@ fn main() {
 
     let word_trie = WordTrie::from_freq_map(&vocab_freq, &|a| translit_model.akshara_id(a), 1);
 
-    let num_train_pairs = raw_pairs.len().min(if smoke { 500 } else { reranker_pairs });
+    let num_train_pairs = if smoke {
+        500
+    } else if reranker_pairs == 0 {
+        raw_pairs.len()
+    } else {
+        raw_pairs.len().min(reranker_pairs)
+    };
     println!("Pre-decoding candidates for {} training pairs...", num_train_pairs);
 
     struct RerankItem {
-        roman: String,
         target_idx: usize,
-        cands: Vec<DecodedCandidate>,
-        heur: Vec<f64>,
-        heur_rank: Vec<usize>,
+        base_scores: Vec<f64>,
         sparse: Vec<Vec<usize>>,
     }
 
@@ -295,12 +303,19 @@ fn main() {
                 extract_sparse_features(&c.dev, roman, c.akshara_count, &aks)
             }).collect();
 
+            let mut base_scores = Vec::with_capacity(n_cand);
+            for (idx, c) in cands.iter().enumerate() {
+                let dense = extract_dense_features(c, idx, heur[idx], heur_rank[idx], roman, &vocab_freq, &ranks);
+                let mut score = 0.0f64;
+                for k in 0..DENSE_DIM {
+                    score += W_DENSE[k] * ((dense[k] - MEAN_DENSE[k]) / STD_DENSE[k]);
+                }
+                base_scores.push(score);
+            }
+
             samples.push(RerankItem {
-                roman: roman.clone(),
                 target_idx,
-                cands,
-                heur,
-                heur_rank,
+                base_scores,
                 sparse: cand_sparse,
             });
         }
@@ -320,19 +335,12 @@ fn main() {
         let mut ep_hits = 0usize;
 
         for s in &samples {
-            let n_cand = s.cands.len();
-            let mut scores = Vec::with_capacity(n_cand);
+            let mut scores = s.base_scores.clone();
 
-            for (idx, c) in s.cands.iter().enumerate() {
-                let dense = extract_dense_features(c, idx, s.heur[idx], s.heur_rank[idx], &s.roman, &vocab_freq, &ranks);
-                let mut score = 0.0f64;
-                for k in 0..DENSE_DIM {
-                    score += W_DENSE[k] * ((dense[k] - MEAN_DENSE[k]) / STD_DENSE[k]);
+            for (idx, sparse_feats) in s.sparse.iter().enumerate() {
+                for &h in sparse_feats {
+                    scores[idx] += sparse_table[h] as f64;
                 }
-                for &h in &s.sparse[idx] {
-                    score += sparse_table[h] as f64;
-                }
-                scores.push(score);
             }
 
             let max_s = scores.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
@@ -368,15 +376,14 @@ fn main() {
             );
         }
     }
-    println!("Reranker training completed in {:.2?}.", rank_t0.elapsed());
+    println!("Reranker trained in {:.2?}.", rank_t0.elapsed());
 
     // -------------------------------------------------------------------------
-    // Phase 4: Package into Unified Model Container
+    // Phase 4: Pack Unified Model
     // -------------------------------------------------------------------------
-    println!("\n[Phase 4/4] Assembling Unified Model Container -> {} ...", out_path.display());
+    println!("\n[Phase 4/4] Packing Unified Model -> {} ...", out_path.display());
     let pack_t0 = Instant::now();
 
-    // Quantize sparse table to signed 8-bit integers with dynamic range scaling
     let max_sparse = sparse_table.iter().map(|w| w.abs()).fold(0.0f32, f32::max);
     let sparse_scale = if max_sparse > 0.0 { 127.0 / max_sparse } else { 1.0 };
     let quantized_table: Vec<i8> = sparse_table
@@ -386,36 +393,68 @@ fn main() {
     let non_zero = quantized_table.iter().filter(|&&w| w != 0).count();
     println!("Quantized sparse table: {} non-zero weights (scale: {:.4})", non_zero, sparse_scale);
 
-    if wasm_mode {
-        println!("Pruning unreferenced aksharas for WASM profile...");
-        let mut seen_aks = std::collections::HashSet::new();
-        for word in vocab_freq.keys() {
-            for a in akshar_ime::core::akshara::segment(word) {
-                if let Some(id) = translit_model.akshara_id(&a) {
-                    seen_aks.insert(id);
-                }
+    println!("Pruning unreferenced aksharas and cleaning non-Nepali transitions...");
+    let mut seen_aks = std::collections::HashSet::new();
+    for word in vocab_freq.keys() {
+        for a in akshar_ime::core::akshara::segment(word) {
+            if let Some(id) = translit_model.akshara_id(&a) {
+                seen_aks.insert(id);
             }
         }
-        let before_em = translit_model.emissions.iter().filter(|e| !e.is_empty()).count();
-        for (a, em) in translit_model.emissions.iter_mut().enumerate() {
-            if !seen_aks.contains(&(a as u32)) {
-                em.clear();
-            }
-        }
-        let after_em = translit_model.emissions.iter().filter(|e| !e.is_empty()).count();
-        println!("Pruned unused emission rows: {} -> {}", before_em, after_em);
     }
+    let before_em = translit_model.emissions.iter().filter(|e| !e.is_empty()).count();
+    for (a, em) in translit_model.emissions.iter_mut().enumerate() {
+        if !seen_aks.contains(&(a as u32)) {
+            em.clear();
+        }
+    }
+    for (a, bi) in translit_model.bigrams.iter_mut().enumerate() {
+        if !seen_aks.contains(&(a as u32)) {
+            bi.clear();
+        } else {
+            bi.retain(|(next_id, _)| seen_aks.contains(next_id));
+        }
+    }
+    let mut new_keys = Vec::new();
+    let mut new_trigrams = Vec::new();
+    let mut new_backoff = Vec::new();
+    for (i, &(a, b)) in translit_model.trigram_keys.iter().enumerate() {
+        if seen_aks.contains(&a) && seen_aks.contains(&b) {
+            let mut list = translit_model.trigrams[i].clone();
+            list.retain(|(c, _)| seen_aks.contains(c));
+            if !list.is_empty() {
+                new_keys.push((a, b));
+                new_trigrams.push(list);
+                new_backoff.push(translit_model.trigram_backoff.get(i).copied().unwrap_or(0.0));
+            }
+        }
+    }
+    translit_model.trigram_keys = new_keys;
+    translit_model.trigrams = new_trigrams;
+    translit_model.trigram_backoff = new_backoff;
+    translit_model.build_trigram_index();
+    let after_em = translit_model.emissions.iter().filter(|e| !e.is_empty()).count();
+    println!("Pruned unused emission rows: {} -> {} (and cleaned transitions)", before_em, after_em);
 
     // Context bigrams: optional
-    let bigrams: Option<HashMap<String, Vec<(String, u32)>>> = if wasm_mode {
-        println!("WASM profile: excluding bigram table to minimize binary download footprint.");
+    let bigrams: Option<HashMap<String, Vec<(String, u32)>>> = if wasm_mode || bigram_min_freq == 0 {
+        println!("Excluding bigram table from unified model container.");
         None
     } else {
         let p = PathBuf::from("data/word_bigrams.bin");
         if p.exists() {
-            println!("Bundling existing bigrams from {} ...", p.display());
+            println!("Bundling bigrams from {} (filtering tail pairs < {} freq)...", p.display(), bigram_min_freq);
             let f = std::fs::File::open(&p).ok();
-            f.and_then(|r| bincode::deserialize_from(std::io::BufReader::new(r)).ok())
+            let mut bg: Option<HashMap<String, Vec<(String, u32)>>> = f.and_then(|r| bincode::deserialize_from(std::io::BufReader::new(r)).ok());
+            if let Some(ref mut map) = bg {
+                if bigram_min_freq > 1 {
+                    for list in map.values_mut() {
+                        list.retain(|(_, f)| *f >= bigram_min_freq);
+                    }
+                    map.retain(|_, list| !list.is_empty());
+                }
+            }
+            bg
         } else {
             None
         }

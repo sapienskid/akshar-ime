@@ -87,11 +87,20 @@ python3 data/pipeline/build_corpus.py data/store/corpus_clean.txt \
 cargo run --release --bin train
 # or simply: make train
 
-# Alternatively, repack loose binaries into akshar.model:
-cargo run --release --bin pack_model
+# Full overnight whole-corpus run (3.59M pairs):
+# cargo run --release --bin train -- --reranker-pairs 0 --epochs 5 --bigram-min-freq 5
 
-# 4. Evaluate
-cargo run --release --bin evaluate_aksharantar
+# Inspect model breakdown and sub-component sizes:
+cargo run --release --bin probe_model -- --model data/akshar.model --inspect
+
+# Pack unified model with customizable bigram filtering:
+cargo run --release --bin pack_model -- --bigram-min-freq 5 --out data/akshar.model
+
+# Pack lightweight WASM profile (no bigrams, 47 MB):
+cargo run --release --bin pack_model -- --no-bigrams --out data/akshar_wasm.model
+
+# 4. Evaluate (Aksharantar Nepali test split: 4,101 cases)
+cargo run --release --bin evaluate_aksharantar -- --model data/akshar.model
 ```
 
 ## Rules that prevent repeat incidents
@@ -102,5 +111,5 @@ cargo run --release --bin evaluate_aksharantar
   via explicit `--merge-base` (a news-only vocabulary once silently overwrote
   the real one and cost 1.2 accuracy points).
 - **Backup before destroying:** gzip snapshot into `data/backup/` first.
-- Verified result of the current chain: **81.93% native top-1, 91.94% top-5** through the
-  full engine (canonical discriminative reranker + candidate union + bigram context).
+- Verified result of the current chain: **82.12% native top-1, 92.13% top-5** through the
+  full engine (canonical discriminative reranker + candidate union + pruned syllable lattice).

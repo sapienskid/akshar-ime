@@ -19,6 +19,7 @@ fn main() {
     let mut vocab_path = "data/word_freq_text.bin".to_string();
     let mut out_path = "data/translit_model.bin".to_string();
     let mut min_count = 1u32;
+    let mut no_trigrams = false;
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
@@ -26,6 +27,7 @@ fn main() {
             "--vocab" => vocab_path = args.next().expect("v"),
             "--out" => out_path = args.next().expect("v"),
             "--min-count" => min_count = args.next().expect("v").parse().unwrap(),
+            "--no-trigrams" => no_trigrams = true,
             other => {
                 eprintln!("unknown arg {other}");
                 std::process::exit(2);
@@ -48,19 +50,63 @@ fn main() {
             }
         }
     }
-    let before: usize = model.emissions.iter().filter(|e| !e.is_empty()).count();
+    let before_em: usize = model.emissions.iter().filter(|e| !e.is_empty()).count();
+    let before_bi: usize = model.bigrams.iter().map(|b| b.len()).sum();
+    let before_tri: usize = model.trigrams.iter().map(|t| t.len()).sum();
+
+    // 1. Prune emissions
     for (a, em) in model.emissions.iter_mut().enumerate() {
         if !seen.contains(&(a as u32)) {
             em.clear();
         }
     }
-    let after: usize = model.emissions.iter().filter(|e| !e.is_empty()).count();
-    // chunks still referenced stay; unreferenced ones are harmless.
+
+    // 2. Prune bigrams
+    for (a, bi) in model.bigrams.iter_mut().enumerate() {
+        if !seen.contains(&(a as u32)) {
+            bi.clear();
+        } else {
+            bi.retain(|(next_id, _)| seen.contains(next_id));
+        }
+    }
+
+    // 3. Prune trigrams
+    if no_trigrams {
+        model.trigram_keys.clear();
+        model.trigrams.clear();
+        model.trigram_backoff.clear();
+        model.build_trigram_index();
+    } else {
+        let mut new_keys = Vec::new();
+        let mut new_trigrams = Vec::new();
+        let mut new_backoff = Vec::new();
+        for (i, &(a, b)) in model.trigram_keys.iter().enumerate() {
+            if seen.contains(&a) && seen.contains(&b) {
+                let mut list = model.trigrams[i].clone();
+                list.retain(|(c, _)| seen.contains(c));
+                if !list.is_empty() {
+                    new_keys.push((a, b));
+                    new_trigrams.push(list);
+                    new_backoff.push(model.trigram_backoff.get(i).copied().unwrap_or(0.0));
+                }
+            }
+        }
+        model.trigram_keys = new_keys;
+        model.trigrams = new_trigrams;
+        model.trigram_backoff = new_backoff;
+        model.build_trigram_index();
+    }
+
+    let after_em: usize = model.emissions.iter().filter(|e| !e.is_empty()).count();
+    let after_bi: usize = model.bigrams.iter().map(|b| b.len()).sum();
+    let after_tri: usize = model.trigrams.iter().map(|t| t.len()).sum();
+
     model.save(Path::new(&out_path)).expect("save");
     eprintln!(
-        "pruned emissions: {} -> {} aksharas with candidates (vocabulary words: {})",
-        before,
-        after,
-        map.len()
+        "Pruning stats:\n  Emissions: {} -> {} aksharas\n  Bigrams  : {} -> {} transitions\n  Trigrams : {} -> {} transitions across {} contexts",
+        before_em, after_em,
+        before_bi, after_bi,
+        before_tri, after_tri,
+        model.trigram_keys.len()
     );
 }

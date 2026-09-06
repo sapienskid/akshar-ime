@@ -35,6 +35,7 @@ fn main() {
     };
     let mut out_p = PathBuf::from("data/akshar.model");
     let mut min_freq: u32 = 1;
+    let mut bigram_min_freq: u32 = 1;
 
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -46,15 +47,17 @@ fn main() {
             "--no-bigrams" => bigrams_p = None,
             "--out" | "-o" => out_p = PathBuf::from(args.next().expect("value for --out")),
             "--min-freq" => min_freq = args.next().expect("value for --min-freq").parse().unwrap(),
+            "--bigram-min-freq" => bigram_min_freq = args.next().expect("value for --bigram-min-freq").parse().unwrap(),
             "-h" | "--help" => {
                 println!("Usage: cargo run --release --bin pack_model -- [options]");
-                println!("  --translit <path>  EM transliteration model");
-                println!("  --sparse <path>    Sparse reranker table");
-                println!("  --vocab <path>     Word frequency vocabulary");
-                println!("  --bigrams <path>   Word bigrams (optional)");
-                println!("  --no-bigrams       Exclude bigrams");
-                println!("  --min-freq <n>     Prune vocabulary below this frequency (default: 1)");
-                println!("  --out <path>       Output path (default: data/akshar.model)");
+                println!("  --translit <path>         EM transliteration model");
+                println!("  --sparse <path>           Sparse reranker table");
+                println!("  --vocab <path>            Word frequency vocabulary");
+                println!("  --bigrams <path>          Word bigrams (optional)");
+                println!("  --no-bigrams              Exclude bigrams");
+                println!("  --min-freq <n>            Prune vocabulary below this frequency (default: 1)");
+                println!("  --bigram-min-freq <n>     Prune bigrams below this frequency (default: 1)");
+                println!("  --out <path>              Output path (default: data/akshar.model)");
                 return;
             }
             other => {
@@ -92,8 +95,17 @@ fn main() {
         if bp.exists() {
             print!("4. Loading word bigrams ({}) ... ", bp.display());
             let bigram_bytes = std::fs::read(bp).expect("read bigrams");
-            let bg: HashMap<String, Vec<(String, u32)>> = bincode::deserialize(&bigram_bytes).expect("deserialize bigrams");
-            println!("done ({} context heads)", bg.len());
+            let mut bg: HashMap<String, Vec<(String, u32)>> = bincode::deserialize(&bigram_bytes).expect("deserialize bigrams");
+            let initial_heads = bg.len();
+            if bigram_min_freq > 1 {
+                for list in bg.values_mut() {
+                    list.retain(|(_, f)| *f >= bigram_min_freq);
+                }
+                bg.retain(|_, list| !list.is_empty());
+                println!("done (pruned with min-freq >= {}: {} -> {} context heads)", bigram_min_freq, initial_heads, bg.len());
+            } else {
+                println!("done ({} context heads)", bg.len());
+            }
             Some(bg)
         } else {
             println!("4. Word bigrams file not found; omitting.");

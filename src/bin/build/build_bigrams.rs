@@ -11,9 +11,21 @@ use std::io::{BufRead, BufReader, Write};
 fn main() {
     let mut args = std::env::args().skip(1);
     let mut input = "data/store/word_pairs.csv".to_string();
+    let mut out = "data/word_bigrams.bin".to_string();
+    let mut min_freq: u32 = 1;
     while let Some(a) = args.next() {
-        if a == "--in" {
-            input = args.next().expect("--in <path>");
+        match a.as_str() {
+            "--in" => input = args.next().expect("--in <path>"),
+            "--out" => out = args.next().expect("--out <path>"),
+            "--min-freq" => min_freq = args.next().expect("--min-freq <n>").parse().unwrap(),
+            "-h" | "--help" => {
+                println!("Usage: build_bigrams [--in path] [--out path] [--min-freq n]");
+                return;
+            }
+            other => {
+                eprintln!("Unknown argument: {other}");
+                std::process::exit(2);
+            }
         }
     }
     let mut map: HashMap<String, Vec<(String, u32)>> = HashMap::new();
@@ -29,7 +41,7 @@ fn main() {
             parts.next().unwrap_or(""),
             parts.next().unwrap_or("0").parse::<u32>().unwrap_or(0),
         );
-        if w1.is_empty() || w2.is_empty() || freq == 0 {
+        if w1.is_empty() || w2.is_empty() || freq < min_freq {
             continue;
         }
         map.entry(w1.to_string())
@@ -41,8 +53,7 @@ fn main() {
         succ.sort_unstable_by_key(|b| std::cmp::Reverse(b.1));
     }
     let bytes = bincode::serialize(&map).expect("serialize");
-    let out = "data/word_bigrams.bin";
-    let mut f = std::fs::File::create(out).expect("create");
+    let mut f = std::fs::File::create(&out).expect("create");
     f.write_all(&bytes).expect("write");
     let n_pairs: usize = map.values().map(|v| v.len()).sum();
     eprintln!(
