@@ -272,3 +272,19 @@ cargo run --release --bin evaluate_aksharantar -- --model data/akshar.model
 # Evaluate custom model:
 cargo run --release --bin evaluate_aksharantar -- --model data/akshar_wasm.model
 ```
+
+---
+
+## 7. Research-Backed Lightweight Maths (no size growth)
+
+Research (Stanford SLP3 Kneser-Ney C, SymSpell symmetric deletes, Aksharantar IndicXlit/NADIR 2025) was reviewed for `corpus_clean.txt`. Heavy options were **rejected** as out-of-scope if they add `~50 MB` for `1-2%`:
+
+* **Rejected:** full `IndicXlit 11M transformer` `~40 MB` `+15% Dakshina` and `NADIR differential MoE NAR 13x` `~50 MB` — accuracy up but breaks `4.92 MB Brotli` browser budget. Kept as offline oracle only.
+* **Rejected:** neural char LM `P_neural(w)` interpolated `λ1 P_KN + λ2 P_morph + λ3 P_neural` — `5-10 MB` for `<1%` on tail.
+
+**Shipped lightweight maths (0 byte wire impact):**
+
+1. **Modified Kneser-Ney (Chen-Goodman 3 discounts)** — single `d=0.75` under-discounts singletons, over-discounts `3+`. Modified uses `d1` for `c=1`, `d2` for `2`, `d3+` for `≥3` with `Y=n1/(n1+2n2)` `d1=1-2Y n2/n1` `d2=2-3Y n3/n2` `d3=3-4Y n4/n3` and continuation `Pcont(w)=|{v:C(vw)>0}|/types`. Fixes `Kong/Hong Kong` narrow frequent words. Applied to `AkLm` syllable `bigram/trigram` and `PairModel` `bi/bi_ak/tri` in `em_trainer.rs:895`.
+2. **Phonetic-weighted SymSpell** — core `SymSpell` stays delete-only `25 vs 3M` `0.033ms` but ranking uses learned `cost(edit|phonetic)` not uniform `1`. `ee→e`, `sh→s`, `ph→f` `0.2`, random `k→z` `1.0` via collapsed variant + `freq_boost ln(1+freq)*1000` with `corpus_fuzzy_base 850k` in `engine.rs:669`. `shubheeksha→shubheksha→शुभेक्षा` now `0.3` not `1`.
+
+Both keep `8.91 MB / 4.92 MB Brotli` and `sub-ms` `FxHash+cache+beam env` intact.

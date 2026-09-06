@@ -64,6 +64,14 @@ impl SymSpell {
         candidates
     }
 
+    pub fn len(&self) -> usize {
+        self.deletes.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.deletes.is_empty()
+    }
+
     /// Generates all unique string variants within the max_edit_distance.
     /// This includes the original string itself.
     fn generate_edits(&self, word: &str) -> HashSet<String> {

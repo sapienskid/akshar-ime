@@ -103,7 +103,10 @@ uninstall:  ## Remove the engine from the system.
 
 reinstall: uninstall install  ## Run uninstall and then install.
 
-train:  ## Run the end-to-end one-shot model training pipeline (full 3.59M, chunked, ~40min).
+train:  ## Run the end-to-end training pipeline (500k pairs, chunked, ~40min).
+	@cargo run --release --bin train -- --reranker-pairs 500000 --epochs 5 --iterations 12
+
+train-full:  ## Full training (3.59M pairs, chunked ~3.5h, was 18h before fix).
 	@cargo run --release --bin train -- --reranker-pairs 0 --epochs 5 --iterations 12
 
 train-quick:  ## Fast training (100k pairs, ~10min).

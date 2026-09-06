@@ -66,6 +66,84 @@ fn adaptive_beam(roman_len: usize) -> usize {
         base
     }
 }
+
+fn corpus_fuzzy_limit() -> usize {
+    #[cfg(target_arch = "wasm32")]
+    {
+        return 0;
+    }
+    std::env::var("AKSHAR_FUZZY_CORPUS_SIZE")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|&v| v <= 500_000)
+        .unwrap_or(100_000)
+}
+
+fn build_corpus_symspell(
+    model: &TranslitModel,
+    vocab: &HashMap<String, u32>,
+) -> (SymSpell, Vec<String>) {
+    let limit = corpus_fuzzy_limit();
+    if limit == 0 || vocab.is_empty() {
+        return (SymSpell::new(1), Vec::new());
+    }
+    let mut by_freq: Vec<(&String, u32)> = vocab.iter().map(|(w, &c)| (w, c)).collect();
+    by_freq.sort_unstable_by_key(|b| std::cmp::Reverse(b.1));
+    by_freq.truncate(limit);
+
+    let mut best_chunk: std::collections::HashMap<u32, String> = std::collections::HashMap::new();
+    for (aid, emissions) in model.emissions.iter().enumerate() {
+        if let Some((cid, _)) = emissions
+            .iter()
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .and_then(|(cid, _)| model.chunks.get(*cid as usize).map(|c| (*cid, c)))
+        {
+            best_chunk.insert(aid as u32, model.chunks[cid as usize].clone());
+        }
+    }
+
+    let mut sym = SymSpell::new(1);
+    let mut words: Vec<String> = Vec::with_capacity(by_freq.len());
+    for (word, _) in &by_freq {
+        words.push((*word).clone());
+    }
+    for (word_id, (word, _)) in by_freq.iter().enumerate() {
+        let aks = crate::core::akshara::segment(word);
+        let mut roman = String::with_capacity(word.len());
+        let mut ok = true;
+        for ak in aks {
+            if let Some(aid) = model.akshara_id(&ak) {
+                if let Some(ch) = best_chunk.get(&aid) {
+                    roman.push_str(ch);
+                } else {
+                    ok = false;
+                    break;
+                }
+            } else {
+                ok = false;
+                break;
+            }
+        }
+        if ok && !roman.is_empty() {
+            sym.add_word(&roman, word_id);
+            // collapsed ee/oo for shubheeksha -> shubheksha
+            let mut collapsed = String::with_capacity(roman.len());
+            let mut prev: Option<char> = None;
+            for c in roman.chars() {
+                let is_vowel = matches!(c, 'a' | 'e' | 'i' | 'o' | 'u');
+                if is_vowel && prev == Some(c) {
+                    continue;
+                }
+                collapsed.push(c);
+                prev = Some(c);
+            }
+            if collapsed != roman {
+                sym.add_word(&collapsed, word_id);
+            }
+        }
+    }
+    (sym, words)
+}
 /// Scale converting a reranker log-score into the engine's higher-better u64 score.
 const FRESH_SCALE: f64 = 800_000.0;
 /// Purnabiram (।, U+0964) — mapped from a trailing '.'.
@@ -79,10 +157,32 @@ const LEXICON_EXACT_BONUS: u64 = 0;
 const LEXICON_ONLY_SCORE: u64 = 5_000;
 /// User-confirmed word from the learned trie.  Above any fresh+lexicon score
 /// so a word the user picked before always wins.
-const USER_TRIE_BASE: u64 = 500_000;
+const DEFAULT_USER_TRIE_BASE: u64 = 900_000;
 /// Fuzzy (edit-distance) match over user-learned roman variants.
-const FUZZY_BASE: u64 = 50_000;
+const DEFAULT_FUZZY_BASE: u64 = 50_000;
+const DEFAULT_CORPUS_FUZZY_BASE: u64 = 850_000;
 const FUZZY_DISTANCE_PENALTY_SCALE: u64 = 12_000;
+
+fn user_trie_base() -> u64 {
+    std::env::var("AKSHAR_USER_TRIE_BASE")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(DEFAULT_USER_TRIE_BASE)
+}
+fn fuzzy_base() -> u64 {
+    std::env::var("AKSHAR_FUZZY_BASE")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(DEFAULT_FUZZY_BASE)
+}
+fn corpus_fuzzy_base() -> u64 {
+    std::env::var("AKSHAR_CORPUS_FUZZY_BASE")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(DEFAULT_CORPUS_FUZZY_BASE)
+}
+#[allow(dead_code)]
+const CORPUS_FUZZY_BASE: u64 = 850_000;
 
 pub struct ImeEngine {
     pub decoder: ModelDecoder,
@@ -90,12 +190,14 @@ pub struct ImeEngine {
     pub lexicon: Option<RomanLexicon>,
     /// Corpus-vocabulary data for the discriminative reranker (native builds with
     /// word_freq_text.bin present; None on WASM-lite or missing file).
-    reranker_data: Option<crate::core::reranker::RerankerData>,
+    pub reranker_data: Option<crate::core::reranker::RerankerData>,
     /// W3: Candidate Union word trie over vocabulary.
     word_trie: Option<crate::core::wordtrie::WordTrie>,
     pub trie: Trie,
     pub context_model: ContextModel,
     pub symspell: SymSpell,
+    pub corpus_symspell: SymSpell,
+    pub corpus_words: Vec<String>,
     pub(crate) transliteration_model: TransliterationModel,
     learning_engine: LearningEngine,
     #[allow(dead_code)]
@@ -130,6 +232,11 @@ impl ImeEngine {
         let word_trie = reranker_data.as_ref().map(|v| {
             crate::core::wordtrie::WordTrie::from_freq_map(&v.freq, &|a| decoder.model.akshara_id(a), 1)
         });
+        let (corpus_symspell, corpus_words) = if let Some(ref data) = reranker_data {
+            build_corpus_symspell(&decoder.model, &data.freq)
+        } else {
+            (SymSpell::new(1), Vec::new())
+        };
         Self {
             decoder,
             reranker,
@@ -139,6 +246,8 @@ impl ImeEngine {
             trie: Trie::new(),
             context_model: ContextModel::new(CONTEXT_WINDOW_SIZE),
             symspell: SymSpell::default(),
+            corpus_symspell,
+            corpus_words,
             transliteration_model: TransliterationModel::new(),
             learning_engine: LearningEngine::new(),
             dictionary_path: None,
@@ -166,6 +275,9 @@ impl ImeEngine {
             &|a| decoder.model.akshara_id(a),
             1,
         ));
+        let vocab_for_corpus = unified.vocab_freq.clone();
+        let (corpus_symspell, corpus_words) =
+            build_corpus_symspell(&decoder.model, &vocab_for_corpus);
         let reranker_data = Some(crate::core::reranker::RerankerData {
             freq: unified.vocab_freq,
             ranks,
@@ -179,6 +291,8 @@ impl ImeEngine {
             trie: Trie::new(),
             context_model: ContextModel::new(CONTEXT_WINDOW_SIZE),
             symspell: SymSpell::default(),
+            corpus_symspell,
+            corpus_words,
             transliteration_model: TransliterationModel::new(),
             learning_engine: LearningEngine::new(),
             dictionary_path: None,
@@ -245,6 +359,11 @@ impl ImeEngine {
         let word_trie = reranker_data.as_ref().map(|v| {
             crate::core::wordtrie::WordTrie::from_freq_map(&v.freq, &|a| decoder.model.akshara_id(a), 1)
         });
+        let (corpus_symspell, corpus_words) = if let Some(ref data) = reranker_data {
+            build_corpus_symspell(&decoder.model, &data.freq)
+        } else {
+            (SymSpell::new(1), Vec::new())
+        };
         Self {
             decoder,
             reranker,
@@ -254,6 +373,8 @@ impl ImeEngine {
             trie: Trie::new(),
             context_model: ContextModel::new(CONTEXT_WINDOW_SIZE),
             symspell: SymSpell::new(MAX_EDIT_DISTANCE),
+            corpus_symspell,
+            corpus_words,
             transliteration_model: HashMap::new(),
             learning_engine: LearningEngine::new(),
             dictionary_path: None,
@@ -528,7 +649,7 @@ impl ImeEngine {
             // 3. User-learned dictionary (trie).
             for (word_id, freq) in self.trie.get_top_k_suggestions(roman, count * 3) {
                 if let Some(meta) = self.trie.metadata_store.get(word_id) {
-                    add(meta.devanagari.clone(), USER_TRIE_BASE.saturating_add(freq));
+                    add(meta.devanagari.clone(), user_trie_base().saturating_add(freq));
                 }
             }
 
@@ -538,9 +659,26 @@ impl ImeEngine {
                     if let Some(min_dist) = self.min_roman_distance(roman, meta, MAX_EDIT_DISTANCE)
                     {
                         let dist_penalty = (min_dist as u64) * FUZZY_DISTANCE_PENALTY_SCALE;
-                        let score = FUZZY_BASE.saturating_sub(dist_penalty);
+                        let score = fuzzy_base().saturating_sub(dist_penalty);
                         add(meta.devanagari.clone(), score);
                     }
+                }
+            }
+
+            // 4b. Corpus fuzzy (cold-start, no learning needed) — shubheeksha vs shubheksha
+            for word_id in self.corpus_symspell.lookup(roman) {
+                if let Some(dev) = self.corpus_words.get(word_id) {
+                    let freq = self
+                        .reranker_data
+                        .as_ref()
+                        .and_then(|d| d.freq.get(dev))
+                        .copied()
+                        .unwrap_or(0) as f64;
+                    let freq_boost = (freq.ln_1p() * 1000.0) as u64;
+                    let score = corpus_fuzzy_base()
+                        .saturating_sub(qv.penalty)
+                        .saturating_add(freq_boost);
+                    add(dev.clone(), score);
                 }
             }
         }
@@ -883,6 +1021,8 @@ mod tests {
             trie: Trie::new(),
             context_model: ContextModel::new(3),
             symspell: SymSpell::new(2),
+            corpus_symspell: SymSpell::new(1),
+            corpus_words: Vec::new(),
             transliteration_model: HashMap::new(),
             learning_engine: LearningEngine::new(),
             dictionary_path: None,

@@ -336,7 +336,41 @@ impl Trainer {
         }
     }
 
-    fn build_kn_lm(&self, model: &mut TranslitModel, delta: f64) {
+    fn modified_discounts(counts: &HashMap<(u32, u32), u64>, counts_tri: Option<&HashMap<(u32, u32, u32), u64>>) -> (f64, f64, f64) {
+        // Chen-Goodman modified Kneser-Ney: 3 discounts from n1..n4
+        let mut n = [0u64; 5];
+        if let Some(tri) = counts_tri {
+            for &c in tri.values() {
+                if (1..=4).contains(&c) {
+                    n[c as usize] += 1;
+                }
+            }
+        } else {
+            for &c in counts.values() {
+                if (1..=4).contains(&c) {
+                    n[c as usize] += 1;
+                }
+            }
+        }
+        if n[1] == 0 || n[2] == 0 {
+            return (0.5, 0.75, 0.95);
+        }
+        let y = n[1] as f64 / (n[1] as f64 + 2.0 * n[2] as f64);
+        let d1 = (1.0 - 2.0 * y * n[2] as f64 / n[1].max(1) as f64).clamp(0.1, 0.9);
+        let d2 = (2.0 - 3.0 * y * n[3] as f64 / n[2].max(1) as f64).clamp(0.1, 0.9);
+        let d3 = (3.0 - 4.0 * y * n[4] as f64 / n[3].max(1) as f64).clamp(0.1, 0.95);
+        (d1, d2, d3)
+    }
+
+    fn discount_for(cnt: u64, d1: f64, d2: f64, d3: f64) -> f64 {
+        match cnt {
+            1 => d1,
+            2 => d2,
+            _ => d3,
+        }
+    }
+
+    fn build_kn_lm(&self, model: &mut TranslitModel, _delta: f64) {
         let n = self.akshara_list.len();
         let distinct = self.distinct_bigrams as f64;
         let mut unigram_kn = vec![0.0f32; n];
@@ -352,6 +386,7 @@ impl Trainer {
             by_left.entry(b).or_default().push((c, cnt));
         }
 
+        let (d1_bi, d2_bi, d3_bi) = Self::modified_discounts(&self.bigram_counts, None);
         let mut bigrams = vec![Vec::new(); n];
         let mut backoff = vec![0.0f32; n];
         for a in 0..n {
@@ -361,12 +396,13 @@ impl Trainer {
                 continue;
             };
             let total: u64 = list.iter().map(|(_, c)| c).sum();
-            let n_distinct = list.len() as f64;
-            let lambda = delta * n_distinct / total as f64;
+            let disc_sum: f64 = list.iter().map(|(_, c)| Self::discount_for(*c, d1_bi, d2_bi, d3_bi)).sum();
+            let lambda = disc_sum / total as f64;
             backoff[a] = (-lambda.ln()) as f32;
             let mut v = Vec::with_capacity(list.len());
             for &(c, cnt) in list {
-                let disc = (cnt as f64 - delta).max(0.0) / total as f64;
+                let d = Self::discount_for(cnt, d1_bi, d2_bi, d3_bi);
+                let disc = (cnt as f64 - d).max(0.0) / total as f64;
                 let p_kn_c = (-unigram_kn[c as usize] as f64).exp();
                 let p = disc + lambda * p_kn_c;
                 let w = if p > 0.0 { -p.ln() } else { 50.0 };
@@ -399,15 +435,17 @@ impl Trainer {
         let mut trigram_keys = Vec::with_capacity(ctxs.len());
         let mut trigrams = Vec::with_capacity(ctxs.len());
         let mut trigram_backoff = Vec::with_capacity(ctxs.len());
+        let (d1_tri, d2_tri, d3_tri) = Self::modified_discounts(&HashMap::new(), Some(&self.trigram_counts));
         for &(a, b) in &ctxs {
             let list = &by_ctx[&(a, b)];
             let c_ab = self.bigram_counts.get(&(a, b)).copied().unwrap_or(1) as f64;
-            let a_succ = self.trigram_successors.get(&(a, b)).copied().unwrap_or(1) as f64;
-            let lambda = delta * a_succ / c_ab;
+            let disc_sum: f64 = list.iter().map(|(_, c)| Self::discount_for(*c, d1_tri, d2_tri, d3_tri)).sum();
+            let lambda = disc_sum / c_ab;
             trigram_backoff.push((-lambda.ln()) as f32);
             let mut v = Vec::with_capacity(list.len());
             for &(c, cnt) in list {
-                let disc = (cnt as f64 - delta).max(0.0) / c_ab;
+                let d = Self::discount_for(cnt, d1_tri, d2_tri, d3_tri);
+                let disc = (cnt as f64 - d).max(0.0) / c_ab;
                 let p_kn_c = (-model.bigram_weight(b, c)).exp();
                 let p = disc + lambda * p_kn_c;
                 let w = if p > 0.0 { -p.ln() } else { 50.0 };
