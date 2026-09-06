@@ -4,6 +4,41 @@ Use the Devanagari IME on **any website** via WebAssembly. The engine runs entir
 
 ---
 
+## Building the web model
+
+The browser loads the unified container, not the loose `.bin` files. Build the
+web profile from a trained model with:
+
+```bash
+# 1. Relative-entropy prune the syllable trigram LM (half the model's bytes).
+cargo run --release --bin prune_lm -- \
+  --model data/akshar.model --trigram-threshold 3e-2 --out /tmp/pruned.model
+
+# 2. Repack: compact encoding, renumber the akshara table, drop word bigrams.
+cargo run --release --bin repack_model -- \
+  --model /tmp/pruned.model --out data/akshar_wasm.model \
+  --no-bigrams --compact-aksharas
+
+# 3. Serve it Brotli-compressed.
+brotli -q 11 data/akshar_wasm.model
+```
+
+Size and accuracy are a tunable curve, measured on the 4,101-case Aksharantar
+Nepali test split. `--trigram-threshold` is the knob:
+
+| threshold | raw | Brotli | AK-Freq top-1 | top-5 |
+| --: | --: | --: | --: | --: |
+| 0 (no pruning) | 11.06 MB | 6.58 MB | 82.02% | 92.17% |
+| 5e-3 | 10.01 MB | 5.85 MB | 81.45% | 92.08% |
+| 1e-2 | 9.61 MB | 5.52 MB | 81.36% | 92.13% |
+| 2e-2 | 9.18 MB | 5.15 MB | 81.21% | 92.13% |
+| **3e-2** (shipped) | **8.91 MB** | **4.92 MB** | **81.07%** | **92.22%** |
+
+Top-5 is flat across the whole range: pruning reorders the top of the list, it
+does not lose candidates. Drop the `--no-bigrams` flag to keep the word-bigram
+table, which costs 19.54 MB for +0.16pp of in-context accuracy — worth it on
+desktop, not on the wire.
+
 ## Quick start (any website, 3 lines)
 
 ```html
@@ -12,7 +47,7 @@ Use the Devanagari IME on **any website** via WebAssembly. The engine runs entir
 
 <script type="module">
   import { AksharIME } from 'https://cdn.example.com/akshar-ime/js/akshar-ime.js';
-  await AksharIME.init({ modelUrl: 'https://cdn.example.com/akshar-ime/translit_model.bin' });
+  await AksharIME.init({ modelUrl: 'https://cdn.example.com/akshar-ime/akshar_wasm.model' });
   AksharIME.autoAttach(); // done — all [data-akshar] now transliterate
 </script>
 ```
@@ -27,8 +62,8 @@ Type `namaste` → suggestion popup shows `नमस्ते` → `Enter`/`Tab`
 
 ```bash
 git clone https://github.com/sapienskid/akshar-ime
-cargo build --release --bin train_model --bin build_lexicon
-cargo run --release --bin train_model        # builds data/translit_model.bin
+cargo build --release --bin train --bin repack_model --bin prune_lm
+cargo run --release --bin train              # builds data/akshar.model
 cargo run --release --bin build_lexicon      # builds data/roman_lexicon.bin (optional)
 ./wasm/build.sh                               # builds wasm/pkg/
 # serve repo root: python -m http.server 8000
@@ -42,7 +77,7 @@ your-site/
   js/akshar-ime.js
   wasm/pkg/akshar_ime.js
   wasm/pkg/akshar_ime_bg.wasm
-  data/translit_model.bin   (or CDN URL)
+  data/akshar_wasm.model   (or CDN URL)
 ```
 
 ### Option B — npm (when published)
@@ -62,7 +97,7 @@ Vite / Next.js: add `akshar-ime` to `optimizeDeps` exclude if needed and copy `w
 
 ```js
 await AksharIME.init({
-  modelUrl: '/data/translit_model.bin',   // required (≈21 MB, 9–11 MB with br/gzip)
+  modelUrl: '/data/akshar_wasm.model',   // required (8.91 MB, 4.92 MB with br)
   lexiconUrl: '/data/roman_lexicon.bin',  // optional (adds ~25 MB gzip) — boosts exact-word ranking
   rerankerUrl: '/data/reranker_weights.json', // optional
   wasmUrl: '/wasm/pkg/akshar_ime_bg.wasm', // optional override
@@ -113,7 +148,7 @@ AksharIME.engine.isReady()
 ```js
 import init, { WasmEngine } from './wasm/pkg/akshar_ime.js';
 await init();
-const modelBytes = await fetch('/data/translit_model.bin').then(r => r.arrayBuffer());
+const modelBytes = await fetch('/data/akshar_wasm.model').then(r => r.arrayBuffer());
 const engine = new WasmEngine(new Uint8Array(modelBytes));
 engine.getSuggestions('namaste')
 ```
@@ -151,7 +186,7 @@ All computation is local:
 | `wasm/pkg/akshar_ime.js` (glue) | 26 KB | 5.7 KB | — | ESM glue |
 | `js/akshar-ime.js` (wrapper) | 13 KB | 4.1 KB | — | `AksharIME.attach` helper |
 | **Total WASM + JS** | **416 KB** | **~149 KB** | **~121 KB** | without model |
-| `translit_model.bin` | 21 MB | 11.1 MB | 9.1 MB | **required**, cache 1y |
+| `akshar_wasm.model` | 8.91 MB | 5.6 MB | **4.92 MB** | **required**, cache 1y |
 | `roman_lexicon.bin` | 118 MB | 24.4 MB | ~19 MB* | optional, skip for lite |
 | `reranker_weights.json` | 72 B | — | — | optional |
 
@@ -181,7 +216,7 @@ export function DevanagariInput(props) {
   useEffect(() => {
     let handle;
     (async () => {
-      await AksharIME.init({ modelUrl: '/data/translit_model.bin' });
+      await AksharIME.init({ modelUrl: '/data/akshar_wasm.model' });
       handle = AksharIME.attach(ref.current);
     })();
     return () => handle?.destroy();
@@ -194,7 +229,7 @@ export function DevanagariInput(props) {
 
 ```js
 onMounted(async () => {
-  await AksharIME.init({ modelUrl: '/data/translit_model.bin' });
+  await AksharIME.init({ modelUrl: '/data/akshar_wasm.model' });
   AksharIME.attach(inputEl.value);
 });
 ```
@@ -207,7 +242,7 @@ onMounted(async () => {
 </script>
 <script type="module">
   import { AksharIME } from 'akshar-ime';
-  await AksharIME.init({ modelUrl: 'https://cdn.jsdelivr.net/npm/akshar-ime@1.0.0/data/translit_model.bin' });
+  await AksharIME.init({ modelUrl: 'https://cdn.jsdelivr.net/npm/akshar-ime@1.0.0/data/akshar_wasm.model' });
   AksharIME.autoAttach();
 </script>
 ```

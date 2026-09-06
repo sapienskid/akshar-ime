@@ -58,11 +58,11 @@
 <pre><code>&lt;input data-akshar placeholder="type roman"&gt;
 &lt;script type="module"&gt;
 import { AksharIME } from './js/akshar-ime.js';
-await AksharIME.init({ modelUrl: '/data/translit_model.bin' });
+await AksharIME.init({ modelUrl: '/data/akshar_wasm.model' });
 AksharIME.autoAttach(); // attaches to all [data-akshar]
 &lt;/script&gt;</code></pre>
 
-  <p class="hint">Model: <code>data/translit_model.bin</code> (~21MB, 11MB gzipped, ~9MB brotli). Lexicon is optional (adds 25MB gzipped) — omit <code>lexiconUrl</code> for lite mode. Host on your CDN with <code>Content-Encoding: br</code> + long cache. Learned words persist in <code>localStorage</code>.</p>
+  <p class="hint">Model: <code>data/akshar_wasm.model</code> — 8.91 MB, <strong>4.92 MB Brotli</strong>. The unified container bundles the transliteration model, the 470k-word vocabulary and the reranker, so no separate lexicon is needed. Serve with <code>Content-Encoding: br</code> and a long cache. Learned words persist in <code>localStorage</code>.</p>
 
   <script type="module">
     import { AksharIME } from '../js/akshar-ime.js';
@@ -71,10 +71,10 @@ AksharIME.autoAttach(); // attaches to all [data-akshar]
     const stats = document.getElementById('stats');
 
     try {
-      // For local demo, model is at /data/translit_model.bin — served by `python -m http.server`
-      // In production, use CDN URL: https://cdn.example.com/akshar-ime/translit_model.bin
+      // For local demo, model is at /data/akshar_wasm.model — served by `python -m http.server`
+      // In production, use CDN URL: https://cdn.example.com/akshar-ime/akshar_wasm.model
       await AksharIME.init({
-        modelUrl: '../data/translit_model.bin',
+        modelUrl: '../data/akshar_wasm.model',
         // lexiconUrl: '../data/roman_lexicon.bin', // uncomment for full mode (needs hosting)
         // rerankerUrl: '../data/reranker_weights.json',
       });

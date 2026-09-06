@@ -294,12 +294,26 @@ impl ImeEngine {
         lexicon_bytes: Option<&[u8]>,
         reranker_json: Option<&str>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
-        let mut model = TranslitModel::from_bytes(model_bytes)?;
+        // The browser fetches whatever `create_engine(model_url, ...)` was
+        // pointed at.  Since the unified container exists that is normally
+        // `akshar.model`, which carries the vocabulary, reranker table and
+        // bigrams as well as the translit model — parsing it as a bare
+        // TranslitModel fails outright, and before this dispatch the WASM path
+        // could only ever load the legacy `translit_model.bin`.
+        //
+        // Detect the container by its magic and take the full path when it is
+        // one, so the browser gets the vocabulary prior and the trained sparse
+        // reranker instead of silently running without them.
+        if model_bytes.len() >= 4 && model_bytes[..4] == crate::core::unified::UNIFIED_MAGIC {
+            return Ok(Self::from_unified(
+                crate::core::unified::UnifiedModel::from_bytes(model_bytes)?,
+            ));
+        }
+
+        let model = TranslitModel::from_bytes(model_bytes)?;
         if !model.validate() {
             return Err("invalid translit model".into());
         }
-        // from_bytes already builds trigram index
-        let _ = &mut model; // keep
         let lexicon = if let Some(b) = lexicon_bytes {
             if b.is_empty() { None } else { RomanLexicon::from_bytes(b).ok() }
         } else { None };
@@ -881,6 +895,41 @@ fn load_bigrams() -> Option<HashMap<String, Vec<(String, u32)>>> {
     None
 }
 
+#[cfg(test)]
+mod dispatch_tests {
+    use super::*;
+
+    /// The WASM entry point must accept a unified container, not only a bare
+    /// translit model.  Regression: it parsed every payload as a TranslitModel,
+    /// so pointing the browser at `akshar.model` failed to load entirely.
+    #[test]
+    fn from_bytes_with_weights_accepts_a_unified_container() {
+        let mut translit = TranslitModel {
+            version: 1,
+            aksharas: vec!["क".to_string()],
+            chunks: vec!["ka".to_string()],
+            emissions: vec![vec![(0u32, 0.5f32)]],
+            bigrams: vec![vec![]],
+            backoff: vec![0.0],
+            unigram_kn: vec![0.0],
+            word_start: vec![0.0],
+            ..Default::default()
+        };
+        translit.build_trigram_index();
+        let mut vocab = HashMap::new();
+        vocab.insert("क".to_string(), 9u32);
+
+        let unified =
+            crate::core::unified::UnifiedModel::new(translit, vec![0i8; 4], 0.5, vocab, None);
+        let bytes = unified.to_bytes().expect("serialize");
+
+        let engine = ImeEngine::from_bytes_with_weights(&bytes, None, None)
+            .expect("unified container must load through the WASM entry point");
+        // The vocabulary rides along with the container; a bare TranslitModel
+        // parse would have produced an engine with none.
+        assert!(engine.reranker_data.is_some(), "vocabulary should be loaded");
+    }
+}
 
 #[cfg(test)]
 mod tests {

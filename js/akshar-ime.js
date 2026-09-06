@@ -5,7 +5,7 @@
  *
  * Usage (ES Module):
  *   import { AksharIME } from './js/akshar-ime.js';
- *   await AksharIME.init({ modelUrl: '/data/translit_model.bin' });
+ *   await AksharIME.init({ modelUrl: '/data/akshar_wasm.model' });
  *   AksharIME.attach(document.querySelector('input'));
  *   // or auto-attach all [data-akshar] elements:
  *   AksharIME.autoAttach();
@@ -32,7 +32,8 @@ export const AksharIME = {
   /**
    * Initialize the WASM engine.
    * @param {Object} opts
-   * @param {string} opts.modelUrl - URL to translit_model.bin (required)
+   * @param {string} opts.modelUrl - URL to akshar_wasm.model, the unified
+   *   container (required). A bare translit_model.bin is still accepted.
    * @param {string} [opts.lexiconUrl] - URL to roman_lexicon.bin (optional, +25MB gzipped)
    * @param {string} [opts.rerankerUrl] - URL to reranker_weights.json (optional)
    * @param {string} [opts.wasmUrl] - Override wasm pkg URL (default: auto)
@@ -44,7 +45,7 @@ export const AksharIME = {
 
     const modelUrl = opts.modelUrl || opts.model_url;
     if (!modelUrl) {
-      throw new Error('AksharIME.init({ modelUrl }) is required. Example: AksharIME.init({ modelUrl: "/data/translit_model.bin" })');
+      throw new Error('AksharIME.init({ modelUrl }) is required. Example: AksharIME.init({ modelUrl: "/data/akshar_wasm.model" })');
     }
 
     this._ready = (async () => {
