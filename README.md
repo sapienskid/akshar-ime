@@ -2,7 +2,11 @@
 
 **An intelligent, high-performance, and adaptive Input Method Engine for the Devanagari script.**
 
-Akshar Devanagari IME is a next-generation input method built from the ground up for speed, efficiency, and intelligence. It learns from your typing patterns to provide incredibly accurate and fast suggestions, all while maintaining a minimal memory and CPU footprint.
+Akshar Devanagari IME transliterates Roman-script input to Devanagari and learns
+from what you type. It runs on a classical statistical model — EM-trained
+emissions, a Kneser-Ney syllable LM and a discriminative reranker — with no
+neural network at runtime, in an 11.37 MB desktop container or a 4.94 MB Brotli
+browser bundle. Measured accuracy and latency are in [Measured performance](#measured-performance).
 
 ![CI](https://github.com/sapienskid/akshar-ime/actions/workflows/ci.yml/badge.svg)
 ![License](https://img.shields.io/badge/license-MIT-blue)
@@ -58,7 +62,8 @@ along a measured curve (see `docs/WASM.md`).
 ## Architectural Overview
 
 The engine is a modular, pure-Rust core with a C-API for integration with the
-IBus input framework on Linux, and a WebAssembly (WASM) interface for zero-latency in-browser typing.
+IBus input framework on Linux, and a WebAssembly (WASM) interface for
+in-browser typing.
 
 ```
 +-------------------------------------------------------------------+
@@ -205,7 +210,7 @@ akshar-ime/
 │   ├── WASM.md                         # WebAssembly architecture, performance & browser integration
 │   └── plans/                          # Historical design RFCs, math notes & milestone roadmaps
 ├── src/                                # Core Rust engine & platform bindings
-│   ├── core/                           # Classical SOTA transliteration core (zero neural deps)
+│   ├── core/                           # Classical transliteration core (no neural deps)
 │   │   ├── akshara.rs                  # Devanagari syllable segmentation & boundary detection
 │   │   ├── alignment.rs                # Dynamic programming char-level alignment (seeds EM)
 │   │   ├── context.rs                  # User history language model & re-ranking

@@ -241,7 +241,7 @@ A common point of confusion is whether the engine was only trained on 100,000 wo
 In `src/bin/train/train.rs`, candidate caching was refactored:
 * **Previous behavior:** Cached entire candidate structs, strings, and feature matrices, consuming several gigabytes of RAM.
 * **Optimized behavior:** Because the 29 dense weights and feature scalers are static, the composite base score ($S_{\text{base}} = \sum w_k \cdot \hat{f}_k$) is computed *once* during pre-decoding. The cached item only stores `(target_idx, base_scores, sparse_features)`.
-* **Result:** RAM consumption dropped by **>80%**, and subsequent training epochs execute nearly instantaneously in memory.
+* **Result:** RAM consumption dropped by **>80%**, and subsequent training epochs reuse the in-memory decode instead of re-decoding.
 
 ---
 

@@ -390,6 +390,101 @@ fn main() -> Result<()> {
     let mut lr: f64 = LR0;
     let mut dense_stats = DenseStats::new();
 
+    // Held-out dev set, taken from the tail of the corpus so it never overlaps
+    // the training slice.  Without this a long run reports only training loss,
+    // which cannot distinguish "learning" from "memorising 1M sparse slots":
+    // the table has ~1e6 parameters and no regularisation, so overfitting is
+    // the default failure and it was previously invisible.
+    const DEV_SIZE: usize = 4_000;
+    let dev_pairs: Vec<(String, String)> = if raw_pairs.len() > num_train_pairs + DEV_SIZE {
+        raw_pairs[raw_pairs.len() - DEV_SIZE..].to_vec()
+    } else {
+        Vec::new()
+    };
+
+    let dev_items: Vec<RerankItem> = if dev_pairs.is_empty() {
+        Vec::new()
+    } else {
+        let t0 = Instant::now();
+        let mut items = Vec::with_capacity(dev_pairs.len());
+        for (roman, gold) in &dev_pairs {
+            let cands = decoder.decode_union(roman, RERANK_DECODE_DEPTH, Some(&word_trie));
+            let (order, heur, heur_rank) = rank_candidates(&cands, &vocab_freq);
+            if let Some(target_idx) = order.iter().position(|c| c.dev == *gold) {
+                let sparse: Vec<Vec<usize>> = order
+                    .iter()
+                    .map(|c| {
+                        let aks = akshar_ime::core::akshara::segment(&c.dev);
+                        extract_sparse_features(&c.dev, roman, c.akshara_count, &aks)
+                    })
+                    .collect();
+                let base_scores: Vec<f64> = order
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, c)| {
+                        let dense = extract_dense_features(
+                            c, idx, heur[idx], heur_rank[idx], roman, &vocab_freq, &ranks,
+                        );
+                        (0..DENSE_DIM)
+                            .map(|k| W_DENSE[k] * ((dense[k] - MEAN_DENSE[k]) / STD_DENSE[k]))
+                            .sum()
+                    })
+                    .collect();
+                items.push(RerankItem {
+                    target_idx,
+                    base_scores,
+                    sparse,
+                });
+            }
+        }
+        println!(
+            "Held-out dev set: {} of {} pairs have the gold in the candidate list (decoded in {:.2?}).",
+            items.len(),
+            dev_pairs.len(),
+            t0.elapsed()
+        );
+        items
+    };
+
+    /// Loss and top-1 on the held-out set under the current sparse table.
+    fn dev_eval(items: &[RerankItem], table: &[f32]) -> Option<(f64, f64)> {
+        if items.is_empty() {
+            return None;
+        }
+        let (mut loss, mut hits) = (0.0f64, 0usize);
+        for s in items {
+            let mut scores = s.base_scores.clone();
+            for (idx, sf) in s.sparse.iter().enumerate() {
+                for &h in sf {
+                    scores[idx] += f64::from(table[h]);
+                }
+            }
+            let max_s = scores.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+            let exp_s: Vec<f64> = scores.iter().map(|&sc| (sc - max_s).exp()).collect();
+            let sum_exp: f64 = exp_s.iter().sum();
+            let p_target = (exp_s[s.target_idx] / (sum_exp + 1e-12)).max(1e-12);
+            loss += -p_target.ln();
+            if scores
+                .iter()
+                .enumerate()
+                .max_by(|a, b| a.1.total_cmp(b.1))
+                .is_some_and(|(i, _)| i == s.target_idx)
+            {
+                hits += 1;
+            }
+        }
+        let n = items.len() as f64;
+        Some((loss / n, hits as f64 / n * 100.0))
+    }
+
+    // Snapshot of the best table by dev loss, so a run that starts overfitting
+    // does not have to be thrown away.
+    let mut best_dev: Option<(f64, Vec<f32>)> = None;
+
+    if let Some((l, a)) = dev_eval(&dev_items, &sparse_table) {
+        println!("  dev before training: loss={l:.4} top-1={a:.2}%");
+    }
+
     if use_chunked {
         let total_batches = num_train_pairs.div_ceil(BATCH_SIZE);
         println!(
@@ -484,6 +579,16 @@ fn main() -> Result<()> {
                 samples.len(),
                 lr
             );
+            if let Some((dl, da)) = dev_eval(&dev_items, &sparse_table) {
+                let better = best_dev.as_ref().is_none_or(|(b, _)| dl < *b);
+                println!(
+                    "      dev: loss={dl:.4} top-1={da:.2}%{}",
+                    if better { "  <- best" } else { "" }
+                );
+                if better {
+                    best_dev = Some((dl, sparse_table.clone()));
+                }
+            }
             lr *= lr_decay_per_batch;
         }
         println!(
@@ -569,13 +674,29 @@ fn main() -> Result<()> {
             }
             lr *= 0.8;
             if !samples.is_empty() {
+                let dev = dev_eval(&dev_items, &sparse_table);
+                let better = match (&dev, &best_dev) {
+                    (Some((dl, _)), Some((b, _))) => dl < b,
+                    (Some(_), None) => true,
+                    _ => false,
+                };
                 println!(
-                    "  Epoch {}/{}: loss={:.4}, top-1 accuracy={:.2}%",
+                    "  Epoch {}/{}: train loss={:.4} top-1={:.2}%{}",
                     ep,
                     epochs,
                     ep_loss / samples.len() as f64,
-                    ep_hits as f64 / samples.len() as f64 * 100.0
+                    ep_hits as f64 / samples.len() as f64 * 100.0,
+                    match dev {
+                        Some((dl, da)) => format!(
+                            "  |  dev loss={dl:.4} top-1={da:.2}%{}",
+                            if better { "  <- best" } else { "" }
+                        ),
+                        None => String::new(),
+                    }
                 );
+                if let (Some((dl, _)), true) = (dev, better) {
+                    best_dev = Some((dl, sparse_table.clone()));
+                }
             }
         }
     }
@@ -584,6 +705,22 @@ fn main() -> Result<()> {
     // Phase 4: Pack
     println!("\n[Phase 4/4] Packing Unified Model -> {} ...", out_path.display());
     let pack_t0 = Instant::now();
+
+    // Pack the table that scored best on held-out data, not necessarily the
+    // last one: with ~1e6 unregularised sparse slots, later batches can overfit.
+    if let Some((dl, best)) = best_dev {
+        let final_dl = dev_eval(&dev_items, &sparse_table).map(|(l, _)| l);
+        if final_dl.is_some_and(|f| f > dl + 1e-9) {
+            println!(
+                "Packing the best-by-dev sparse table (dev loss {:.4}) rather than the final one ({:.4}).",
+                dl,
+                final_dl.unwrap_or(f64::NAN)
+            );
+            sparse_table = best;
+        } else {
+            println!("Final sparse table is the best by dev loss ({dl:.4}).");
+        }
+    }
 
     // Set the quantization scale from a high percentile of the non-zero weights
     // and clip the tail, rather than from the single largest weight.  One

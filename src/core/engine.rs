@@ -575,7 +575,6 @@ impl ImeEngine {
                     }
                 }
             }
-
         }
 
         // 5. Context re-rank for words the user has typed before.

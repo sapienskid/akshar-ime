@@ -20,9 +20,12 @@ DATA_DIR          := $(PREFIX)/share/akshar-ime
 
 # Relative-entropy pruning threshold for the browser model.  Higher = smaller
 # and less accurate; see docs/WASM.md for the measured curve.  3e-2 keeps 47%
-# of trigram transitions: 4.92 MB Brotli at 81.07% Aksharantar top-1.
+# of trigram transitions and yields 8.91 MB / 4.94 MB Brotli.  Its accuracy has
+# not been re-measured since the 2026-09-06 engine changes.
 TRIGRAM_THRESHOLD ?= 3e-2
-.PHONY: all release debug install uninstall reinstall clean reset-learning restart-ibus help wasm wasm-clean wasm-serve release-upload train pack
+.PHONY: all release debug test install uninstall reinstall clean reset-learning \
+        restart-ibus help wasm wasm-clean wasm-serve release-upload pack web-model \
+        train train-quick train-mid train-full eval eval-full eval-errors
 # --- Main Targets ---
 
 all: release  ## Build the engine for release (default).
@@ -33,9 +36,9 @@ debug:  ## Build the Rust library in debug mode.
 	@echo "Building Rust library in debug mode..."
 	@cargo build
 
-test:  ## Run the Rust test suite.
+test:  ## Run the Rust test suite (includes the accuracy regression guard).
 	@echo "Running Rust tests..."
-	@cargo test
+	@cargo test --release
 
 # --- Build Steps ---
 
@@ -103,14 +106,41 @@ uninstall:  ## Remove the engine from the system.
 
 reinstall: uninstall install  ## Run uninstall and then install.
 
-train:  ## Run the end-to-end training pipeline (500k pairs, chunked, ~40min).
+# --- Training -----------------------------------------------------------------
+#
+# NOTE: --reranker-pairs sizes the DISCRIMINATIVE RERANKER's training set only.
+# The EM emission model and the Kneser-Ney syllable LM always ingest all
+# 3,588,793 parallel pairs, and the vocabulary always comes from the full
+# corpus, regardless of which target you run.  These targets differ only in how
+# much ranking supervision the sparse table sees.
+#
+# Chunked mode (and therefore the per-batch learning-rate schedule) engages
+# above 200k pairs, so train-quick does NOT exercise it -- use train-mid to
+# validate a trainer change before committing to an overnight run.
+
+train-quick:  ## Reranker on 100k pairs, ~10min. Does NOT exercise chunked mode.
+	@cargo run --release --bin train -- --reranker-pairs 100000 --epochs 3 --iterations 12
+
+train-mid:  ## Reranker on 500k pairs (5 batches, ~40min). Validation gate for train-full.
 	@cargo run --release --bin train -- --reranker-pairs 500000 --epochs 5 --iterations 12
 
-train-full:  ## Full training (3.59M pairs, chunked ~3.5h, was 18h before fix).
+train: train-mid  ## Alias for train-mid.
+
+train-full:  ## Reranker on all 3.59M pairs (36 batches, ~4h). Watch the dev loss.
 	@cargo run --release --bin train -- --reranker-pairs 0 --epochs 5 --iterations 12
 
-train-quick:  ## Fast training (100k pairs, ~10min).
-	@cargo run --release --bin train -- --reranker-pairs 100000 --epochs 3 --iterations 12
+# --- Evaluation ---------------------------------------------------------------
+
+eval:  ## Aksharantar accuracy by split (AK-Freq / AK-NEF / AK-NEI).
+	@cargo run --release --bin evaluate_aksharantar -- \
+		--dataset data/aksharantar/test_devanagari.jsonl --topk 5 --show-misses 0
+
+eval-full:  ## Accuracy with bootstrap 95% CIs and per-query latency.
+	@cargo run --release --bin evaluate -- --resamples 1000
+
+eval-errors:  ## Oracle curves, error taxonomy, CER and the collision bound.
+	@cargo run --release --bin analyze_errors -- \
+		--dataset data/aksharantar/test_devanagari.jsonl --beam 256
 
 pack:  ## Pack model binaries into unified data/akshar.model container.
 	@cargo run --release --bin pack_model

@@ -352,3 +352,60 @@ Two things this sharpens:
    solving that class alone reaches 91.22% — confirming C2 as the right
    centrepiece, and D7 (`word_end`) as its cheapest down payment, since matra
    errors concentrate word-finally.
+
+
+---
+
+## 10. 100k smoke train, 2026-09-06
+
+`train --reranker-pairs 100000 --epochs 3 --iterations 12` on the post-Phase-B
+tree, evaluated against the pre-existing `data/akshar.model`.
+
+| | baseline `akshar.model` | smoke `akshar_smoke.model` |
+| :--- | ---: | ---: |
+| AK-Freq top-1 / top-5 | 81.83% / 92.22% | 81.55% / 92.31% |
+| AK-NEI top-1 / top-5 | 47.79% / 69.81% | 48.04% / 69.47% |
+| AK-NEF top-1 / top-5 | 31.21% / 53.00% | 30.60% / 53.00% |
+| All top-1 / top-5 | 62.0% / 78.0% | 61.79% / 77.93% |
+
+**Result: no measurable accuracy change.** At n=2,108 one standard error on
+AK-Freq is ≈0.84pp, so −0.28pp is noise. State this plainly rather than
+attributing it to any of the Phase B changes.
+
+### What the smoke run did establish
+
+1. **The pipeline runs end-to-end** with every Phase B change, and the v5
+   container round-trips through save/load.
+2. **The reranker trains.** Loss 1.6529 → 1.5881 → 1.5691 across three epochs,
+   train top-1 54.08% → 55.28% → 55.65%.
+3. **D4 was real, and is now contained.** The run's own dense statistics come
+   out at `emit` mean 5.562 / std 3.300 and `lm` mean 24.638 / std 7.030,
+   against compiled-in constants of 4.865 / 3.275 and 21.831 / 5.738. The `lm`
+   feature moved 0.49σ in mean and 22% in spread from a *100k* retrain. Before
+   v5 those weights would have been applied to mis-standardised inputs with
+   nothing to detect it.
+4. **D3 was real.** The true discounts measure `d1=0.6049 d2=1.0362 d3=1.4443`
+   (bigram) and `d1=0.6696 d2=1.0949 d3=1.4330` (trigram). Under the old clamps
+   d2 was cut to 0.9 (−13%) and d3 to 0.95 (−34%), pinning both at the ceiling
+   exactly as predicted. The discounts now span 0.60–1.44.
+5. Quantization saturation dropped to 19 slots of 1,048,576, with the clip at
+   the 99.9th percentile (1.72990) rather than at a lone outlier.
+
+### What the smoke run could NOT establish
+
+**It does not exercise D5, the learning-rate fix — the single change with the
+most at stake for the overnight run.** `use_chunked` requires
+`num_train_pairs > 200_000`; a 100k run takes the non-chunked path, where the
+old schedule was already sane. The collapse only compounds across batches.
+
+To validate D5, run **`--reranker-pairs 500000`** (5 batches, ~40 min) and check
+that the per-batch loss keeps falling into the last batch instead of flattening
+after the second. That is the gate for `train-full`, not this smoke test.
+
+### Standing question: does modified KN earn its place?
+
+The discounts are now correct, and correcting them changed nothing measurable.
+The comparison arm — `AKSHAR_KN_FIXED_DISCOUNT=1`, a single δ=0.75 — decides
+whether the three-discount machinery is worth keeping at all. If it measures
+the same, MKN is complexity without benefit and should be deleted in favour of
+the one-line absolute discount.
