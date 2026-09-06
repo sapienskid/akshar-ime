@@ -552,6 +552,21 @@ impl ImeEngine {
         self.bigram_boost = scale;
     }
 
+    /// Set the preceding-word context without learning the word.
+    ///
+    /// `user_confirms` both sets the context *and* teaches the word to the
+    /// user trie / SymSpell / adaptive model.  Offline harnesses that walk a
+    /// gold sentence must not do the latter: learning the gold word makes
+    /// every later occurrence trivially correct and the measurement
+    /// self-fulfilling.  This is the context half on its own.
+    pub fn set_context_word(&mut self, devanagari: &str) {
+        self.last_word = if devanagari.is_empty() {
+            None
+        } else {
+            Some(devanagari.to_string())
+        };
+    }
+
     pub fn user_confirms(&mut self, roman: &str, devanagari: &str) {
         if roman.is_empty() || devanagari.is_empty() {
             return;

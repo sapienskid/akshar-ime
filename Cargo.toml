@@ -54,6 +54,10 @@ name = "evaluate"
 path = "src/bin/evaluate/evaluate.rs"
 
 [[bin]]
+name = "evaluate_sentences"
+path = "src/bin/evaluate/evaluate_sentences.rs"
+
+[[bin]]
 name = "analyze_errors"
 path = "src/bin/evaluate/analyze_errors.rs"
 

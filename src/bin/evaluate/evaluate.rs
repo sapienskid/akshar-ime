@@ -64,6 +64,11 @@ struct Args {
     limit: Option<usize>,
     show_misses: usize,
     full_case: bool,
+    /// Explicit unified-model path.  Without it the engine resolves
+    /// data/akshar.model by its usual search order, which is fine
+    /// interactively but useless to the ablation harness, which needs to
+    /// score many candidate models in one run.
+    model: Option<PathBuf>,
 }
 
 fn main() {
@@ -86,10 +91,13 @@ fn main() {
         cases
     };
 
-    let engine = if args.full_case {
-        ImeEngine::from_file_or_new("data/user_dictionary.bin")
-    } else {
-        ImeEngine::new()
+    let engine = match (&args.model, args.full_case) {
+        (Some(path), _) => ImeEngine::from_unified_file(path).unwrap_or_else(|e| {
+            eprintln!("cannot load model {}: {e}", path.display());
+            std::process::exit(1);
+        }),
+        (None, true) => ImeEngine::from_file_or_new("data/user_dictionary.bin"),
+        (None, false) => ImeEngine::new(),
     };
 
     let n_suggest = args.suggestions.max(args.topk).max(1);
@@ -382,6 +390,7 @@ fn parse_args() -> Args {
     let mut limit: Option<usize> = None;
     let mut show_misses: usize = 0;
     let mut full_case = false;
+    let mut model: Option<PathBuf> = None;
 
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -406,6 +415,11 @@ fn parse_args() -> Args {
                     .expect("--show-misses <n>")
             }
             "--full-case" => full_case = true,
+            "--model" => {
+                model = Some(PathBuf::from(
+                    args.next().expect("value for --model"),
+                ))
+            }
             "--help" | "-h" => {
                 print_help();
                 std::process::exit(0);
@@ -427,6 +441,7 @@ fn parse_args() -> Args {
         limit,
         show_misses,
         full_case,
+        model,
     }
 }
 
@@ -447,6 +462,7 @@ fn print_help() {
     println!("  --seed <n>            RNG seed (default: 42)");
     println!("  --limit <n>           only evaluate first <n> cases (debug)");
     println!("  --show-misses <n>     print up to <n> missed cases (default: 0)");
+    println!("  --model <path>        unified model to score (default: engine search order)");
     println!("  --full-case           load a user dictionary (data/user_dictionary.bin)");
     println!("  -h, --help            show help");
 }
