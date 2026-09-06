@@ -8,7 +8,6 @@ pub mod decoder;
 pub mod em_trainer;
 pub mod engine;
 pub mod holdout;
-pub mod lexicon;
 pub mod normalizer;
 pub mod reranker;
 pub mod reranker_weights;
@@ -32,7 +31,6 @@ pub mod wordtrie;
 /// | `AKSHAR_NO_SPARSE` | drop the 2^20 sparse reranker table |
 /// | `AKSHAR_GAMMA` | override the dense/heuristic blend (0.0 = heuristic only) |
 /// | `AKSHAR_NO_TRIGRAM` | force the LM to back off to bigrams |
-/// | `AKSHAR_NO_LEXICON` | drop the corpus lexicon candidate source |
 /// | `AKSHAR_NO_VARIANTS` | decode the raw query only, no normalizer variants |
 pub mod ablation {
     use std::sync::OnceLock;
@@ -64,7 +62,6 @@ pub mod ablation {
     cached_flag!(trie_only, "AKSHAR_TRIE_ONLY");
     cached_flag!(no_sparse, "AKSHAR_NO_SPARSE");
     cached_flag!(no_trigram, "AKSHAR_NO_TRIGRAM");
-    cached_flag!(no_lexicon, "AKSHAR_NO_LEXICON");
     cached_flag!(no_variants, "AKSHAR_NO_VARIANTS");
 
     /// Dense/heuristic blend override; `None` means use the compiled GAMMA.

@@ -23,7 +23,6 @@
 
 use crate::core::akshara;
 use crate::core::decoder::DecodedCandidate;
-use crate::core::lexicon::RomanLexicon;
 pub use crate::core::reranker_weights::{DENSE_DIM, HASH_SIZE};
 use crate::core::reranker_weights::{
     GAMMA, LM_W, MEAN_DENSE, SPARSE_SCALE, SPARSE_TABLE, STD_DENSE, VOCAB_W, W_DENSE,
@@ -508,39 +507,31 @@ pub fn rerank_with_norm(
 pub const F_EMIT: usize = 0;
 pub const F_LM: usize = 1;
 pub const F_LEN: usize = 2;
-pub const F_LEX: usize = 3;
-pub const F_FREQ: usize = 4;
-pub const NUM_FEATURES: usize = 5;
+pub const F_FREQ: usize = 3;
+pub const NUM_FEATURES: usize = 4;
 
 pub fn feature_names() -> [&'static str; NUM_FEATURES] {
-    ["emission", "lm", "length", "lexicon", "frequency"]
+    ["emission", "lm", "length", "frequency"]
 }
 
 #[derive(Debug, Clone)]
 pub struct Reranker {
     pub weights: [f64; NUM_FEATURES],
-    lexicon: Option<RomanLexicon>,
     freq: Option<HashMap<String, u32>>,
 }
 
 impl Default for Reranker {
     fn default() -> Self {
         Self {
-            weights: [1.0, 1.0, 0.0, 0.0, 0.0],
-            lexicon: None,
+            weights: [1.0, 1.0, 0.0, 0.0],
             freq: None,
         }
     }
 }
 
 impl Reranker {
-    pub fn new(weights: [f64; NUM_FEATURES], lexicon: Option<RomanLexicon>) -> Self {
-        Self { weights, lexicon, freq: None }
-    }
-
-    pub fn with_lexicon(mut self, lexicon: Option<RomanLexicon>) -> Self {
-        self.lexicon = lexicon;
-        self
+    pub fn new(weights: [f64; NUM_FEATURES]) -> Self {
+        Self { weights, freq: None }
     }
 
     pub fn with_freq(mut self, freq: Option<HashMap<String, u32>>) -> Self {
@@ -548,12 +539,7 @@ impl Reranker {
         self
     }
 
-    pub fn features(&self, roman: &str, cand: &DecodedCandidate) -> [f64; NUM_FEATURES] {
-        let in_lex = self
-            .lexicon
-            .as_ref()
-            .map(|lx| lx.has_pair(roman, &cand.dev))
-            .unwrap_or(false);
+    pub fn features(&self, _roman: &str, cand: &DecodedCandidate) -> [f64; NUM_FEATURES] {
         let freq_feat = self
             .freq
             .as_ref()
@@ -564,7 +550,6 @@ impl Reranker {
             -cand.emit,
             -cand.lm,
             -(cand.akshara_count as f64),
-            if in_lex { 1.0 } else { 0.0 },
             freq_feat.min(1.0),
         ]
     }

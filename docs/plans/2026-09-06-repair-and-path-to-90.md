@@ -409,3 +409,60 @@ The comparison arm — `AKSHAR_KN_FIXED_DISCOUNT=1`, a single δ=0.75 — decide
 whether the three-discount machinery is worth keeping at all. If it measures
 the same, MKN is complexity without benefit and should be deleted in favour of
 the one-line absolute discount.
+
+
+---
+
+## 11. Component ablation with paired significance, 2026-09-06
+
+Every earlier ablation in this repo compared two independent accuracy numbers.
+That understates the evidence: both systems see the same cases, so the question
+is not whether the marginals differ but whether the *discordant* cases lean one
+way. These use **McNemar's test** on paired per-case outcomes
+(`examples/ablate_paired.rs`), two-sided, exact binomial on the discordant pairs.
+
+`w->r` = cases the full system got wrong and the ablated one got right;
+`r->w` = the reverse. Reproduce with the `AKSHAR_*` switches in `core::ablation`.
+
+### Removing the 2^20 sparse reranker table (~1M parameters, 1.00 MB)
+
+| split | n | full | ablated | delta | w->r | r->w | p |
+| :-- | --: | --: | --: | --: | --: | --: | --: |
+| AK-Freq | 2108 | 81.83% | 81.93% | +0.09 | 15 | 13 | 0.851 |
+| AK-NEF | 817 | 31.21% | 29.38% | −1.84 | 3 | 18 | **0.0015** |
+| AK-NEI | 1176 | 47.79% | 46.85% | −0.94 | 13 | 24 | 0.099 |
+| ALL | 4101 | 61.98% | 61.40% | −0.59 | 31 | 55 | **0.013** |
+
+**Verdict: keep, narrowly.** It does nothing at all on native words (p=0.85 —
+the +0.09 is noise), and its entire measurable value is named entities, where
+it is significant on AK-NEF and on the pooled set. A paper reporting only
+AK-Freq cannot justify 1M parameters for it; one that reports named entities
+can.
+
+### Removing the 29-feature dense reranker (gamma = 0, heuristic only)
+
+| split | n | full | ablated | delta | w->r | r->w | p |
+| :-- | --: | --: | --: | --: | --: | --: | --: |
+| AK-Freq | 2108 | 81.83% | 81.02% | −0.81 | 15 | 32 | **0.019** |
+| AK-NEF | 817 | 31.21% | 30.23% | −0.98 | 15 | 23 | 0.256 |
+| AK-NEI | 1176 | 47.79% | 46.17% | −1.62 | 18 | 37 | **0.015** |
+| ALL | 4101 | 61.98% | 60.91% | −1.07 | 48 | 92 | **0.0003** |
+
+**Verdict: keep.** Significant on the headline split and highly significant
+pooled. Small in absolute terms, but real.
+
+### The two are not independent
+
+"Remove both" reproduces "remove dense" **exactly** — identical accuracies and
+identical discordant counts on every split. At `gamma = 0` the blend returns
+`-heur` and the sparse contribution is computed and then discarded, so the
+sparse table can only ever act *through* the dense score. Any future ablation
+must vary them in that order; reporting them as two independent +Xpp
+contributions would be wrong.
+
+### Standing conclusion
+
+Both survive their own removal test, so neither is dead weight. What the
+numbers do say is narrower than the docs used to claim: on native words the
+whole discriminative stack is worth **+0.81pp**, and the 1M-parameter sparse
+table contributes **none** of it.

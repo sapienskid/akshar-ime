@@ -5,7 +5,6 @@
 // Candidates come from four sources, each contributing an evidence score:
 //
 //   * the generative decoder (fresh transliterations of the roman prefix),
-//   * the corpus roman->devanagari lexicon (exact + prefix completions),
 //   * the user's learned dictionary (trie + fuzzy SymSpell),
 //   * the context model (re-ranks words the user has typed before).
 //
@@ -16,7 +15,6 @@
 use crate::core::{
     context::ContextModel,
     decoder::{DecoderConfig, ModelDecoder},
-    lexicon::RomanLexicon,
     normalizer::expand_query_variants,
     reranker::{Reranker, NUM_FEATURES},
     translit_model::TranslitModel,
@@ -71,15 +69,8 @@ fn adaptive_beam(roman_len: usize) -> usize {
 const FRESH_SCALE: f64 = 800_000.0;
 /// Purnabiram (।, U+0964) — mapped from a trailing '.'.
 const PURNABIRAM: char = '\u{0964}';
-/// Bonus for a candidate that is both decoder-generated AND an exact corpus
-/// word.  Additive on top of the fresh score so the decoder's ranking among
-/// corpus words is preserved (a flat absolute score made arbitrary-order
-/// lexicon entries outrank better decoder candidates; E0 measured -2.1 pts).
-const LEXICON_EXACT_BONUS: u64 = 0;
-/// A corpus word the decoder did not generate itself.
-const LEXICON_ONLY_SCORE: u64 = 5_000;
-/// User-confirmed word from the learned trie.  Above any fresh+lexicon score
-/// so a word the user picked before always wins.
+/// User-confirmed word from the learned trie.  Above any decoder score so a
+/// word the user picked before always wins.
 const DEFAULT_USER_TRIE_BASE: u64 = 900_000;
 /// Fuzzy (edit-distance) match over user-learned roman variants.
 const DEFAULT_FUZZY_BASE: u64 = 50_000;
@@ -101,7 +92,6 @@ fn fuzzy_base() -> u64 {
 pub struct ImeEngine {
     pub decoder: ModelDecoder,
     pub reranker: Reranker,
-    pub lexicon: Option<RomanLexicon>,
     /// Corpus-vocabulary data for the discriminative reranker (native builds with
     /// word_freq_text.bin present; None on WASM-lite or missing file).
     pub reranker_data: Option<crate::core::reranker::RerankerData>,
@@ -142,8 +132,7 @@ impl ImeEngine {
                 ..DecoderConfig::default()
             },
         );
-        let lexicon = load_lexicon();
-        let reranker = load_reranker(lexicon.clone());
+        let reranker = load_reranker();
         let reranker_data = load_reranker_data();
         let word_trie = reranker_data.as_ref().map(|v| {
             crate::core::wordtrie::WordTrie::from_freq_map(&v.freq, &|a| decoder.model.akshara_id(a), 1)
@@ -151,7 +140,6 @@ impl ImeEngine {
         Self {
             decoder,
             reranker,
-            lexicon,
             reranker_data,
             dense_mean: Vec::new(),
             dense_std: Vec::new(),
@@ -182,8 +170,7 @@ impl ImeEngine {
                 ..DecoderConfig::default()
             },
         );
-        let lexicon = None;
-        let reranker = load_reranker(lexicon.clone()).with_freq(Some(unified.vocab_freq.clone()));
+        let reranker = load_reranker().with_freq(Some(unified.vocab_freq.clone()));
         let ranks = crate::core::reranker::FreqRanks::from_freq_map(&unified.vocab_freq);
         let word_trie = Some(crate::core::wordtrie::WordTrie::from_freq_map(
             &unified.vocab_freq,
@@ -197,7 +184,6 @@ impl ImeEngine {
         Self {
             decoder,
             reranker,
-            lexicon,
             reranker_data,
             dense_mean,
             dense_std,
@@ -249,16 +235,23 @@ impl ImeEngine {
     }
 
     /// Create engine from raw model bytes (no filesystem).
+    ///
+    /// `_lexicon_bytes` is accepted and ignored. The corpus roman->devanagari
+    /// lexicon was removed on 2026-09-06: it was dead by construction on the
+    /// unified-container path (`from_unified` never loaded one) and measured a
+    /// 0.00pp contribution on every Aksharantar split. The parameter is kept so
+    /// existing JS callers of `createEngine(model, lexicon, weights)` keep
+    /// compiling; pass `None`.
     pub fn from_bytes(
         model_bytes: &[u8],
-        lexicon_bytes: Option<&[u8]>,
+        _lexicon_bytes: Option<&[u8]>,
         reranker_json: Option<&str>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
-        Self::from_bytes_with_weights(model_bytes, lexicon_bytes, reranker_json)
+        Self::from_bytes_with_weights(model_bytes, _lexicon_bytes, reranker_json)
     }
 
     /// Build from bytes, allowing caller to supply already-parsed model.
-    pub fn from_model(model: TranslitModel, lexicon: Option<RomanLexicon>, reranker: Option<Reranker>) -> Self {
+    pub fn from_model(model: TranslitModel, reranker: Option<Reranker>) -> Self {
         let decoder = ModelDecoder::with_config(
             model,
             DecoderConfig {
@@ -266,7 +259,7 @@ impl ImeEngine {
                 ..DecoderConfig::default()
             },
         );
-        let reranker = reranker.unwrap_or_else(|| load_reranker(lexicon.clone()));
+        let reranker = reranker.unwrap_or_else(load_reranker);
         let reranker_data = load_reranker_data();
         let word_trie = reranker_data.as_ref().map(|v| {
             crate::core::wordtrie::WordTrie::from_freq_map(&v.freq, &|a| decoder.model.akshara_id(a), 1)
@@ -274,7 +267,6 @@ impl ImeEngine {
         Self {
             decoder,
             reranker,
-            lexicon,
             reranker_data,
             dense_mean: Vec::new(),
             dense_std: Vec::new(),
@@ -293,7 +285,7 @@ impl ImeEngine {
 
     pub fn from_bytes_with_weights(
         model_bytes: &[u8],
-        lexicon_bytes: Option<&[u8]>,
+        _lexicon_bytes: Option<&[u8]>,
         reranker_json: Option<&str>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         // The browser fetches whatever `create_engine(model_url, ...)` was
@@ -316,18 +308,15 @@ impl ImeEngine {
         if !model.validate() {
             return Err("invalid translit model".into());
         }
-        let lexicon = if let Some(b) = lexicon_bytes {
-            if b.is_empty() { None } else { RomanLexicon::from_bytes(b).ok() }
-        } else { None };
         let reranker = if let Some(json) = reranker_json {
-            Self::parse_reranker_json(json, lexicon.clone())
+            Self::parse_reranker_json(json)
         } else {
-            load_reranker(lexicon.clone())
+            load_reranker()
         };
-        Ok(Self::from_model(model, lexicon, Some(reranker)))
+        Ok(Self::from_model(model, Some(reranker)))
     }
 
-    fn parse_reranker_json(json_str: &str, lexicon: Option<RomanLexicon>) -> Reranker {
+    fn parse_reranker_json(json_str: &str) -> Reranker {
         let mut weights = [1.0f64; NUM_FEATURES];
         if let Ok(v) = serde_json::from_str::<serde_json::Value>(json_str) {
             if let Some(w) = v.get("weights") {
@@ -341,7 +330,7 @@ impl ImeEngine {
                 weights = arr;
             }
         }
-        Reranker::new(weights, lexicon)
+        Reranker::new(weights)
     }
 
     /// Serialise learned state (trie + context + symspell) to bytes for persistence.
@@ -547,23 +536,6 @@ impl ImeEngine {
         for qv in &query_variants {
             let roman = qv.roman.as_str();
 
-            // 2. Lexicon evidence: only EXACT roman matches (a confirmed word).
-            //    The Aksharantar lexicon is mined from news and mostly holds
-            //    long compound words, so prefix matching would flood the list
-            //    with compounds like नेपालअधिराज्य; the decoder already covers
-            //    prefix transliteration.  The bonus is additive on the fresh
-            //    score when the decoder also produced the word, so decoder
-            //    ranking survives; corpus-only words get a standalone score.
-            if let Some(lx) = self.lexicon.as_ref().filter(|_| !crate::core::ablation::no_lexicon()) {
-                for dev in lx.lookup_exact(roman) {
-                    let bonus = LEXICON_EXACT_BONUS.saturating_sub(qv.penalty);
-                    match fresh_scores.get(&dev) {
-                        Some(s) => add(dev, s.saturating_add(bonus)),
-                        None => add(dev, LEXICON_ONLY_SCORE.saturating_sub(qv.penalty)),
-                    }
-                }
-            }
-
             // 3. User-learned dictionary (trie).
             for (word_id, freq) in self.trie.get_top_k_suggestions(roman, count * 3) {
                 if let Some(meta) = self.trie.metadata_store.get(word_id) {
@@ -762,15 +734,7 @@ fn load_model_or_default() -> TranslitModel {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn load_lexicon() -> Option<RomanLexicon> {
-    RomanLexicon::load(&data_path("roman_lexicon.bin")).ok()
-}
-#[cfg(target_arch = "wasm32")]
-fn load_lexicon() -> Option<RomanLexicon> {
-    None
-}
-
-fn load_reranker(lexicon: Option<RomanLexicon>) -> Reranker {
+fn load_reranker() -> Reranker {
     let mut weights = [1.0f64; NUM_FEATURES];
     weights[0] = 1.0;
     weights[1] = 1.0;
@@ -789,7 +753,7 @@ fn load_reranker(lexicon: Option<RomanLexicon>) -> Reranker {
             }
         }
     }
-    let reranker = Reranker::new(weights, lexicon);
+    let reranker = Reranker::new(weights);
     // E3: word-frequency evidence (native targets only; absent on wasm unless
     // fetched separately).
     #[cfg(not(target_arch = "wasm32"))]
@@ -898,14 +862,7 @@ mod tests {
         ModelDecoder::with_config(m, DecoderConfig::default())
     }
 
-    fn tiny_lexicon() -> RomanLexicon {
-        RomanLexicon::build(vec![
-            ("namaste".to_string(), "नमस्ते".to_string()),
-            ("nepal".to_string(), "नेपाल".to_string()),
-        ])
-    }
-
-    fn engine_with(model: TranslitModel, lexicon: Option<RomanLexicon>) -> ImeEngine {
+    fn engine_with(model: TranslitModel) -> ImeEngine {
         let decoder = ModelDecoder::with_config(
             model,
             DecoderConfig {
@@ -916,7 +873,6 @@ mod tests {
         ImeEngine {
             decoder,
             reranker: Reranker::default(),
-            lexicon,
             reranker_data: None,
             dense_mean: Vec::new(),
             dense_std: Vec::new(),
@@ -935,23 +891,14 @@ mod tests {
 
     #[test]
     fn suggestions_include_decoder_fresh_transliteration() {
-        let engine = engine_with(tiny_decoder().model, None);
-        let suggestions = engine.get_suggestions("namaste", 8);
-        assert!(suggestions.iter().any(|(d, _)| d == "नमस्ते"));
-    }
-
-    #[test]
-    fn lexicon_exact_match_boosts_word_above_fresh() {
-        // "namaste" isn't in the tiny decoder's vocab as a full word path, but
-        // the lexicon has it; the exact-lexicon score should surface it.
-        let engine = engine_with(tiny_decoder().model, Some(tiny_lexicon()));
+        let engine = engine_with(tiny_decoder().model);
         let suggestions = engine.get_suggestions("namaste", 8);
         assert!(suggestions.iter().any(|(d, _)| d == "नमस्ते"));
     }
 
     #[test]
     fn user_confirmation_moves_word_up() {
-        let mut engine = engine_with(tiny_decoder().model, None);
+        let mut engine = engine_with(tiny_decoder().model);
         engine.user_confirms("namaste", "नमस्ते");
         engine.user_confirms("namaste", "नमस्ते");
         let suggestions = engine.get_suggestions("namaste", 8);
@@ -964,7 +911,7 @@ mod tests {
 
     #[test]
     fn empty_prefix_returns_nothing() {
-        let engine = engine_with(tiny_decoder().model, None);
+        let engine = engine_with(tiny_decoder().model);
         assert!(engine.get_suggestions("", 8).is_empty());
     }
 
@@ -977,7 +924,7 @@ mod tests {
 
     #[test]
     fn lone_dot_is_purnabiram() {
-        let engine = engine_with(tiny_decoder().model, None);
+        let engine = engine_with(tiny_decoder().model);
         let out = engine.get_suggestions(".", 8);
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].0, "।");
@@ -985,7 +932,7 @@ mod tests {
 
     #[test]
     fn trailing_dot_appends_purnabiram() {
-        let engine = engine_with(tiny_decoder().model, None);
+        let engine = engine_with(tiny_decoder().model);
         let out = engine.get_suggestions("namaste.", 8);
         assert!(!out.is_empty(), "purnabiram input should still decode");
         assert!(out.iter().all(|(d, _)| d.ends_with('।')));
@@ -1007,7 +954,7 @@ mod tests {
 
     #[test]
     fn all_digits_map_to_devanagari() {
-        let engine = engine_with(tiny_decoder().model, None);
+        let engine = engine_with(tiny_decoder().model);
         let out = engine.get_suggestions("123", 8);
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].0, "१२३");
@@ -1018,7 +965,7 @@ mod tests {
 
     #[test]
     fn trailing_digits_map_onto_suggestions() {
-        let engine = engine_with(tiny_decoder().model, None);
+        let engine = engine_with(tiny_decoder().model);
         let out = engine.get_suggestions("namaste1", 8);
         assert!(out.iter().any(|(d, _)| d.ends_with('१')));
         assert!(out.iter().any(|(d, _)| d.starts_with("नमस्ते")));
@@ -1026,7 +973,7 @@ mod tests {
 
     #[test]
     fn leading_digits_prepend_mapping() {
-        let engine = engine_with(tiny_decoder().model, None);
+        let engine = engine_with(tiny_decoder().model);
         let out = engine.get_suggestions("12na", 8);
         assert!(!out.is_empty());
         assert!(out.iter().all(|(d, _)| d.starts_with("१२")));
@@ -1034,7 +981,7 @@ mod tests {
 
     #[test]
     fn digits_between_words_interleave() {
-        let engine = engine_with(tiny_decoder().model, None);
+        let engine = engine_with(tiny_decoder().model);
         let out = engine.get_suggestions("na2ma", 8);
         assert!(!out.is_empty());
         assert_eq!(out[0].0, "न२म");
