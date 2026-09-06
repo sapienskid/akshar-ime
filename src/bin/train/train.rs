@@ -16,7 +16,7 @@
 use akshar_ime::core::decoder::{DecoderConfig, DecodedCandidate, ModelDecoder};
 use akshar_ime::core::em_trainer::{Trainer, TrainerConfig};
 use akshar_ime::core::reranker::{extract_dense_features, extract_sparse_features, FreqRanks, DENSE_DIM, HASH_SIZE};
-use akshar_ime::core::reranker_weights::{LM_W, MEAN_DENSE, SPARSE_SCALE, STD_DENSE, VOCAB_W, W_DENSE};
+use akshar_ime::core::reranker_weights::{LM_W, MEAN_DENSE, STD_DENSE, VOCAB_W, W_DENSE};
 use akshar_ime::core::unified::UnifiedModel;
 use akshar_ime::core::wordtrie::WordTrie;
 use akshar_ime::ImeEngine;
@@ -237,19 +237,11 @@ fn main() {
         }
     }
 
-    // Always ensure pairs are in the vocabulary
-    let mut pair_words = std::collections::HashSet::new();
-    for (_, dev) in &raw_pairs {
-        if let Some(clean) = clean_devanagari_token(dev) {
-            *vocab_freq.entry(clean.clone()).or_insert(0) += 1;
-            pair_words.insert(clean);
-        }
-    }
     let raw_vocab_count = vocab_freq.len();
-    vocab_freq.retain(|w, &mut c| c >= min_freq || pair_words.contains(w));
+    vocab_freq.retain(|_, &mut c| c >= min_freq);
     let ranks = FreqRanks::from_freq_map(&vocab_freq);
     println!(
-        "Compiled vocabulary of {} unique words (pruned {} hapax/noise words < {} freq) in {:.2?}.",
+        "Compiled clean vocabulary of {} unique words (pruned {} hapax/noise words < {} freq) in {:.2?}.",
         vocab_freq.len(),
         raw_vocab_count.saturating_sub(vocab_freq.len()),
         min_freq,
@@ -319,7 +311,8 @@ fn main() {
         decode_t0.elapsed()
     );
 
-    let mut sparse_table: Vec<i8> = vec![0i8; HASH_SIZE];
+    let mut sparse_table: Vec<f32> = vec![0.0f32; HASH_SIZE];
+    let mut grad_sq: Vec<f32> = vec![0.0f32; HASH_SIZE];
     let mut lr = 0.05f64;
 
     for ep in 1..=epochs {
@@ -337,7 +330,7 @@ fn main() {
                     score += W_DENSE[k] * ((dense[k] - MEAN_DENSE[k]) / STD_DENSE[k]);
                 }
                 for &h in &s.sparse[idx] {
-                    score += sparse_table[h] as f64 * SPARSE_SCALE;
+                    score += sparse_table[h] as f64;
                 }
                 scores.push(score);
             }
@@ -356,9 +349,10 @@ fn main() {
                 let grad = if idx == s.target_idx { *p - 1.0 } else { *p };
                 if grad.abs() > 1e-5 {
                     for &h in &s.sparse[idx] {
-                        let cur = sparse_table[h] as f64;
-                        let updated = (cur - lr * grad * 10.0).clamp(-127.0, 127.0);
-                        sparse_table[h] = updated.round() as i8;
+                        let g = grad as f32;
+                        grad_sq[h] += g * g;
+                        let eff_lr = (lr as f32) / (grad_sq[h].sqrt() + 1e-4);
+                        sparse_table[h] -= eff_lr * g;
                     }
                 }
             }
@@ -381,6 +375,16 @@ fn main() {
     // -------------------------------------------------------------------------
     println!("\n[Phase 4/4] Assembling Unified Model Container -> {} ...", out_path.display());
     let pack_t0 = Instant::now();
+
+    // Quantize sparse table to signed 8-bit integers with dynamic range scaling
+    let max_sparse = sparse_table.iter().map(|w| w.abs()).fold(0.0f32, f32::max);
+    let sparse_scale = if max_sparse > 0.0 { 127.0 / max_sparse } else { 1.0 };
+    let quantized_table: Vec<i8> = sparse_table
+        .iter()
+        .map(|&w| (w * sparse_scale).round().clamp(-128.0, 127.0) as i8)
+        .collect();
+    let non_zero = quantized_table.iter().filter(|&&w| w != 0).count();
+    println!("Quantized sparse table: {} non-zero weights (scale: {:.4})", non_zero, sparse_scale);
 
     if wasm_mode {
         println!("Pruning unreferenced aksharas for WASM profile...");
@@ -417,7 +421,7 @@ fn main() {
         }
     };
 
-    let unified = UnifiedModel::new(translit_model, sparse_table, vocab_freq, bigrams);
+    let unified = UnifiedModel::new(translit_model, quantized_table, vocab_freq, bigrams);
     unified.save(&out_path).expect("save unified model");
 
     let meta = std::fs::metadata(&out_path).expect("model metadata");
