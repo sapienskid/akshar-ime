@@ -157,27 +157,6 @@ function getArrayJsValueFromWasm0(ptr, len) {
     return result;
 }
 /**
- * Returns the engine version (crate version).
- * @returns {string}
- */
-export function getVersion() {
-    let deferred1_0;
-    let deferred1_1;
-    try {
-        const ret = wasm.getVersion();
-        deferred1_0 = ret[0];
-        deferred1_1 = ret[1];
-        return getStringFromWasm0(ret[0], ret[1]);
-    } finally {
-        wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
-    }
-}
-
-export function init_panic_hook() {
-    wasm.init_panic_hook();
-}
-
-/**
  * Create engine from model URL only (convenience, lexicon optional).
  * @param {string} model_url
  * @returns {Promise<WasmEngine>}
@@ -209,6 +188,10 @@ export function quickTransliterate(roman) {
     }
 }
 
+export function init_panic_hook() {
+    wasm.init_panic_hook();
+}
+
 /**
  * Async factory: fetch model (+ optional lexicon/weights) from URLs and create engine.
  *
@@ -234,12 +217,29 @@ export function createEngine(model_url, lexicon_url, reranker_url) {
     return ret;
 }
 
+/**
+ * Returns the engine version (crate version).
+ * @returns {string}
+ */
+export function getVersion() {
+    let deferred1_0;
+    let deferred1_1;
+    try {
+        const ret = wasm.getVersion();
+        deferred1_0 = ret[0];
+        deferred1_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+    }
+}
+
 function __wbg_adapter_22(arg0, arg1, arg2) {
-    wasm.closure77_externref_shim(arg0, arg1, arg2);
+    wasm.closure80_externref_shim(arg0, arg1, arg2);
 }
 
 function __wbg_adapter_78(arg0, arg1, arg2, arg3) {
-    wasm.closure91_externref_shim(arg0, arg1, arg2, arg3);
+    wasm.closure94_externref_shim(arg0, arg1, arg2, arg3);
 }
 
 const WasmEngineFinalization = (typeof FinalizationRegistry === 'undefined')
@@ -271,7 +271,11 @@ export class WasmEngine {
      * Create an engine from raw bytes already fetched in JS.
      *
      * `model_bytes` is the `translit_model.bin` file as Uint8Array.
-     * `lexicon_bytes` may be null/undefined to skip the lexicon (saves ~118MB download).
+     * `lexicon_bytes` is accepted and IGNORED. The corpus lexicon was removed
+     * in v1.1.0 (it measured 0.00pp on every split and was dead by
+     * construction on the unified-container path); the parameter is retained
+     * so existing `createEngine(model, lexicon, weights)` callers keep
+     * working. Pass `null`.
      * `reranker_json` may be null/undefined for default weights.
      * @param {Uint8Array} model_bytes
      * @param {Uint8Array | null} [lexicon_bytes]
@@ -630,8 +634,8 @@ function __wbg_get_imports() {
         const ret = false;
         return ret;
     };
-    imports.wbg.__wbindgen_closure_wrapper457 = function(arg0, arg1, arg2) {
-        const ret = makeMutClosure(arg0, arg1, 78, __wbg_adapter_22);
+    imports.wbg.__wbindgen_closure_wrapper564 = function(arg0, arg1, arg2) {
+        const ret = makeMutClosure(arg0, arg1, 81, __wbg_adapter_22);
         return ret;
     };
     imports.wbg.__wbindgen_init_externref_table = function() {

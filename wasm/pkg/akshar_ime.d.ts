@@ -1,11 +1,6 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Returns the engine version (crate version).
- */
-export function getVersion(): string;
-export function init_panic_hook(): void;
-/**
  * Create engine from model URL only (convenience, lexicon optional).
  */
 export function createEngineFromModelUrl(model_url: string): Promise<WasmEngine>;
@@ -13,6 +8,7 @@ export function createEngineFromModelUrl(model_url: string): Promise<WasmEngine>
  * Transliterate without needing an engine instance, using an empty model — mainly for testing wiring.
  */
 export function quickTransliterate(roman: string): string;
+export function init_panic_hook(): void;
 /**
  * Async factory: fetch model (+ optional lexicon/weights) from URLs and create engine.
  *
@@ -24,13 +20,21 @@ export function quickTransliterate(roman: string): string;
  * ```
  */
 export function createEngine(model_url: string, lexicon_url?: string | null, reranker_url?: string | null): Promise<WasmEngine>;
+/**
+ * Returns the engine version (crate version).
+ */
+export function getVersion(): string;
 export class WasmEngine {
   free(): void;
   /**
    * Create an engine from raw bytes already fetched in JS.
    *
    * `model_bytes` is the `translit_model.bin` file as Uint8Array.
-   * `lexicon_bytes` may be null/undefined to skip the lexicon (saves ~118MB download).
+   * `lexicon_bytes` is accepted and IGNORED. The corpus lexicon was removed
+   * in v1.1.0 (it measured 0.00pp on every split and was dead by
+   * construction on the unified-container path); the parameter is retained
+   * so existing `createEngine(model, lexicon, weights)` callers keep
+   * working. Pass `null`.
    * `reranker_json` may be null/undefined for default weights.
    */
   constructor(model_bytes: Uint8Array, lexicon_bytes?: Uint8Array | null, reranker_json?: string | null);
@@ -113,8 +117,8 @@ export interface InitOutput {
   readonly __externref_table_dealloc: (a: number) => void;
   readonly __wbindgen_free: (a: number, b: number, c: number) => void;
   readonly __externref_drop_slice: (a: number, b: number) => void;
-  readonly closure77_externref_shim: (a: number, b: number, c: any) => void;
-  readonly closure91_externref_shim: (a: number, b: number, c: any, d: any) => void;
+  readonly closure80_externref_shim: (a: number, b: number, c: any) => void;
+  readonly closure94_externref_shim: (a: number, b: number, c: any, d: any) => void;
   readonly __wbindgen_start: () => void;
 }
 
