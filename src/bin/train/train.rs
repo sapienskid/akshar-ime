@@ -107,7 +107,6 @@ fn main() {
     let mut epochs: usize = 3;
     let mut min_freq: u32 = 3;
     let mut reranker_pairs: usize = 100_000;
-    let mut bigram_min_freq: u32 = 5;
     let mut wasm_mode = false;
     let mut smoke = false;
 
@@ -122,8 +121,6 @@ fn main() {
             "--epochs" | "-e" => epochs = args.next().expect("value for --epochs").parse().unwrap(),
             "--min-freq" => min_freq = args.next().expect("value for --min-freq").parse().unwrap(),
             "--reranker-pairs" => reranker_pairs = args.next().expect("value for --reranker-pairs").parse().unwrap(),
-            "--bigram-min-freq" => bigram_min_freq = args.next().expect("value for --bigram-min-freq").parse().unwrap(),
-            "--no-bigrams" => bigram_min_freq = 0,
             "--wasm" => wasm_mode = true,
             "--smoke" => smoke = true,
             "-h" | "--help" => {
@@ -134,12 +131,10 @@ fn main() {
                 println!("  --out <path>            Output path (default: data/akshar.model)");
                 println!("  --min-freq <n>          Prune vocabulary with freq < n (default: 3)");
                 println!("  --reranker-pairs <n>    Number of pairs for reranker training (0 = all pairs, default: 100,000)");
-                println!("  --bigram-min-freq <n>   Prune bigrams below frequency n (default: 5)");
-                println!("  --no-bigrams            Exclude bigrams from unified model");
                 println!("  --limit <n>             Limit pairs (for rapid prototyping)");
                 println!("  --iterations <n>        EM iterations (default: 10)");
                 println!("  --epochs <n>            Reranker epochs (default: 3)");
-                println!("  --wasm                  Export lightweight WASM web profile (pruned, no bigrams)");
+                println!("  --wasm                  Export lightweight WASM web profile");
                 println!("  --smoke                 Run fast smoke training validation");
                 return;
             }
@@ -448,30 +443,6 @@ fn main() {
     let after_em = translit_model.emissions.iter().filter(|e| !e.is_empty()).count();
     println!("Pruned unused emission rows: {} -> {} (and cleaned transitions)", before_em, after_em);
 
-    // Context bigrams: optional
-    let bigrams: Option<HashMap<String, Vec<(String, u32)>>> = if wasm_mode || bigram_min_freq == 0 {
-        println!("Excluding bigram table from unified model container.");
-        None
-    } else {
-        let p = PathBuf::from("data/word_bigrams.bin");
-        if p.exists() {
-            println!("Bundling bigrams from {} (filtering tail pairs < {} freq)...", p.display(), bigram_min_freq);
-            let f = std::fs::File::open(&p).ok();
-            let mut bg: Option<HashMap<String, Vec<(String, u32)>>> = f.and_then(|r| bincode::deserialize_from(std::io::BufReader::new(r)).ok());
-            if let Some(ref mut map) = bg {
-                if bigram_min_freq > 1 {
-                    for list in map.values_mut() {
-                        list.retain(|(_, f)| *f >= bigram_min_freq);
-                    }
-                    map.retain(|_, list| !list.is_empty());
-                }
-            }
-            bg
-        } else {
-            None
-        }
-    };
-
     // Carry the run's own quantization scale: the table is meaningless
     // without it (see UnifiedModel::sparse_scale).
     let unified = UnifiedModel::new(
@@ -479,7 +450,6 @@ fn main() {
         quantized_table,
         1.0 / sparse_scale as f64,
         vocab_freq,
-        bigrams,
     );
     unified.save(&out_path).expect("save unified model");
 

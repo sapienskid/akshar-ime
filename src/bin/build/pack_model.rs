@@ -4,16 +4,7 @@
 //   1. Transliteration model (translit_model.bin)
 //   2. Sparse reranker weights (reranker_weights_sparse.bin)
 //   3. Text word frequency vocabulary (word_freq_text.bin)
-//   4. (Optional) Word bigrams (word_bigrams.bin)
 // into a single unified `akshar.model` file.
-//
-// Usage: cargo run --release --bin pack_model -- [options]
-//   --translit <path>  (default: data/translit_model.bin)
-//   --sparse <path>    (default: data/reranker_weights_sparse.bin)
-//   --vocab <path>     (default: data/word_freq_text.bin)
-//   --bigrams <path>   (default: data/word_bigrams.bin if present)
-//   --out <path>       (default: data/akshar.model)
-//   --min-freq <n>     (optional prune threshold for vocab, default: 1)
 
 use akshar_ime::core::translit_model::TranslitModel;
 use akshar_ime::core::unified::UnifiedModel;
@@ -25,17 +16,8 @@ fn main() {
     let mut translit_p = PathBuf::from("data/translit_model.bin");
     let mut sparse_p = PathBuf::from("data/reranker_weights_sparse.bin");
     let mut vocab_p = PathBuf::from("data/word_freq_text.bin");
-    let mut bigrams_p: Option<PathBuf> = {
-        let p = PathBuf::from("data/word_bigrams.bin");
-        if p.exists() {
-            Some(p)
-        } else {
-            None
-        }
-    };
     let mut out_p = PathBuf::from("data/akshar.model");
     let mut min_freq: u32 = 1;
-    let mut bigram_min_freq: u32 = 1;
 
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -43,20 +25,14 @@ fn main() {
             "--translit" => translit_p = PathBuf::from(args.next().expect("value for --translit")),
             "--sparse" => sparse_p = PathBuf::from(args.next().expect("value for --sparse")),
             "--vocab" => vocab_p = PathBuf::from(args.next().expect("value for --vocab")),
-            "--bigrams" => bigrams_p = Some(PathBuf::from(args.next().expect("value for --bigrams"))),
-            "--no-bigrams" => bigrams_p = None,
             "--out" | "-o" => out_p = PathBuf::from(args.next().expect("value for --out")),
             "--min-freq" => min_freq = args.next().expect("value for --min-freq").parse().unwrap(),
-            "--bigram-min-freq" => bigram_min_freq = args.next().expect("value for --bigram-min-freq").parse().unwrap(),
             "-h" | "--help" => {
                 println!("Usage: cargo run --release --bin pack_model -- [options]");
                 println!("  --translit <path>         EM transliteration model");
                 println!("  --sparse <path>           Sparse reranker table");
                 println!("  --vocab <path>            Word frequency vocabulary");
-                println!("  --bigrams <path>          Word bigrams (optional)");
-                println!("  --no-bigrams              Exclude bigrams");
                 println!("  --min-freq <n>            Prune vocabulary below this frequency (default: 1)");
-                println!("  --bigram-min-freq <n>     Prune bigrams below this frequency (default: 1)");
                 println!("  --out <path>              Output path (default: data/akshar.model)");
                 return;
             }
@@ -91,41 +67,12 @@ fn main() {
     }
     println!("done ({} words retained from {})", vocab.len(), initial_vocab_len);
 
-    let bigrams = if let Some(ref bp) = bigrams_p {
-        if bp.exists() {
-            print!("4. Loading word bigrams ({}) ... ", bp.display());
-            let bigram_bytes = std::fs::read(bp).expect("read bigrams");
-            let mut bg: HashMap<String, Vec<(String, u32)>> = bincode::deserialize(&bigram_bytes).expect("deserialize bigrams");
-            let initial_heads = bg.len();
-            if bigram_min_freq > 1 {
-                for list in bg.values_mut() {
-                    list.retain(|(_, f)| *f >= bigram_min_freq);
-                }
-                bg.retain(|_, list| !list.is_empty());
-                println!("done (pruned with min-freq >= {}: {} -> {} context heads)", bigram_min_freq, initial_heads, bg.len());
-            } else {
-                println!("done ({} context heads)", bg.len());
-            }
-            Some(bg)
-        } else {
-            println!("4. Word bigrams file not found; omitting.");
-            None
-        }
-    } else {
-        println!("4. Skipping word bigrams (not requested).");
-        None
-    };
-
-    println!("5. Assembling and writing unified model -> {} ...", out_p.display());
-    // pack_model assembles loose .bin artifacts and has no record of the
-    // scale the sparse table was quantized against, so it keeps the legacy
-    // compile-time constant.  `train` writes its own measured scale.
+    println!("4. Assembling and writing unified model -> {} ...", out_p.display());
     let unified = UnifiedModel::new(
         translit,
         sparse_table,
         akshar_ime::core::reranker_weights::SPARSE_SCALE,
         vocab,
-        bigrams,
     );
     unified.save(&out_p).expect("save unified model");
 

@@ -71,10 +71,10 @@ install:  ## Compile (if needed) and install the engine to system directories.
 		echo "    * Installing unified model (data/akshar.model)..."; \
 		sudo cp data/akshar.model $(DATA_DIR)/akshar.model; \
 		echo "    * Purging legacy model files from $(DATA_DIR)..."; \
-		sudo rm -f $(DATA_DIR)/translit_model.bin $(DATA_DIR)/word_freq_text.bin $(DATA_DIR)/reranker_weights_sparse.bin $(DATA_DIR)/word_bigrams.bin $(DATA_DIR)/reranker_weights.json $(DATA_DIR)/crf_model.bin $(DATA_DIR)/roman_lexicon.bin; \
+		sudo rm -f $(DATA_DIR)/translit_model.bin $(DATA_DIR)/word_freq_text.bin $(DATA_DIR)/reranker_weights_sparse.bin $(DATA_DIR)/reranker_weights.json $(DATA_DIR)/crf_model.bin $(DATA_DIR)/roman_lexicon.bin; \
 	else \
 		echo "    * Installing legacy model artifacts..."; \
-		for f in data/translit_model.bin data/word_freq_text.bin data/reranker_weights_sparse.bin data/word_bigrams.bin data/roman_lexicon.bin; do \
+		for f in data/translit_model.bin data/word_freq_text.bin data/reranker_weights_sparse.bin data/roman_lexicon.bin; do \
 			if [ -f "$$f" ]; then sudo cp "$$f" $(DATA_DIR)/; fi; \
 		done; \
 	fi
@@ -114,13 +114,7 @@ web-model:  ## Build the compact browser model (data/akshar_wasm.model, ~4.9 MB 
 	@cargo run --release --bin prune_lm -- \
 		--model data/akshar.model \
 		--trigram-threshold $(TRIGRAM_THRESHOLD) \
-		--out data/akshar_pruned.model
-	@echo "Repacking without word bigrams..."
-	@cargo run --release --bin repack_model -- \
-		--model data/akshar_pruned.model \
-		--out data/akshar_wasm.model \
-		--no-bigrams --compact-aksharas
-	@rm -f data/akshar_pruned.model
+		--out data/akshar_wasm.model
 	@if command -v brotli >/dev/null 2>&1; then \
 		brotli -q 11 -c data/akshar_wasm.model | wc -c \
 			| awk '{printf "Brotli wire size: %.2f MB\n", $$1/1048576}'; \

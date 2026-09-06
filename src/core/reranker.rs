@@ -250,7 +250,7 @@ pub fn rerank(
     freq: &HashMap<String, u32>,
     ranks: &FreqRanks,
 ) -> Vec<(String, f64)> {
-    rerank_with_table(roman, candidates, freq, ranks, None)
+    rerank_with_table(roman, candidates, freq, ranks, None, None)
 }
 
 /// Candidate ordering and heuristic scores shared by inference and training.
@@ -305,6 +305,7 @@ pub fn rerank_with_table(
     freq: &HashMap<String, u32>,
     ranks: &FreqRanks,
     custom_sparse_table: Option<&[i8]>,
+    custom_sparse_scale: Option<f64>,
 ) -> Vec<(String, f64)> {
     if candidates.is_empty() {
         return vec![];
@@ -326,16 +327,16 @@ pub fn rerank_with_table(
             s += W_DENSE[k] * ((dense[k] - MEAN_DENSE[k]) / STD_DENSE[k]);
         }
         for &h in &sparse {
-            let b = match custom_sparse_table {
-                Some(t) if h < t.len() => t[h],
+            let (b, scale) = match custom_sparse_table {
+                Some(t) if h < t.len() => (t[h], custom_sparse_scale.unwrap_or(SPARSE_SCALE)),
                 // SPARSE_TABLE is empty on a build with no legacy
                 // data/reranker_weights_sparse.bin (see build.rs); index 0
                 // there instead of panicking -- graceful degradation to "no
                 // sparse contribution", matching how the rest of the engine
                 // treats an absent optional data source.
-                _ => SPARSE_TABLE.get(h).copied().unwrap_or(0) as i8,
+                _ => (SPARSE_TABLE.get(h).copied().unwrap_or(0) as i8, SPARSE_SCALE),
             };
-            s += (b as f64) * SPARSE_SCALE;
+            s += (b as f64) * scale;
         }
         scores.push(s);
         heur_std.push((heur[i] - MEAN_DENSE[4]) / STD_DENSE[4]);

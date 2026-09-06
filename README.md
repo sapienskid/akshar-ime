@@ -11,15 +11,13 @@ Akshar Devanagari IME is a next-generation input method built from the ground up
 
 - **Nepali-native details:** digits map to Devanagari numerals (123 → १२३)
   and a trailing `.` offers purnabiram (namaste. → नमस्ते।).
-- **Small:** 8.91 MB browser model (**4.92 MB Brotli**), 30.6 MB on desktop, from a single unified container.
-- **SOTA Transliteration Core:** Outperforms neural baselines (IndicXlit top-1: 80.25% vs AksharIME top-1: **82.12%**, top-5: **92.13%** on held-out Aksharantar native test). Combines an EM-trained source-channel model (`P(roman | akshara)` over 3.59M pairs) with a Kneser-Ney syllable trigram LM, candidate union decoding, and a canonical discriminative log-linear reranker (29 dense shape/frequency/morphology features + $2^{20}$-slot sparse lexicalized table). Zero neural network runtime dependencies, 100% classical and memory-safe.
+- **Small:** 8.91 MB browser model (**4.92 MB Brotli**), 11.1 MB on desktop, from a single unified container.
+- **SOTA Transliteration Core:** Outperforms neural baselines (IndicXlit top-1: 80.25% vs AksharIME top-1: **81.45%**, top-5: **92.17%** on held-out Aksharantar native test). Combines an EM-trained source-channel model (`P(roman | akshara)` over 3.59M pairs) with a Kneser-Ney syllable trigram LM, candidate union decoding, and a canonical discriminative log-linear reranker (29 dense shape/frequency/morphology features + $2^{20}$-slot sparse lexicalized table). Zero neural network runtime dependencies, 100% classical and memory-safe.
 - **Adaptive Learning:** the IME learns your vocabulary and spelling variants
   in real time; the words you use most frequently appear first.
 - **Fuzzy Search:** finds the correct words even with spelling mistakes in
   Roman script.
-- **Context-Aware:** suggestions are re-ranked based on the words you've just
-  typed (desktop profile; the browser profile omits the word-bigram table,
-  which costs 19.5 MB for +0.16pp — see `docs/MODEL_TRAINING_AND_OPTIMIZATION.md`).
+- **Context (opt-in):** phrase-level bigrams were removed (`19.5 MB` for `+0.16pp`, see `docs/MODEL_TRAINING_AND_OPTIMIZATION.md`). Context now comes from user-learned bigrams only.
 
 ## Model profiles
 
@@ -52,7 +50,7 @@ IBus input framework on Linux, and a WebAssembly (WASM) interface for zero-laten
 |  wordtrie.rs     — compressed prefix Trie dictionary              |
 |  lexicon.rs      — corpus roman→devanagari dictionary             |
 |  trie/symspell   — user learning + typo tolerance                 |
-|  context.rs      — phrase-level bigram re-ranking                 |
+|  context.rs      — user history re-ranking                      |
 +-------------------------------------------------------------------+
 ```
 
@@ -106,7 +104,7 @@ running text comes from Nepali Wikipedia, CC100, and an akshar-ime news crawl.)
 
 A single unified model container powers the engine:
 
-- `akshar.model` (~47 MB without bigrams, ~68 MB with pruned bigrams) — bundles the EM-trained transliteration model, Kneser-Ney syllable LM, 470k-word Devanagari vocabulary frequency distribution, and $2^{20}$-entry discriminative reranker weights into a single atomic binary.
+- `akshar.model` (11.1 MB, 8.9 MB pruned for browser) — bundles the EM-trained transliteration model, Kneser-Ney syllable LM, 470k-word Devanagari vocabulary frequency distribution, and $2^{20}$-entry discriminative reranker weights into a single atomic binary.
 
 **Option A — download prebuilt model:**
 Download `akshar.model` from the [GitHub Releases](https://github.com/sapienskid/akshar-ime/releases) page into `data/akshar.model` (recommended; no training needed).
@@ -184,7 +182,7 @@ akshar-ime/
 │   ├── core/                           # Classical SOTA transliteration core (zero neural deps)
 │   │   ├── akshara.rs                  # Devanagari syllable segmentation & boundary detection
 │   │   ├── alignment.rs                # Dynamic programming char-level alignment (seeds EM)
-│   │   ├── context.rs                  # Phrase-level bigram language model & re-ranking
+│   │   ├── context.rs                  # User history language model & re-ranking
 │   │   ├── crf.rs                      # Conditional Random Field sequence model
 │   │   ├── decoder.rs                  # Persistent-path beam search over akshara lattice
 │   │   ├── em_trainer.rs               # Expectation-Maximization source-channel trainer
@@ -219,7 +217,6 @@ akshar-ime/
 │       └── build/                      # Data preprocessing & artifact packaging
 │           ├── pack_model.rs           # Package binary tables into unified akshar.model container
 │           ├── build_wordfreq_text.rs  # Vocabulary frequency builder from text corpus
-│           ├── build_bigrams.rs        # Word bigram frequency builder from text
 │           ├── build_lexicon.rs        # Roman-to-Devanagari binary lexicon builder
 │           ├── romanize.rs             # Backward transliteration / romanization utility
 │           ├── probe_model.rs          # Interactive model emission & prediction inspector
@@ -275,9 +272,6 @@ cargo run --release --bin probe_model -- --roman namaste
 
 # Build vocabulary frequencies from cleaned text:
 cargo run --release --bin build_wordfreq_text -- data/store/corpus_clean.txt
-
-# Build word bigram transitions:
-cargo run --release --bin build_bigrams -- --input data/store/corpus_clean.txt --output data/word_bigrams.bin
 ```
 
 ## Data & Attribution

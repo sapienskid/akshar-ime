@@ -74,10 +74,6 @@ name = "build_wordfreq_text"
 path = "src/bin/build/build_wordfreq_text.rs"
 
 [[bin]]
-name = "build_bigrams"
-path = "src/bin/build/build_bigrams.rs"
-
-[[bin]]
 name = "build_lexicon"
 path = "src/bin/build/build_lexicon.rs"
 

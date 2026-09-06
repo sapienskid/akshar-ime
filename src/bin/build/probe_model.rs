@@ -53,16 +53,10 @@ fn main() {
             let t_sz = ak_sz + ch_sz + em_sz + bi_sz + tri_k_sz + tri_v_sz + tri_b_sz + misc_sz;
             let s_sz = bincode::serialized_size(&unified.sparse_reranker_table).unwrap_or(0);
             let v_sz = codec::encode_vocab(&unified.vocab_freq, &tr.aksharas).len() as u64;
-            let b_sz = unified.bigrams.as_ref().map(|b| bincode::serialized_size(b).unwrap_or(0)).unwrap_or(0);
             
             println!("  Translit Model    : {:>7.2} MB ({:>5.1}%)", t_sz as f64 / (1024.0 * 1024.0), (t_sz as f64 / m_bytes as f64) * 100.0);
             println!("  Sparse Reranker   : {:>7.2} MB ({:>5.1}%)", s_sz as f64 / (1024.0 * 1024.0), (s_sz as f64 / m_bytes as f64) * 100.0);
             println!("  Vocab Frequency   : {:>7.2} MB ({:>5.1}%) [{} words]", v_sz as f64 / (1024.0 * 1024.0), (v_sz as f64 / m_bytes as f64) * 100.0, unified.vocab_freq.len());
-            if let Some(ref bg) = unified.bigrams {
-                println!("  Word Bigrams      : {:>7.2} MB ({:>5.1}%) [{} heads]", b_sz as f64 / (1024.0 * 1024.0), (b_sz as f64 / m_bytes as f64) * 100.0, bg.len());
-            } else {
-                println!("  Word Bigrams      : None (0.0 MB)");
-            }
 
             println!("\n--- Translit Sub-components (as encoded) ---");
             let other_sz = misc_sz;

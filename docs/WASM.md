@@ -10,16 +10,11 @@ The browser loads the unified container, not the loose `.bin` files. Build the
 web profile from a trained model with:
 
 ```bash
-# 1. Relative-entropy prune the syllable trigram LM (half the model's bytes).
+# Relative-entropy prune the syllable trigram LM
 cargo run --release --bin prune_lm -- \
-  --model data/akshar.model --trigram-threshold 3e-2 --out /tmp/pruned.model
+  --model data/akshar.model --trigram-threshold 3e-2 --out data/akshar_wasm.model
 
-# 2. Repack: compact encoding, renumber the akshara table, drop word bigrams.
-cargo run --release --bin repack_model -- \
-  --model /tmp/pruned.model --out data/akshar_wasm.model \
-  --no-bigrams --compact-aksharas
-
-# 3. Serve it Brotli-compressed.
+# Serve it Brotli-compressed.
 brotli -q 11 data/akshar_wasm.model
 ```
 
@@ -35,9 +30,7 @@ Nepali test split. `--trigram-threshold` is the knob:
 | **3e-2** (shipped) | **8.91 MB** | **4.92 MB** | **81.07%** | **92.22%** |
 
 Top-5 is flat across the whole range: pruning reorders the top of the list, it
-does not lose candidates. Drop the `--no-bigrams` flag to keep the word-bigram
-table, which costs 19.54 MB for +0.16pp of in-context accuracy — worth it on
-desktop, not on the wire.
+does not lose candidates.
 
 ## Quick start (any website, 3 lines)
 
