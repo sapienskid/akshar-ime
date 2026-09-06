@@ -44,10 +44,10 @@ pub struct UnifiedModel {
 /// load. bincode is not self-describing, so a new field cannot simply be
 /// added with `#[serde(default)]` — the old byte stream has to be parsed with
 /// the exact struct it was written from.
+#[allow(dead_code)]
 #[derive(Deserialize)]
 struct UnifiedModelV1 {
     magic: [u8; 4],
-    #[allow(dead_code)]
     version: u32,
     translit: TranslitModel,
     sparse_reranker_table: Vec<i8>,
@@ -69,10 +69,10 @@ impl From<UnifiedModelV1> for UnifiedModel {
 }
 
 /// The v2 container layout: the v1 fields plus `sparse_scale`.
+#[allow(dead_code)]
 #[derive(Deserialize)]
 struct UnifiedModelV2 {
     magic: [u8; 4],
-    #[allow(dead_code)]
     version: u32,
     translit: TranslitModel,
     sparse_reranker_table: Vec<i8>,
@@ -95,6 +95,7 @@ impl From<UnifiedModelV2> for UnifiedModel {
 }
 
 /// v3 layout (compact codec + bigrams) — still readable, bigrams dropped.
+#[allow(dead_code)]
 #[derive(Deserialize)]
 struct UnifiedModelV3Raw {
     magic: [u8; 4],

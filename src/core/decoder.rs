@@ -10,6 +10,7 @@
 // the concatenated aksharas of each path form a Devanagari candidate string.
 
 use crate::core::translit_model::{TranslitModel, MAX_CHUNK};
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::HashMap;
 
 const MAX_STEPS: usize = 32;
@@ -189,7 +190,7 @@ impl ModelDecoder {
             path: None,
         }];
         // Complete paths: dev string -> (score, emit, lm, akshara_count).
-        let mut seen: HashMap<String, (f64, f64, f64, usize)> = HashMap::new();
+        let mut seen: FxHashMap<String, (f64, f64, f64, usize)> = FxHashMap::default();
 
         for _step in 0..MAX_STEPS {
             if beam.is_empty() {
@@ -246,8 +247,8 @@ impl ModelDecoder {
             }
 
             // Dedup beam states by (pos, prev2, prev, path-hash) keeping the
-            // best score.  u64 keys are cheap; the hash preserves distinct paths.
-            let mut best_by_key: HashMap<BeamKey, BeamBest> = HashMap::new();
+            // best score.
+            let mut best_by_key: FxHashMap<BeamKey, BeamBest> = FxHashMap::default();
             for cand in next {
                 best_by_key
                     .entry((cand.pos, cand.prev2, cand.prev, cand.phash))
@@ -334,7 +335,7 @@ impl ModelDecoder {
             path: None,
             wnode: 0,
         }];
-        let mut seen: HashMap<String, (f64, u32)> = HashMap::new();
+        let mut seen: FxHashMap<String, (f64, u32)> = FxHashMap::default();
 
         for _step in 0..MAX_STEPS {
             if beam.is_empty() {
@@ -442,7 +443,7 @@ impl ModelDecoder {
             path: None,
             wnode: 0,
         }];
-        let mut seen: HashMap<String, (f64, f64, f64, usize)> = HashMap::new();
+        let mut seen: FxHashMap<String, (f64, f64, f64, usize)> = FxHashMap::default();
 
         for _step in 0..MAX_STEPS {
             if beam.is_empty() {
@@ -537,8 +538,7 @@ impl ModelDecoder {
         let mut cands = self.decode_detailed(roman, k);
         if let Some(t) = trie {
             let in_words = self.decode_in_words_detailed(roman, k, t);
-            let mut seen: std::collections::HashSet<String> =
-                cands.iter().map(|c| c.dev.clone()).collect();
+            let mut seen: FxHashSet<String> = cands.iter().map(|c| c.dev.clone()).collect();
             for c in in_words {
                 if seen.insert(c.dev.clone()) {
                     cands.push(c);

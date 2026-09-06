@@ -166,6 +166,25 @@ impl PartialOrd for SearchState {
 /// Expand the user query into weighted normalized variants via transducer search.
 pub fn expand_query_variants(input: &str, max_variants: usize) -> Vec<RomanVariant> {
     let max_variants = max_variants.max(1);
+    // Fast path: avoid heap when input has no multi-char trigger.
+    // Single-char expansions (a->aa) are noisy and emissions already absorb
+    // them; for typical engine queries (max_variants <=6) we skip heap if
+    // only those would fire. Tests requesting 16 variants still go through heap.
+    let has_multi_trigger = NORMALIZATION_RULES.iter().any(|r| {
+        if is_aggressive_short_vowel_expansion(r) {
+            return false;
+        }
+        input.contains(r.from)
+    });
+    if !has_multi_trigger
+        && max_variants <= 6
+        && input.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+    {
+        return vec![RomanVariant {
+            roman: input.to_string(),
+            penalty: 0,
+        }];
+    }
     let max_expansions = max_variants.saturating_mul(128);
     let short_input = input.chars().count() <= 2;
 
