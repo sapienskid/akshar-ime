@@ -9,6 +9,7 @@
 //
 // All packaged into a single binary artifact (`akshar.model`).
 
+use crate::core::codec;
 use crate::core::translit_model::TranslitModel;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -17,9 +18,15 @@ use std::io::BufWriter;
 use std::path::Path;
 
 pub const UNIFIED_MAGIC: [u8; 4] = *b"AKSH";
-/// v2 adds `sparse_scale`.  v1 containers still load: they get the legacy
-/// compile-time constant, which is what they were quantized against.
-pub const UNIFIED_VERSION: u32 = 2;
+/// Container version.
+///
+///   v1  original bincode blob
+///   v2  adds `sparse_scale` (the trainer's measured dequantization scale)
+///   v3  n-gram tables stored compactly: CSR + delta varints + an 8-bit
+///       codebook per table, via `core::codec`
+///
+/// All three still load.  v3 is what `save` writes.
+pub const UNIFIED_VERSION: u32 = 3;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct UnifiedModel {
@@ -32,10 +39,11 @@ pub struct UnifiedModel {
     /// The trainer quantizes the f32 sparse weights with `127 / max|w|`, a
     /// value that depends on the run.  It used to compute that scale and throw
     /// it away, while inference multiplied by a hardcoded
-    /// `reranker_weights::SPARSE_SCALE` emitted by `train_reranker.rs` -- a
+    /// `reranker_weights::SPARSE_SCALE` emitted by `train_reranker.rs` — a
     /// binary deleted in c0d12ba.  Every model trained since then has had its
     /// sparse contribution scaled by an unrelated constant.  Carrying the
     /// scale in the container is what makes the table mean anything.
+    #[serde(default)]
     pub sparse_scale: f64,
     pub vocab_freq: HashMap<String, u32>,
     pub bigrams: Option<HashMap<String, Vec<(String, u32)>>>,
@@ -43,7 +51,7 @@ pub struct UnifiedModel {
 
 /// The v1 container layout, kept only so existing `akshar.model` files still
 /// load.  bincode is not self-describing, so a new field cannot simply be
-/// added with `#[serde(default)]` -- the old byte stream has to be parsed with
+/// added with `#[serde(default)]` — the old byte stream has to be parsed with
 /// the exact struct it was written from.
 #[derive(Deserialize)]
 struct UnifiedModelV1 {
@@ -75,6 +83,38 @@ impl From<UnifiedModelV1> for UnifiedModel {
             sparse_scale: crate::core::reranker_weights::SPARSE_SCALE,
             vocab_freq: v1.vocab_freq,
             bigrams: v1.bigrams,
+        }
+    }
+}
+
+/// The v2 container layout: the v1 fields plus `sparse_scale`.
+///
+/// Spelled out rather than reusing `UnifiedModel` even though the two
+/// currently match field for field.  `save` now writes v3, so nothing would
+/// catch it if `UnifiedModel` drifted and silently broke v2 reads — which is
+/// precisely the failure this file already had once.
+#[derive(Deserialize)]
+struct UnifiedModelV2 {
+    magic: [u8; 4],
+    #[allow(dead_code)]
+    version: u32,
+    translit: TranslitModel,
+    sparse_reranker_table: Vec<i8>,
+    sparse_scale: f64,
+    vocab_freq: HashMap<String, u32>,
+    bigrams: Option<HashMap<String, Vec<(String, u32)>>>,
+}
+
+impl From<UnifiedModelV2> for UnifiedModel {
+    fn from(v2: UnifiedModelV2) -> Self {
+        Self {
+            magic: v2.magic,
+            version: UNIFIED_VERSION,
+            translit: v2.translit,
+            sparse_reranker_table: v2.sparse_reranker_table,
+            sparse_scale: v2.sparse_scale,
+            vocab_freq: v2.vocab_freq,
+            bigrams: v2.bigrams,
         }
     }
 }
@@ -119,7 +159,8 @@ impl UnifiedModel {
         let version = peek_version(bytes)
             .ok_or("Invalid magic header: not an Akshar unified model")?;
         let mut model: Self = match version {
-            2 => bincode::deserialize(bytes)?,
+            3 => bincode::deserialize::<UnifiedModelV3>(bytes)?.try_into()?,
+            2 => bincode::deserialize::<UnifiedModelV2>(bytes)?.into(),
             1 => bincode::deserialize::<UnifiedModelV1>(bytes)?.into(),
             other => return Err(format!("Unsupported model version: {other}").into()),
         };
@@ -132,13 +173,13 @@ impl UnifiedModel {
 
     pub fn save(&self, path: &Path) -> Result<(), Box<dyn std::error::Error>> {
         let f = File::create(path)?;
-        let writer = BufWriter::new(f);
-        bincode::serialize_into(writer, self)?;
+        let mut writer = BufWriter::new(f);
+        bincode::serialize_into(&mut writer, &UnifiedModelV3::from(self))?;
         Ok(())
     }
 
     pub fn to_bytes(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-        Ok(bincode::serialize(self)?)
+        Ok(bincode::serialize(&UnifiedModelV3::from(self))?)
     }
 
     pub fn validate(&self) -> bool {
@@ -147,6 +188,100 @@ impl UnifiedModel {
             && self.translit.validate()
             && !self.sparse_reranker_table.is_empty()
             && !self.vocab_freq.is_empty()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// v3: compact n-gram encoding
+// ---------------------------------------------------------------------------
+
+/// The v3 body.
+///
+/// Everything that is *large and numeric* moves into opaque byte blobs
+/// produced by `core::codec`; everything small and structural stays as
+/// ordinary bincode fields.  The split is deliberate — the vocabulary strings
+/// and the akshara list compress well under Brotli already, whereas the
+/// n-gram weights do not (f32 mantissas are noise), so those are the ones
+/// worth re-encoding by hand.
+#[derive(Serialize, Deserialize)]
+struct UnifiedModelV3 {
+    magic: [u8; 4],
+    version: u32,
+    sparse_scale: f64,
+    sparse_reranker_table: Vec<i8>,
+    /// Front-coded akshara-id encoding; see codec::encode_vocab.
+    vocab_enc: Vec<u8>,
+    bigrams: Option<HashMap<String, Vec<(String, u32)>>>,
+
+    // Structural parts of the translit model, unchanged.
+    translit_version: u32,
+    aksharas: Vec<String>,
+    chunks_enc: Vec<u8>,
+    trigram_keys_enc: Vec<u8>,
+
+    // Compact numeric sections.
+    emissions_enc: Vec<u8>,
+    bigrams_lm_enc: Vec<u8>,
+    trigrams_enc: Vec<u8>,
+    backoff_enc: Vec<u8>,
+    unigram_kn_enc: Vec<u8>,
+    word_start_enc: Vec<u8>,
+    trigram_backoff_enc: Vec<u8>,
+}
+
+impl From<&UnifiedModel> for UnifiedModelV3 {
+    fn from(m: &UnifiedModel) -> Self {
+        let t = &m.translit;
+        Self {
+            magic: UNIFIED_MAGIC,
+            version: UNIFIED_VERSION,
+            sparse_scale: m.sparse_scale,
+            sparse_reranker_table: m.sparse_reranker_table.clone(),
+            vocab_enc: codec::encode_vocab(&m.vocab_freq, &t.aksharas),
+            bigrams: m.bigrams.clone(),
+            translit_version: t.version,
+            aksharas: t.aksharas.clone(),
+            chunks_enc: codec::encode_chunks(&t.chunks),
+            trigram_keys_enc: codec::encode_pairs(&t.trigram_keys),
+            emissions_enc: codec::encode_adjacency(&t.emissions),
+            bigrams_lm_enc: codec::encode_adjacency(&t.bigrams),
+            trigrams_enc: codec::encode_adjacency(&t.trigrams),
+            backoff_enc: codec::encode_weights(&t.backoff),
+            unigram_kn_enc: codec::encode_weights(&t.unigram_kn),
+            word_start_enc: codec::encode_weights(&t.word_start),
+            trigram_backoff_enc: codec::encode_weights(&t.trigram_backoff),
+        }
+    }
+}
+
+impl TryFrom<UnifiedModelV3> for UnifiedModel {
+    type Error = Box<dyn std::error::Error>;
+
+    fn try_from(v: UnifiedModelV3) -> Result<Self, Self::Error> {
+        let translit = TranslitModel {
+            version: v.translit_version,
+            aksharas: v.aksharas,
+            chunks: codec::decode_chunks(&v.chunks_enc)?,
+            emissions: codec::decode_adjacency(&v.emissions_enc)?,
+            bigrams: codec::decode_adjacency(&v.bigrams_lm_enc)?,
+            backoff: codec::decode_weights(&v.backoff_enc)?,
+            unigram_kn: codec::decode_weights(&v.unigram_kn_enc)?,
+            word_start: codec::decode_weights(&v.word_start_enc)?,
+            trigram_keys: codec::decode_pairs(&v.trigram_keys_enc)?,
+            trigrams: codec::decode_adjacency(&v.trigrams_enc)?,
+            trigram_backoff: codec::decode_weights(&v.trigram_backoff_enc)?,
+            trigram_index: Default::default(),
+        };
+        let vocab_freq = codec::decode_vocab(&v.vocab_enc, &translit.aksharas)?;
+        Ok(Self {
+            magic: v.magic,
+            version: UNIFIED_VERSION,
+            translit,
+            sparse_reranker_table: v.sparse_reranker_table,
+            sparse_scale: v.sparse_scale,
+            vocab_freq,
+            bigrams: v.bigrams,
+        })
     }
 }
 
@@ -190,6 +325,30 @@ mod tests {
         assert_eq!(back.version, UNIFIED_VERSION);
         assert_eq!(back.sparse_scale, 0.25);
         assert_eq!(back.translit.aksharas, vec!["क".to_string()]);
+    }
+
+    /// The compact encoding must preserve every id exactly and rebuild the
+    /// runtime trigram index, which is `#[serde(skip)]` and so is not carried
+    /// by any format.
+    #[test]
+    fn v3_preserves_ngram_structure() {
+        let mut m = tiny_model();
+        m.translit.bigrams = vec![vec![(0u32, 1.5f32)]];
+        m.translit.trigram_keys = vec![(0, 0)];
+        m.translit.trigrams = vec![vec![(0u32, 2.5f32)]];
+        m.translit.trigram_backoff = vec![0.75];
+
+        let back = UnifiedModel::from_bytes(&m.to_bytes().expect("serialize")).expect("read");
+        assert_eq!(back.version, UNIFIED_VERSION);
+        assert_eq!(back.translit.trigram_keys, vec![(0, 0)]);
+        assert_eq!(back.translit.emissions[0][0].0, 0);
+        assert_eq!(back.translit.bigrams[0][0].0, 0);
+        assert_eq!(back.translit.trigrams[0][0].0, 0);
+        // Few distinct weights, so quantization is exact here.
+        assert_eq!(back.translit.trigrams[0][0].1, 2.5);
+        assert_eq!(back.translit.trigram_backoff, vec![0.75]);
+        // build_trigram_index must have run during load.
+        assert_eq!(back.translit.trigram_index.get(&(0, 0)), Some(&0));
     }
 
     #[test]

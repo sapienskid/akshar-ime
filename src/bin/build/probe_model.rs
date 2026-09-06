@@ -33,9 +33,26 @@ fn main() {
             let m_bytes = std::fs::metadata(p).map(|m| m.len()).unwrap_or(0);
             println!("Total file size: {:.2} MB ({} bytes)", m_bytes as f64 / (1024.0 * 1024.0), m_bytes);
             
-            let t_sz = bincode::serialized_size(&unified.translit).unwrap_or(0);
+            // Measure sections as they are ACTUALLY STORED, not as they sit in
+            // memory.  Since v3 the n-grams, vocabulary and chunk list are
+            // re-encoded on save (codec: CSR, delta varints, 8-bit codebooks),
+            // so `serialized_size` of the decoded field describes a layout the
+            // file does not use and the parts stop summing to the whole.
+            use akshar_ime::core::codec;
+            let tr = &unified.translit;
+            let ak_sz = bincode::serialized_size(&tr.aksharas).unwrap_or(0);
+            let ch_sz = codec::encode_chunks(&tr.chunks).len() as u64;
+            let em_sz = codec::encode_adjacency(&tr.emissions).len() as u64;
+            let bi_sz = codec::encode_adjacency(&tr.bigrams).len() as u64;
+            let tri_k_sz = codec::encode_pairs(&tr.trigram_keys).len() as u64;
+            let tri_v_sz = codec::encode_adjacency(&tr.trigrams).len() as u64;
+            let tri_b_sz = codec::encode_weights(&tr.trigram_backoff).len() as u64;
+            let misc_sz = codec::encode_weights(&tr.backoff).len() as u64
+                + codec::encode_weights(&tr.unigram_kn).len() as u64
+                + codec::encode_weights(&tr.word_start).len() as u64;
+            let t_sz = ak_sz + ch_sz + em_sz + bi_sz + tri_k_sz + tri_v_sz + tri_b_sz + misc_sz;
             let s_sz = bincode::serialized_size(&unified.sparse_reranker_table).unwrap_or(0);
-            let v_sz = bincode::serialized_size(&unified.vocab_freq).unwrap_or(0);
+            let v_sz = codec::encode_vocab(&unified.vocab_freq, &tr.aksharas).len() as u64;
             let b_sz = unified.bigrams.as_ref().map(|b| bincode::serialized_size(b).unwrap_or(0)).unwrap_or(0);
             
             println!("  Translit Model    : {:>7.2} MB ({:>5.1}%)", t_sz as f64 / (1024.0 * 1024.0), (t_sz as f64 / m_bytes as f64) * 100.0);
@@ -47,15 +64,8 @@ fn main() {
                 println!("  Word Bigrams      : None (0.0 MB)");
             }
 
-            println!("\n--- Translit Sub-components ---");
-            let ak_sz = bincode::serialized_size(&unified.translit.aksharas).unwrap_or(0);
-            let ch_sz = bincode::serialized_size(&unified.translit.chunks).unwrap_or(0);
-            let em_sz = bincode::serialized_size(&unified.translit.emissions).unwrap_or(0);
-            let bi_sz = bincode::serialized_size(&unified.translit.bigrams).unwrap_or(0);
-            let tri_k_sz = bincode::serialized_size(&unified.translit.trigram_keys).unwrap_or(0);
-            let tri_v_sz = bincode::serialized_size(&unified.translit.trigrams).unwrap_or(0);
-            let tri_b_sz = bincode::serialized_size(&unified.translit.trigram_backoff).unwrap_or(0);
-            let other_sz = t_sz.saturating_sub(ak_sz + ch_sz + em_sz + bi_sz + tri_k_sz + tri_v_sz + tri_b_sz);
+            println!("\n--- Translit Sub-components (as encoded) ---");
+            let other_sz = misc_sz;
 
             println!("    Aksharas list   : {:>6.2} MB ({} aksharas)", ak_sz as f64 / (1024.0 * 1024.0), unified.translit.aksharas.len());
             println!("    Chunks list     : {:>6.2} MB ({} chunks)", ch_sz as f64 / (1024.0 * 1024.0), unified.translit.chunks.len());

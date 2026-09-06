@@ -1,6 +1,7 @@
 // File: src/core/mod.rs
 pub mod akshara;
 pub mod alignment;
+pub mod codec;
 pub mod context;
 pub mod crf;
 pub mod decoder;
