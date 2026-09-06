@@ -37,11 +37,11 @@ fn main() {
         }
         let mut parts = line.splitn(3, ',');
         let (w1, w2, freq) = (
-            parts.next().unwrap_or(""),
-            parts.next().unwrap_or(""),
-            parts.next().unwrap_or("0").parse::<u32>().unwrap_or(0),
+            parts.next().unwrap_or("").trim(),
+            parts.next().unwrap_or("").trim(),
+            parts.next().unwrap_or("0").trim().parse::<u32>().unwrap_or(0),
         );
-        if w1.is_empty() || w2.is_empty() || freq < min_freq {
+        if !is_devanagari_word(w1) || !is_devanagari_word(w2) || freq < min_freq {
             continue;
         }
         map.entry(w1.to_string())
@@ -61,4 +61,9 @@ fn main() {
         map.len(),
         bytes.len() as f64 / 1e6
     );
+}
+
+fn is_devanagari_word(w: &str) -> bool {
+    let count = w.chars().count();
+    count >= 1 && count <= 24 && w.chars().all(|c| ('\u{0900}'..='\u{0963}').contains(&c))
 }
