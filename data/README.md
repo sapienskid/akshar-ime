@@ -59,10 +59,15 @@ data/
     filter_cc100.py        CC100 -> Devanagari lines
     make_eval_tsv.py       regenerate eval TSV
     .venv/                 its Python environment
-  backup/              gzip snapshots taken before destructive operations
-  akshar.model         BUILT — Unified production container (transliteration model +
-                       KN syllable LM + 470k vocab frequencies + sparse reranker weights
-                       + optional phrase bigrams)
+  backup/              gzip snapshots taken before destructive operations, and
+                       akshar_full_precision.model — the f32 master kept because
+                       the shipped containers are 8-bit quantized and cannot be
+                       reverted without retraining
+  akshar.model         BUILT — desktop container, 30.59 MB (transliteration model +
+                       KN syllable LM + 470k vocab frequencies + sparse reranker
+                       weights + phrase bigrams)
+  akshar_wasm.model    BUILT — browser container, 8.91 MB / 4.92 MB Brotli
+                       (entropy-pruned trigram LM, no phrase bigrams)
 ```
 
 ## Rebuild recipes (local; not Makefile targets — data is not in the repo)
@@ -96,8 +101,13 @@ cargo run --release --bin probe_model -- --model data/akshar.model --inspect
 # Pack unified model with customizable bigram filtering:
 cargo run --release --bin pack_model -- --bigram-min-freq 5 --out data/akshar.model
 
-# Pack lightweight WASM profile (no bigrams, 47 MB):
-cargo run --release --bin pack_model -- --no-bigrams --out data/akshar_wasm.model
+# Build the browser profile (8.91 MB / 4.92 MB Brotli). TRIGRAM_THRESHOLD trades
+# size against accuracy along the curve in docs/MODEL_TRAINING_AND_OPTIMIZATION.md:
+make web-model
+
+# Re-encode an existing container into the current format (any version in, v3 out):
+cargo run --release --bin repack_model -- --model data/akshar.model \
+  --out data/akshar.model --compact-aksharas
 
 # 4. Evaluate (Aksharantar Nepali test split: 4,101 cases)
 cargo run --release --bin evaluate_aksharantar -- --model data/akshar.model
@@ -111,5 +121,5 @@ cargo run --release --bin evaluate_aksharantar -- --model data/akshar.model
   via explicit `--merge-base` (a news-only vocabulary once silently overwrote
   the real one and cost 1.2 accuracy points).
 - **Backup before destroying:** gzip snapshot into `data/backup/` first.
-- Verified result of the current chain: **82.12% native top-1, 92.13% top-5** through the
+- Verified result of the current chain: **82.02% native top-1, 92.17% top-5** (desktop profile) through the
   full engine (canonical discriminative reranker + candidate union + pruned syllable lattice).

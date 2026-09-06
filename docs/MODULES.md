@@ -53,7 +53,7 @@ $$
 ## 3. `src/core/translit_model.rs` — Syllable Transliteration Model
 
 ### Purpose & Compact Representation
-Encapsulates all generative parameters for the source-channel model. Designed for direct binary serialization via `bincode` with fast memory-mapped loading.
+Encapsulates all generative parameters for the source-channel model. Held in memory as directly indexed `Vec`s for decode speed; written to disk through `core::codec`, which re-encodes the n-gram tables compactly (see `core/codec.rs`). Loading fully deserializes the file — it is not memory-mapped.
 
 ### Bitwise Chunk Packing:
 Roman chunks (up to length $L = 5$) are packed into single `u32` integers to eliminate heap allocations:
@@ -137,7 +137,7 @@ Operates over the **tropical semiring** $(\mathbb{R}^+ \cup \{\infty\}, \min, +)
 ## 6. `src/core/wordtrie.rs` — Lexical Vocabulary Trie
 
 ### Purpose & Layout
-An in-memory character trie indexed over the 470,012 cleaned Devanagari vocabulary words.
+An in-memory trie over the 470,012 cleaned Devanagari vocabulary words, keyed by **akshara id** (`HashMap<u32, usize>` per node), not by `char`.
 
 ### Data Structures:
 ```rust
@@ -327,3 +327,48 @@ Instead of distributing 4 disparate binary artifacts (`translit_model.bin`, `wor
 - If present, it loads all model components in a single atomic I/O operation.
 - If missing, it falls back seamlessly to multi-file legacy loading for backward compatibility.
 - Streamlined training (`cargo run --release --bin train` or `make train`) produces `data/akshar.model` directly in one command.
+
+---
+
+## `core/codec.rs` — Compact Wire Encoding
+
+The translation layer between the runtime model layout and its on-disk form.
+Nothing here runs during decoding; it executes once on save and once on load.
+
+The in-memory model is tuned for decode speed — `Vec<Vec<(u32, f32)>>` with
+direct indexing — which is a poor thing to *store*: 8 bytes per transition,
+where the id delta needs ~11 bits and the weight needs 8. Three techniques
+close that gap, each measured before adoption:
+
+| Technique | Applied to | Effect |
+| :--- | :--- | :--- |
+| CSR + delta varints | emissions, bigram LM, trigram LM | successor ids sorted ascending, stored as first differences |
+| 256-entry Lloyd-Max codebook | all n-gram weights | 1 byte per weight; mean abs. error 0.011-0.031 nats |
+| Front coding over akshara ids | 470k-word vocabulary | 37.1 B/word → ~5.4 B/word |
+| `pack_chunk_bytes` into `u32` | 100,578 roman chunks | 1.18 MB → 0.48 MB |
+| Delta-encoded sorted pairs + permutation | trigram context keys | chosen only when smaller than the plain layout |
+
+**Every lossy-capable encoding verifies its own round trip and falls back to a
+literal.** The vocabulary checks that `akshara::segment` rejoins to the original
+string; chunk packing checks that `pack_chunk_bytes` reproduces it, since it
+silently mangles anything outside `a-z`. A corrupted vocabulary is worse than a
+large one, so these are checked rather than assumed.
+
+Key API: `encode_adjacency` / `decode_adjacency`, `encode_weights` /
+`decode_weights`, `encode_vocab` / `decode_vocab`, `encode_chunks` /
+`decode_chunks`, `encode_pairs` / `decode_pairs`, `fit_codebook`.
+
+---
+
+## `core/holdout.rs` — Deterministic Corpus Holdout
+
+A stable 1-in-N split shared by the trainer and `evaluate_sentences`, so
+held-out text cannot leak into vocabulary counts, word bigrams or the EM model.
+
+The split hashes the **sentence text** (FNV-1a 64), not the line number:
+`corpus_clean.txt` concatenates Wikipedia, CC100 and a news crawl, so a tail
+slice would sample a single source. FNV-1a rather than `DefaultHasher` because
+the latter is explicitly not stable across Rust releases, and this decision has
+to be reproducible across rebuilds.
+
+Key API: `is_holdout(line, denom)`, `stable_hash`, `DEFAULT_HOLDOUT_DENOM` (200).

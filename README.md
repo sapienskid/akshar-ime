@@ -11,14 +11,25 @@ Akshar Devanagari IME is a next-generation input method built from the ground up
 
 - **Nepali-native details:** digits map to Devanagari numerals (123 → १२३)
   and a trailing `.` offers purnabiram (namaste. → नमस्ते।).
-- **Fast:** Sub-millisecond keystroke latency (0.4–0.8 ms), single generative decoder.
+- **Small:** 8.91 MB browser model (**4.92 MB Brotli**), 30.6 MB on desktop, from a single unified container.
 - **SOTA Transliteration Core:** Outperforms neural baselines (IndicXlit top-1: 80.25% vs AksharIME top-1: **82.12%**, top-5: **92.13%** on held-out Aksharantar native test). Combines an EM-trained source-channel model (`P(roman | akshara)` over 3.59M pairs) with a Kneser-Ney syllable trigram LM, candidate union decoding, and a canonical discriminative log-linear reranker (29 dense shape/frequency/morphology features + $2^{20}$-slot sparse lexicalized table). Zero neural network runtime dependencies, 100% classical and memory-safe.
 - **Adaptive Learning:** the IME learns your vocabulary and spelling variants
   in real time; the words you use most frequently appear first.
 - **Fuzzy Search:** finds the correct words even with spelling mistakes in
   Roman script.
 - **Context-Aware:** suggestions are re-ranked based on the words you've just
-  typed.
+  typed (desktop profile; the browser profile omits the word-bigram table,
+  which costs 19.5 MB for +0.16pp — see `docs/MODEL_TRAINING_AND_OPTIMIZATION.md`).
+
+## Model profiles
+
+| Profile | File | Size | Brotli | Aksharantar top-1 / top-5 |
+| :--- | :--- | ---: | ---: | ---: |
+| Desktop / IBus | `data/akshar.model` | 30.59 MB | — | 82.02% / 92.17% |
+| Browser | `data/akshar_wasm.model` | 8.91 MB | **4.92 MB** | 81.07% / 92.22% |
+
+Build the browser model with `make web-model`; `TRIGRAM_THRESHOLD` trades size
+against accuracy along a measured curve (see `docs/WASM.md`).
 
 ## Architectural Overview
 

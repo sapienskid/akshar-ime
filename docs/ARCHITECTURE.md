@@ -2,15 +2,15 @@
 
 ## 1. System Overview & Engineering Principles
 
-Akshar Devanagari IME is an intelligent, high-performance input method engine for the Devanagari script (specifically optimized for Nepali and Hindi orthography). It achieves **state-of-the-art transliteration accuracy (82.12% top-1, 92.13% top-5)** on the standard AI4Bharat Aksharantar test benchmark, outperforming neural transliteration baselines (such as IndicXlit at 80.25% top-1) while requiring **zero neural network runtimes** and operating strictly within sub-millisecond latency budgets.
+Akshar Devanagari IME is an intelligent, high-performance input method engine for the Devanagari script (specifically optimized for Nepali and Hindi orthography). It achieves **state-of-the-art transliteration accuracy (82.02% top-1, 92.17% top-5 on the desktop profile)** on the standard AI4Bharat Aksharantar test benchmark, outperforming neural transliteration baselines (such as IndicXlit at 80.25% top-1) while requiring **zero neural network runtimes**, in a browser bundle of 4.92 MB compressed.
 
 ### Core Architectural Principles:
 1. **Classical Statistical Transduction over Neural Dependencies:**
    All inference relies on exact shortest-path dynamic programming (Viterbi beam search in the tropical semiring), n-gram language models with Kneser-Ney smoothing, and a log-linear discriminative reranker with hash-table lexicalization. No PyTorch, ONNX, or C++ neural runtimes are needed.
 2. **Strict WebAssembly Compatibility & Memory Budget:**
-   The entire engine compiles to native Linux C-ABI binaries and WebAssembly (`wasm32-unknown-unknown`). Total compressed runtime footprint is $\le 9.1$ MB (Brotli), with memory consumption capped at $\approx 25$ MB on browser runtimes and $\approx 40$ MB on native systems.
-3. **Sub-Millisecond Keystroke Latency:**
-   Every keystroke is processed in $0.40 - 0.80$ ms on standard consumer CPUs, delivering immediate, flicker-free typing without background thread lag.
+   The entire engine compiles to native Linux C-ABI binaries and WebAssembly (`wasm32-unknown-unknown`). The browser model is **4.92 MB Brotli**, with memory consumption around $\approx 25$ MB on browser runtimes and $\approx 40$ MB on native systems.
+3. **Low Keystroke Latency:**
+   A keystroke is processed in $2.6 - 4.1$ ms at $k=5$ on standard consumer CPUs — fast enough to feel immediate while typing, with no background thread lag.
 4. **Local On-Device Adaptive Learning:**
    User selections update a local, persistent prefix trie and frequency table without any telemetry or cloud round-trips.
 
@@ -194,15 +194,28 @@ graph TD
 
 ## 5. Performance, Memory & Binary Specifications
 
-| Component | Disk Footprint | Memory at Runtime | Algorithmic Complexity | Keystroke Latency |
-| :--- | :--- | :--- | :--- | :--- |
-| **Unified Container (`akshar.model`)** | 47 MB (no bigrams) / 68 MB (with pruned bigrams) | $\approx 40$ MB heap (atomic load) | Single read | N/A (load time < 0.5s) |
-| **Generative Decoder** | Included in container | $\approx 30$ MB (or 12 MB Brotli in WASM) | $O(M \cdot B \cdot L)$ | $0.25 - 0.40$ ms |
-| **Vocabulary WordTrie** | Included in container | $\approx 22$ MB heap | $O(M \cdot \Sigma)$ prefix walk | $0.05 - 0.10$ ms |
-| **Discriminative Reranker**| Included in container (1 MB) | 1 MB sparse table | $O(K \cdot (D + S))$ | $0.08 - 0.15$ ms |
-| **Bigram Context Layer** | Included in container (21 MB) | $\approx 10$ MB (native only) | $O(K \log \text{deg})$ | $0.01 - 0.03$ ms |
-| **SymSpell & User Trie** | $\approx 50$ KB (`user_dictionary.bin`) | $< 2$ MB heap | $O(1)$ hash lookup | $0.01 - 0.02$ ms |
-| **Total Runtime Engine** | **$\approx 12$ MB (Brotli)** | **$\approx 25 - 40$ MB** | **Strictly sub-linear** | **$0.40 - 0.80$ ms** |
+Disk footprints are the **encoded** sizes in the v3 container (see
+`probe_model --inspect`), which differ from the in-memory layout: the n-gram
+tables, vocabulary and chunk list are re-encoded on save by `core::codec`.
+
+| Component | Desktop | Browser | Algorithmic Complexity |
+| :--- | ---: | ---: | :--- |
+| **Unified Container (`akshar.model`)** | 30.59 MB | 8.91 MB (**4.92 MB** Brotli) | Single read, version-dispatched |
+| Syllable trigram LM | 5.49 MB | 3.94 MB (entropy-pruned) | $O(M \cdot B \cdot L)$ decode |
+| Vocabulary (front-coded akshara ids) | 2.41 MB | 2.41 MB | $O(M \cdot \Sigma)$ prefix walk |
+| Syllable bigram LM + emissions | 1.54 MB | 1.54 MB | binary search per row |
+| Roman chunks (packed u32) | 0.48 MB | 0.48 MB | — |
+| Discriminative reranker ($2^{20}$ `i8`) | 1.00 MB | 1.00 MB (0.01 MB Brotli) | $O(K \cdot (D + S))$ |
+| Word bigram context layer | 19.54 MB | omitted | $O(\text{deg})$ scan |
+| SymSpell & user trie (`user_dictionary.bin`) | $\approx 50$ KB | localStorage | $O(1)$ hash lookup |
+
+**Measured latency** is $2.6 - 4.1$ ms per query at $k=5$ on a desktop CPU, not
+the sub-millisecond figure previously claimed here.
+
+**Runtime memory is not the same as disk footprint.** The container is decoded
+into the runtime layout on load — `Vec<Vec<(u32, f32)>>` n-gram tables and a
+`Vec<HashMap<u32, usize>>` `WordTrie` — so heap use is roughly $25 - 40$ MB and
+is unchanged by the compact on-disk format.
 
 For complete training procedures, component ablation studies, and loss-free pruning details, see:
 - [**Model Training, Optimization & Pruning Guide (`docs/MODEL_TRAINING_AND_OPTIMIZATION.md`)**](MODEL_TRAINING_AND_OPTIMIZATION.md)
