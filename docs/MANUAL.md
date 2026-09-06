@@ -48,8 +48,8 @@ Chapter 9 include the components that turned out to contribute nothing.
 ## Conventions
 
 * Weights are **negative log probabilities** throughout. Lower is better, and
-  costs add. This is the tropical semiring, which is why decoding is a
-  shortest-path problem.
+  costs add. This is the **tropical semiring** $(\min, +)$ [Mohri 1997], which is why
+  decoding is a shortest-path problem.
 * $R$ denotes a Roman-script input string, $D$ a Devanagari output string,
   $a$ an *akshara* (orthographic syllable), $s$ a Roman *chunk*.
 * Accuracy figures are **top-1 exact string match** unless stated otherwise.
@@ -207,7 +207,7 @@ The two factors are learned separately:
 * $P(R \mid D)$ --- the **transliteration model**, learned by EM over an
   unaligned parallel lexicon (Chapter 5).
 * $P(D)$ --- a **language model** over aksharas, smoothed with modified
-  Kneser-Ney (Chapter 6).
+  Kneser-Ney [Kneser & Ney 1995; Chen & Goodman 1999] (Chapter 6).
 
 Working in negative logs, the decoder minimises
 
@@ -232,7 +232,9 @@ than standing alone. The codepoint sequence `क` + `ि` is one pronounceable u
 Whole words are wrong because the vocabulary is open --- Nepali is agglutinative,
 and compounds and case-marked forms are productive.
 
-So the unit is the **akshara**, the orthographic syllable of Brahmic scripts:
+So the unit is the **akshara**, the orthographic syllable of Brahmic scripts.
+The script class is Daniels' *abugida* [Daniels 1990]: a consonant carries an
+inherent vowel that a diacritic overrides.
 
 $$
 \text{akshara} := (\text{consonant}\ \text{halanta})^{*}\ \text{consonant}?\
@@ -350,7 +352,8 @@ this with `if z < 1e-12 { continue; }` --- a threshold 296 orders of magnitude
 above the f64 subnormal limit --- which silently **discarded every long or
 flat-emission word from training**, biasing EM toward short easy words.
 
-The fix is Rabiner-style scaling. Each forward column is divided by its own
+The fix is the scaling of [Rabiner 1989, §V.A], developed there for HMM
+forward-backward [Baum et al. 1970]. Each forward column is divided by its own
 maximum $c_j$, and **the same factors** are divided out of the backward pass, so
 that with
 
@@ -430,7 +433,7 @@ word-initially. $N$ is the akshara vocabulary size.
 
 ## Modified Kneser-Ney discounts
 
-A single absolute discount $\delta$ over-discounts frequent $n$-grams and
+A single absolute discount $\delta$ [Ney, Essen & Kneser 1994] over-discounts frequent $n$-grams and
 under-discounts singletons. Chen & Goodman (1999) use three discounts, chosen by
 the count of the $n$-gram, estimated from the counts-of-counts $n_1 \dots n_4$:
 
@@ -531,7 +534,7 @@ sum of edge weights plus the LM cost of its akshara sequence.
 
 ## Beam search
 
-The search is step-synchronous over aksharas. Each step expands every beam state
+The search is a **beam search** [Lowerre 1976], step-synchronous over aksharas. Each step expands every beam state
 across every edge available at its position, scores the extension, and keeps the
 best `beam_width` hypotheses (default 64, `AKSHAR_BEAM`).
 
@@ -651,7 +654,9 @@ than v5 fall back to the constants.
 
 ## Sparse lexicalized features
 
-Seven templates are hashed into a $2^{20}$-slot table of `i8` weights:
+Seven templates are hashed into a $2^{20}$-slot table of `i8` weights --- the
+**hashing trick** [Weinberger et al. 2009], which trades hash collisions for a
+fixed memory budget over an unbounded feature space:
 
 1. length-delta bucket (aksharas minus Roman characters)
 2. final akshara $\times$ final Roman character
@@ -755,7 +760,7 @@ statistical path.
 
 `user_confirms(roman, devanagari)` records the user's choice into:
 
-* the **trie** (`src/core/trie.rs`) --- prefix lookup with frequency;
+* the **trie** [Fredkin 1960] (`src/core/trie.rs`) --- prefix lookup with frequency;
 * the **SymSpell index** (`src/fuzzy/symspell.rs`) --- delete-variant map for
   typo tolerance;
 * the **context model** (`src/core/context.rs`) --- user bigrams for
@@ -774,7 +779,7 @@ Two mechanisms remain, and they are different in kind:
    Measured contribution on the benchmark: **0.00pp**, because only the first
    variant is ever decoded and the EM emissions already absorb these
    alternations.
-2. **User SymSpell** --- symmetric-delete matching over confirmed words. Every
+2. **User SymSpell** --- symmetric-delete matching [Garbe] over confirmed words. Every
    hit is verified with bounded Damerau-Levenshtein before scoring, because a
    delete-set intersection is a *necessary* condition only: at
    `max_edit_distance = 1` it still returns pairs at true distance 2.
@@ -825,7 +830,8 @@ Naive bincode of these structures is 66.59 MB. Four techniques bring it to
 * **8-bit weight codebooks.** Each numeric section gets a 256-entry codebook of
   `f32` values; entries store an index. Weights cluster tightly, so the
   quantisation error is far below the model's discrimination threshold.
-* **Front-coded vocabulary.** Words are stored as akshara-id sequences against a
+* **Front-coded vocabulary** (a standard dictionary compression, as in
+  [Witten, Moffat & Bell 1999]). Words are stored as akshara-id sequences against a
   shared prefix.
 * **Packed chunk strings.**
 
@@ -837,8 +843,8 @@ cargo run --release --bin probe_model -- data/akshar.model --inspect
 
 ## Browser profile
 
-`make web-model` produces `data/akshar_wasm.model` by relative-entropy pruning of
-the trigram LM. `TRIGRAM_THRESHOLD` (default `3e-2`) trades size against
+`make web-model` produces `data/akshar_wasm.model` by relative-entropy pruning
+of the trigram LM [Stolcke 1998]. `TRIGRAM_THRESHOLD` (default `3e-2`) trades size against
 accuracy along a measured curve; at the default it keeps 47% of trigram
 transitions and yields 8.91 MB raw, 4.94 MB Brotli.
 
@@ -879,7 +885,8 @@ frequencies, prune below $f = 3$. ~33 s.
 
 **Phase 3 --- Reranker.** Decode each training pair, extract dense and sparse
 features, and train the sparse table by softmax cross-entropy over the candidate
-list with AdaGrad. Above 200,000 pairs this runs **chunked**: batches of 100,000
+list with **AdaGrad** [Duchi, Hazan & Singer 2011]. The objective is
+candidate reranking in the sense of [Collins 2000]. Above 200,000 pairs this runs **chunked**: batches of 100,000
 are decoded once and reused for all epochs, which is why a full run is ~4 h
 rather than ~18 h.
 
@@ -930,31 +937,204 @@ Held-out text never contributes to vocabulary counts or the EM model.
 
 \newpage
 
-# Evaluation
+# Evaluation methodology
+
+This chapter states what is measured, how, and under what assumptions, so that
+every number elsewhere in the manual can be checked or contested.
+
+## Data
+
+**Benchmark.** The AI4Bharat *Aksharantar* Nepali collection
+[Madhani et al. 2023], a public corpus of Roman/Devanagari word pairs.
+
+| Split | Pairs | Use |
+| :--- | ---: | :--- |
+| `train_devanagari.jsonl` | 3,588,793 | EM, language model, reranker |
+| `valid_devanagari.jsonl` | 852 KB | held out; available, currently unused by the reranker |
+| `test_devanagari.jsonl` | 4,101 | **all reported accuracy** |
+
+The test split carries a `source` field partitioning it into three strata,
+reported separately throughout because they behave very differently:
+
+| Stratum | $n$ | Content |
+| :--- | ---: | :--- |
+| `AK-Freq` | 2,108 | frequent native Nepali words |
+| `AK-NEI` | 1,176 | named entities, Indic-origin |
+| `AK-NEF` | 817 | named entities, foreign-origin |
+
+`AK-Freq` is treated as the headline metric because it measures the intended
+task --- typing ordinary Nepali. Named-entity strata are reported alongside and
+never pooled into a single "accuracy" without saying so.
+
+**Vocabulary and language-model text** come from a separate 1.5 GB Nepali
+running-text corpus (`data/store/corpus_clean.txt`), pruned at frequency $< 3$
+to 470,012 types.
+
+**Contamination control.** Held-out text does not contribute to vocabulary
+counts, the EM model, or the language model. The engine is constructed fresh per
+evaluation run with an **empty user dictionary**: the adaptive-learning path
+(§7.3) is not exercised, because feeding it gold answers during evaluation would
+make every later occurrence trivially correct. `evaluate_aksharantar` therefore
+calls `get_suggestions` only, never `user_confirms`.
+
+## Metrics
+
+Let $N$ be the number of test cases, $D_i^{*}$ the gold Devanagari string for
+case $i$, and $\hat{D}_i^{(1)}, \dots, \hat{D}_i^{(k)}$ the engine's ranked
+output.
+
+**Top-$k$ accuracy.** Exact string match, the primary metric:
+
+$$
+\mathrm{Acc}@k \;=\; \frac{1}{N}\sum_{i=1}^{N}\ \mathbb{1}\!\left[\, D_i^{*} \in \{\hat{D}_i^{(1)},\dots,\hat{D}_i^{(k)}\}\,\right].
+$$
+
+Exact match is strict --- a single wrong matra scores zero --- and it is the
+right metric for an IME, where the user either gets the word or has to fix it.
+$k = 1$ measures the top suggestion; $k = 5$ approximates a visible candidate
+bar. Comparison is on NFC-normalised Unicode strings with no case folding.
+
+**Mean reciprocal rank.** Sensitive to *where* in the list the answer falls,
+not just whether it is present:
+
+$$
+\mathrm{MRR} \;=\; \frac{1}{N}\sum_{i=1}^{N} \frac{1}{\mathrm{rank}_i},
+\qquad \mathrm{rank}_i = \min\{\,j : \hat{D}_i^{(j)} = D_i^{*}\,\},
+$$
+
+with $1/\mathrm{rank}_i = 0$ when the gold answer is absent from the returned
+list.
+
+**Character error rate.** A graded measure, so that near-misses are
+distinguished from nonsense:
+
+$$
+\mathrm{CER} \;=\; \frac{\sum_{i} \mathrm{lev}\!\left(\hat{D}_i^{(1)}, D_i^{*}\right)}{\sum_{i} \left|D_i^{*}\right|},
+$$
+
+with $\mathrm{lev}$ the Levenshtein distance [Levenshtein 1966] over Unicode
+scalar values.
+
+**Oracle@$k$.** The accuracy a *perfect* reranker would achieve on the
+candidate list actually generated:
+
+$$
+\mathrm{Oracle}@k \;=\; \frac{1}{N}\sum_{i=1}^{N} \mathbb{1}\!\left[\,D_i^{*} \in \mathrm{Cand}_i^{(k)}\,\right].
+$$
+
+This separates the two failure modes that a single accuracy number confounds:
+$\mathrm{Oracle}@k - \mathrm{Acc}@1$ is **ranking** loss (generated, mis-ordered),
+and $1 - \mathrm{Oracle}@k$ is **generation** loss (never produced at all). The
+distinction drives the entire roadmap (§13).
+
+**Multi-reference accuracy.** Roman input is ambiguous, so a prediction can be
+correct without matching the single reference. `data/eval/test_multiref.jsonl`
+collects 14,410 alternative romanizations; scoring credits a match against any
+reference for the same input. Reported alongside strict accuracy, never instead
+of it.
+
+## Protocol
+
+**Configuration.** Unless stated otherwise: beam width 64, rerank cascade depth
+24, $\gamma = 0.3$, $k = 5$ requested, `data/akshar.model`, no user dictionary,
+single desktop CPU. Every ablation varies exactly one factor via a documented
+environment switch (§9.3) against this fixed baseline.
+
+**Determinism.** The engine is deterministic --- no sampling, no RNG on the
+inference path, and hash containers on the ordering path use a fixed-seed hasher.
+Repeated runs of `evaluate_aksharantar` reproduce identical counts. Reported
+figures are therefore single runs, not averages, and any difference between two
+runs is a real difference in code, model or configuration.
+
+**Latency.** Wall-clock per `get_suggestions` call, averaged over all 4,101
+cases after model load, measured inside the harness rather than by timing the
+process (which would include a ~1.5 s cold start). Latency is reported to three
+decimal places in ms but should be read as $\pm$ 10%: it is sensitive to machine
+load, and several figures in this manual were taken while a training job was
+running --- those are marked where they appear.
+
+## Statistical treatment
+
+**Confidence intervals.** `evaluate` reports bootstrap percentile intervals
+[Efron 1979]: resample the $N$ per-case outcomes with replacement $B$ times
+($B = 1000$ by default, seed 42), recompute the statistic on each resample, and
+take the 2.5th and 97.5th percentiles.
+
+**Comparing two configurations.** Independent confidence intervals are the
+*wrong* tool here: both systems see the same cases, so their errors are
+correlated and overlapping intervals do not imply no difference. Comparisons use
+**McNemar's test** [McNemar 1947] on the paired outcomes. With
+
+$$
+b_{01} = \#\{i : \text{A wrong},\ \text{B right}\}, \qquad
+b_{10} = \#\{i : \text{A right},\ \text{B wrong}\},
+$$
+
+the concordant cases carry no information about which system is better, and
+under $H_0$ the discordant ones split evenly. The two-sided exact $p$-value is
+
+$$
+p \;=\; 2 \sum_{i=0}^{\min(b_{01},\,b_{10})} \binom{n}{i} \Big/ 2^{\,n},
+\qquad n = b_{01} + b_{10},
+$$
+
+clipped at 1. Both $b_{01}$ and $b_{10}$ are reported with every comparison, not
+just $p$, because their magnitudes show whether a change is a small net effect
+over many disagreements or a genuinely consistent one.
+
+Significance is claimed at $\alpha = 0.05$. **No correction is applied for
+multiple comparisons**, so the ablation table's borderline entries
+($0.01 < p < 0.05$) should be read as suggestive rather than established.
+
+**Effect sizes.** Reported in percentage points on the relevant stratum. One
+standard error on `AK-Freq` at $n = 2{,}108$ and $p \approx 0.82$ is
+$\sqrt{p(1-p)/n} \approx 0.84$pp, which is the yardstick used throughout for
+calling a difference "within noise".
+
+## Threats to validity
+
+Stated so a reader can weigh the results rather than take them on trust.
+
+**Single benchmark.** All accuracy comes from one test set of one language. The
+Dakshina benchmark [Roark et al. 2020], on which the IndicXlit comparison
+figures are usually quoted, is not evaluated here.
+
+**Baseline comparability.** IndicXlit numbers (80.25% native, 52.67%
+named-entity top-1) are quoted from [Madhani et al. 2023], **not re-measured**
+in this environment. They are cited for scale, and no claim of a controlled
+head-to-head is made.
+
+**Isolated words.** The headline metric scores words with no sentence context,
+which is not how an IME is used. `evaluate_sentences` measures in-context
+accuracy on held-out running text and is the more realistic figure; it is
+reported less often here simply because it has changed less.
+
+**Vocabulary overlap.** The frequency prior is built from a news-domain corpus
+and the test set is drawn from a related distribution, so the prior's
+contribution (+5.64pp, §9.1) may not transfer to out-of-domain input.
+
+**Tuning on the test set.** $\gamma$, beam width and cascade depth were selected
+by sweeping against this test split. Those choices are mildly optimistic; the
+validation split exists and should be used for them.
 
 ## Harnesses
 
-| Command | What it reports |
+| Command | Reports |
 | :--- | :--- |
-| `make eval` | top-1/top-5 per Aksharantar split |
-| `make eval-full` | bootstrap 95% CIs, MRR, per-query latency |
+| `make eval` | top-1/top-5 per stratum |
+| `make eval-full` | bootstrap CIs, MRR, latency |
 | `make eval-errors` | oracle curves, error taxonomy, CER, collision bound |
+| `make ablate` | per-component contribution |
 | `cargo test --release` | unit tests plus the accuracy regression guard |
-
-Isolated-word accuracy does not see everything, so two further harnesses exist:
-`evaluate_sentences` measures word accuracy *in context* on held-out running
-text, and `evaluate --dataset data/eval/test_multiref.jsonl` measures tolerance
-of loose romanization across 14,410 alternative spellings.
 
 ## The accuracy regression guard
 
 `tests/accuracy_regression.rs` evaluates a 400-case `AK-Freq` sample on every
 `cargo test`, failing below 76% top-1 or 88% top-5.
 
-It exists because a **30.8pp regression once shipped through 92 green unit
+It exists because a **30.79pp regression once shipped through 92 green unit
 tests**. Every component was individually correct; their *composition* was
-wrong. No amount of unit testing detects that, and this manual would rather
-state the lesson than the coverage number.
+wrong. No amount of unit testing detects that.
 
 ## Headroom, and where the errors are
 
@@ -970,41 +1150,34 @@ From `make eval-errors` at beam 256:
 | top-1 if the matra class were solved | **91.03%** | 76.08% |
 | CER (engine top-1) | 3.90% | 11.66% |
 
-Three things follow, and they set the roadmap:
+Three consequences, which set the roadmap:
 
-1. **The gap is ranking, not generation.** The correct answer is in the
-   decoder's top 50 for 94.3% of native cases but ranked first for only 81.8%.
-   12.5pp are being generated and then mis-ranked.
-2. **Most of that is a binary decision.** Oracle@2 is 89.8%, so 8.0 of those
-   12.5 points are a choice between the top two candidates --- a far
-   better-posed problem than a 50-way ranking.
+1. **The gap is ranking, not generation.** The gold answer is in the decoder's
+   top 50 for 94.3% of native cases but ranked first for 81.8%. 12.5pp are
+   generated and then mis-ranked.
+2. **Most of that is a binary decision.** Oracle@2 is 89.8%, so 8.0 of the 12.5
+   points are a choice between the top two candidates.
 3. **Half the errors are vowel signs.** 51.9% of native misses are *matra-only*:
    prediction and gold agree after stripping vowel-length and nasal marks.
-   Solving that class alone would reach 91.03%.
+
+An error is classified *matra-only* if prediction and gold become identical
+after deleting all matras, anusvara, visarga and chandrabindu; *halant-only* by
+the same construction on viramas; and *substantive* otherwise.
 
 ## The collision bound
 
-`analyze_errors` also computes the ceiling for **any** string-only system whose
-sole prior is corpus unigram frequency: for each Roman input, could the most
-frequent Devanagari word consistent with it be the gold answer?
+`analyze_errors` computes the ceiling for **any** string-only system whose sole
+prior is corpus unigram frequency. Let $A(R)$ be the set of Devanagari words
+observed for Roman input $R$ across train, valid and test, and $f$ the corpus
+frequency:
 
 $$
-\mathrm{Acc}^{*} = \frac{1}{N}\sum_{i} \mathbb{1}\!\left[D_i^{\text{gold}} = \arg\max_{D \in A(R_i)} f(D)\right] = 99.15\%
+\mathrm{Acc}^{*} \;=\; \frac{1}{N}\sum_{i=1}^{N} \mathbb{1}\!\left[\, D_i^{*} = \arg\max_{D \in A(R_i)} f(D)\,\right] \;=\; 99.15\%.
 $$
 
-Only 0.85% of cases are unwinnable (1.6% of Roman inputs are genuinely
-ambiguous). **The dataset is not the constraint.**
-
-## Statistical method
-
-Accuracy differences between configurations are compared with **McNemar's
-test** on paired per-case outcomes (`examples/ablate_paired.rs`), two-sided,
-exact binomial on the discordant pairs.
-
-Comparing two independent accuracy numbers and their confidence intervals
-understates the evidence when both systems see the same cases; what matters is
-whether the cases where they *disagree* lean one way. Reported as `w->r` (full
-system wrong, ablated right) and `r->w` (the reverse).
+Only 0.85% of cases are unwinnable this way (1.6% of Roman inputs map to more
+than one gold form). **The dataset is not the constraint**, and a 90% target is
+not near any intrinsic ceiling.
 
 \newpage
 
@@ -1020,27 +1193,55 @@ reproducible from the shipped binary rather than from patched builds.
 | `AKSHAR_NO_TRIE_UNION=1` | skip the trie-constrained decode pass |
 | `AKSHAR_TRIE_ONLY=1` | skip the free lattice beam |
 | `AKSHAR_NO_SPARSE=1` | drop the $2^{20}$ sparse reranker table |
+| `AKSHAR_NO_RERANK=1` | rank by raw decoder score, skipping the rerank stage |
 | `AKSHAR_GAMMA=<f>` | override the dense/heuristic blend |
 | `AKSHAR_NO_TRIGRAM=1` | force the LM to back off to bigrams |
 | `AKSHAR_NO_VARIANTS=1` | decode the raw query only |
 | `AKSHAR_BEAM=<n>` | beam width (default 64) |
 | `AKSHAR_RERANK_DEPTH=<n>` | cascade depth (default 24) |
 
-## Contribution to native top-1
+## The rerank stage, built up from raw decoder order
+
+An earlier version of this table treated $\gamma = 0$ as "no reranking". That
+was wrong: $\gamma = 0$ still applies the frequency heuristic, which *is* part of
+the rerank stage. Building the stage up from the generative ranking gives the
+honest decomposition:
+
+| Ranking | `AK-Freq` top-1 | $\Delta$ |
+| :--- | ---: | ---: |
+| raw decoder order (`emit + lm`) | 75.38% | --- |
+| $+$ frequency heuristic ($\gamma = 0$) | 81.02% | **+5.64** |
+| $+$ 29 dense features | 81.93% | +0.91 |
+| $+$ $2^{20}$ sparse table (shipped) | 81.83% | −0.10 |
+
+**Reranking is worth +6.45pp overall** --- the second-largest contribution in
+the system after the trigram LM. But **87% of that value is the
+three-parameter heuristic**
+
+$$h(D) = \texttt{emit} + 0.85\,\texttt{lm} - 0.75\log(1 + f(D)),$$
+
+whose entire content is a corpus frequency prior the generative model does not
+have. The $10^6$-parameter learned stage adds +0.91pp on top of it, and the
+sparse half of that contributes nothing on native words (§9.2).
+
+Reproduce with `AKSHAR_NO_RERANK=1`, `AKSHAR_GAMMA=0.0`, `AKSHAR_NO_SPARSE=1`.
+
+## Contribution of each remaining component
 
 Full system: **81.83%** on `AK-Freq`.
 
 | Component removed | top-1 | $\Delta$ |
 | :--- | ---: | ---: |
+| whole rerank stage | 75.38% | **−6.45** |
 | trigram LM (bigram only) | 77.94% | **−3.89** |
-| dense reranker ($\gamma = 0$) | 81.02% | −0.81 |
+| dense + sparse (heuristic only) | 81.02% | −0.81 |
 | trie-constrained pass | 81.17% | −0.66 |
-| sparse table ($2^{20}$) | 81.93% | **+0.09** |
+| sparse table ($2^{20}$) | 81.93% | +0.09 |
 | corpus lexicon | 81.83% | 0.00 |
 | query variants | 81.83% | 0.00 |
 
-The **language model is the engine of this system**. Everything else is
-comparatively marginal.
+The **language model and the frequency prior carry this system.** Everything
+learned discriminatively is marginal by comparison.
 
 ## Paired significance
 
@@ -1428,53 +1629,332 @@ that is a full 3.59M run worth its four hours.
 
 \newpage
 
+# Experimental record
+
+Final numbers cannot show what was tried and rejected. The working documents in
+`docs/plans/archive/` preserve that record; this chapter summarises it.
+
+**The accuracy figures in the archive are historical** --- measured before the
+2026-09-06 defect fixes --- and do not describe the shipped system. This manual
+is authoritative for current numbers.
+
+## Approaches evaluated and rejected
+
+| Approach | Why rejected |
+| :--- | :--- |
+| IndicXlit transformer (~11M params) as the core | ~40 MB; breaks the browser budget by an order of magnitude. Retained only as an offline reference point. |
+| NADIR-style non-autoregressive neural decoder | ~50 MB; same constraint. |
+| Neural character LM interpolated with the KN LM | 5--10 MB for $< 1$pp on the tail. |
+| Corpus word-bigram context table | 19.5 MB of container for +0.16pp. Removed in container v4. |
+| Corpus-wide fuzzy matching | Cost 30.79pp of native top-1 and contributed no recall at any score band (§9.5). Removed. |
+| Corpus roman$\to$devanagari lexicon | 0.00pp on every stratum; dead by construction. Removed. |
+| Lattice CRF over the decode graph | Half-built, never wired in, 702 lines. Removed rather than left as dead weight; recoverable from git. |
+| Joint pair-model over (akshara, chunk) states | Built by the trainer but never packed or loaded. Removed. |
+| Modified Kneser-Ney over a single discount | Implemented correctly, but +0.29pp is inside one standard error (§9.4). Retained as the standard estimator, not claimed as an improvement. |
+| More reranker supervision (5x) | Tested at 500k pairs; changed nothing, and dev loss never beat having no sparse table (§13.2). |
+
+## Approaches considered but not implemented
+
+Recorded in `docs/plans/archive/2026-09-05-research-agenda.md`:
+
+* **Context-tree weighting** [Willems, Shtarkov & Tjalkens 1995] as a
+  parameter-free alternative to Kneser-Ney smoothing.
+* **A\* anytime decoding** [Hart, Nilsson & Raphael 1968] over the lattice, for
+  exact search with a latency budget.
+* **An entropy harness** to measure the information budget --- how many bits the
+  Roman input actually carries about the Devanagari output --- and thus bound
+  what any model can achieve.
+* **Incremental decoding**: caching the beam per prefix and extending it by one
+  character, rather than re-decoding the whole growing prefix on each keystroke.
+
+## Archive index
+
+| Document | Records |
+| :--- | :--- |
+| `2026-08-01-generative-transliteration-design.md` | Original design: the source-channel decision, akshara units, first results. |
+| `2026-09-03-transliteration-accuracy-research.md` | Error analysis and a ranked technique shortlist (E0--E7) with expected gains. |
+| `2026-09-03-accuracy-experiments.md` | **The experiment log**: E0--E3 with measured deltas, the WFST core, depth-2 pair context. |
+| `2026-09-05-data-flow.md` | How raw text becomes the artefacts a keystroke touches. |
+| `2026-09-05-data-research.md` | Literature review: IndicXlit's data usage, context in production IMEs [Kirov et al. 2024], larger Nepali corpora. |
+| `2026-09-05-research-agenda.md` | Mathematics considered but not executed. |
+| `2026-09-05-roadmap-to-90.md` | First plan to 90%: audit of how every byte of data is used. |
+| `2026-09-05-path-past-90.md` | Its revision, with W0 measurement-gate results. |
+
+\newpage
+
 # References
 
-Chen, S. F. and Goodman, J. (1999). *An Empirical Study of Smoothing Techniques
-for Language Modeling.* Computer Speech & Language 13(4), 359--394.
+Work this system builds on, grouped by where it is used. Section numbers point
+to the chapter that relies on it.
 
-Kneser, R. and Ney, H. (1995). *Improved Backing-off for M-gram Language
-Modeling.* ICASSP.
+## Model and training
 
-Li, H., Zhang, M. and Su, J. (2004). *A Joint Source-Channel Model for Machine
-Transliteration.* ACL.
+Baum, L. E., Petrie, T., Soules, G. and Weiss, N. (1970). *A Maximization
+Technique Occurring in the Statistical Analysis of Probabilistic Functions of
+Markov Chains.* Annals of Mathematical Statistics 41(1), 164--171. --- the
+forward-backward recursions (§5.3).
 
-Madhani, Y. et al. (2023). *Aksharantar: Open Indic-language Transliteration
-Datasets and Models for the Next Billion Users.* Findings of EMNLP.
-`https://aclanthology.org/2023.findings-emnlp.4/`
+Dempster, A. P., Laird, N. M. and Rubin, D. B. (1977). *Maximum Likelihood from
+Incomplete Data via the EM Algorithm.* JRSS B 39(1), 1--38. --- the EM
+framework (§5).
 
 Rabiner, L. R. (1989). *A Tutorial on Hidden Markov Models and Selected
 Applications in Speech Recognition.* Proceedings of the IEEE 77(2), 257--286.
-(Scaling of the forward-backward recursions, §5.3.)
+--- scaling of the forward-backward recursions, §V.A (§5.3).
+
+Li, H., Zhang, M. and Su, J. (2004). *A Joint Source-Channel Model for Machine
+Transliteration.* ACL. --- the source-channel formulation this system uses
+(§4.2).
+
+Shannon, C. E. (1948). *A Mathematical Theory of Communication.* Bell System
+Technical Journal. --- the noisy-channel decomposition (§4.2).
+
+## Language modelling
+
+Ney, H., Essen, U. and Kneser, R. (1994). *On Structuring Probabilistic
+Dependences in Stochastic Language Modelling.* Computer Speech & Language 8(1),
+1--38. --- absolute discounting (§6.2).
+
+Kneser, R. and Ney, H. (1995). *Improved Backing-off for M-gram Language
+Modeling.* ICASSP. --- continuation probabilities (§6.1).
+
+Chen, S. F. and Goodman, J. (1999). *An Empirical Study of Smoothing Techniques
+for Language Modeling.* Computer Speech & Language 13(4), 359--394. ---
+modified Kneser-Ney, and the constraint $0 \le D_i \le i$ this system had been
+violating (§6.2).
+
+Stolcke, A. (1998). *Entropy-based Pruning of Backoff Language Models.* DARPA
+Broadcast News Transcription and Understanding Workshop. --- the browser
+profile's LM pruning (§8.4).
+
+## Decoding
+
+Viterbi, A. J. (1967). *Error Bounds for Convolutional Codes and an
+Asymptotically Optimum Decoding Algorithm.* IEEE Trans. Information Theory.
+
+Lowerre, B. (1976). *The HARPY Speech Recognition System.* PhD thesis, CMU. ---
+beam search (§7.2).
+
+Mohri, M. (1997). *Finite-State Transducers in Language and Speech Processing.*
+Computational Linguistics 23(2), 269--311. --- the tropical semiring and
+lattice formulation (§7.1).
+
+Hart, P. E., Nilsson, N. J. and Raphael, B. (1968). *A Formal Basis for the
+Heuristic Determination of Minimum Cost Paths.* IEEE Trans. SSC. --- A* anytime
+decoding, considered but not implemented (archive: research agenda).
+
+## Discriminative reranking
+
+Collins, M. (2000). *Discriminative Reranking for Natural Language Parsing.*
+ICML. --- the reranking-over-k-best formulation (§7).
+
+Och, F. J. (2003). *Minimum Error Rate Training in Statistical Machine
+Translation.* ACL. --- MERT, used by the legacy fallback reranker.
+
+Weinberger, K. et al. (2009). *Feature Hashing for Large Scale Multitask
+Learning.* ICML. --- the hashing trick behind the sparse table (§7.3).
+
+Duchi, J., Hazan, E. and Singer, Y. (2011). *Adaptive Subgradient Methods for
+Online Learning and Stochastic Optimization.* JMLR 12, 2121--2159. --- AdaGrad
+(§9 of the training chapter).
+
+## Strings, structures and statistics
+
+Levenshtein, V. I. (1966). *Binary Codes Capable of Correcting Deletions,
+Insertions and Reversals.* Soviet Physics Doklady 10(8), 707--710.
+
+Damerau, F. J. (1964). *A Technique for Computer Detection and Correction of
+Spelling Errors.* CACM 7(3), 171--176.
 
 Garbe, W. *SymSpell: 1000x faster spelling correction.*
-`https://github.com/wolfgarbe/SymSpell`
+`https://github.com/wolfgarbe/SymSpell` --- symmetric-delete indexing (§7.4 of
+the engine chapter).
+
+Fredkin, E. (1960). *Trie Memory.* CACM 3(9), 490--499.
+
+Welford, B. P. (1962). *Note on a Method for Calculating Corrected Sums of
+Squares and Products.* Technometrics 4(3), 419--420. --- the online statistics
+used for dense-feature normalisation.
+
+Witten, I. H., Moffat, A. and Bell, T. C. (1999). *Managing Gigabytes*, 2nd ed.
+Morgan Kaufmann. --- front coding and varint dictionary compression (§8.3).
+
+McNemar, Q. (1947). *Note on the sampling error of the difference between
+correlated proportions or percentages.* Psychometrika 12(2), 153--157. --- the
+paired significance test used for every ablation (§9.2).
+
+Efron, B. (1979). *Bootstrap Methods: Another Look at the Jackknife.* Annals of
+Statistics 7(1), 1--26. --- the confidence intervals reported by `evaluate`.
+
+Willems, F. M. J., Shtarkov, Y. M. and Tjalkens, T. J. (1995). *The
+Context-Tree Weighting Method: Basic Properties.* IEEE Trans. Information
+Theory 41(3), 653--664. --- considered as a parameter-free alternative to
+Kneser-Ney; not implemented (§13).
+
+## Data, benchmarks and writing systems
+
+Madhani, Y., Parthan, S., Bedekar, P. et al. (2023). *Aksharantar: Open
+Indic-language Transliteration Datasets and Models for the Next Billion Users.*
+Findings of EMNLP. `https://aclanthology.org/2023.findings-emnlp.4/` --- the
+training and test data, and the IndicXlit baseline this manual compares against.
+
+Roark, B., Wolf-Sonkin, L., Kirov, C. et al. (2020). *Processing South Asian
+Languages Written in the Latin Script: the Dakshina Dataset.* LREC. --- the
+benchmark this system does **not** evaluate on (§11.3).
+
+Kirov, C. et al. (2024). *Context-aware Transliteration for Input Method
+Editors.* Computational Linguistics 50(2). --- prior art on context in
+production IMEs (archive: data research).
+
+Daniels, P. T. (1990). *Fundamentals of Grammatology.* JAOS 110(4), 727--731.
+--- the *abugida* class to which Devanagari belongs (§4.3).
+
+The Unicode Consortium. *The Unicode Standard*, Chapter 12: South and Central
+Asia-I. --- Devanagari encoding, virama behaviour, ZWJ/ZWNJ semantics (§4.3).
+
+## Implementation
+
+Steele, G. L., Lea, D. and Flood, C. H. (2014). *Fast Splittable Pseudorandom
+Number Generators.* OOPSLA. --- the `splitmix64` finaliser used for path
+hashing.
 
 \newpage
 
 # Glossary
 
-**Akshara** --- the orthographic syllable of Brahmic scripts; the unit this
-system models.
+Every term this manual uses in a technical sense. Where a term is due to a
+particular author, the reference is given.
+
+**Abugida** --- a writing system in which each consonant carries an inherent
+vowel that a diacritic modifies or suppresses [Daniels 1990]. Devanagari is one;
+this is why characters are the wrong modelling unit and aksharas are the right
+one.
+
+**Akshara** --- the orthographic syllable of Brahmic scripts, and the unit this
+system models. Formally
+$(\text{consonant}\ \text{halanta})^{*}\ \text{consonant}?\ (\text{matra} \mid \text{independent vowel})\ (\text{nasal} \mid \text{visarga})^{*}$.
+
+**Anusvara** (`ं`) --- a diacritic marking nasalisation. Frequently omitted or
+inserted inconsistently in Roman input, and a common source of matra-only errors.
+
+**Backoff** --- in an $n$-gram model, falling back to a shorter context when the
+full context was unseen, paying a weight $-\log\lambda$ for doing so.
+
+**Beam search** --- approximate search that keeps only the $b$ best partial
+hypotheses at each step [Lowerre 1976]. Here $b = 64$ by default.
+
+**Bootstrap confidence interval** --- an interval obtained by resampling the
+observed per-case outcomes with replacement and taking percentiles of the
+resulting statistic [Efron 1979].
+
+**CER (character error rate)** --- total Levenshtein distance between prediction
+and gold, divided by total gold length. A graded alternative to exact match.
+
+**Chandrabindu** (`ँ`) --- a nasalisation diacritic distinct from anusvara.
 
 **Chunk** --- a contiguous run of 0--5 Roman characters emitted by one akshara.
+The empty chunk is how the model represents a dropped inherent vowel.
 
-**Continuation probability** --- in Kneser-Ney, the probability of a token based
-on how many *distinct contexts* it appears in, not how often it appears.
+**Codebook quantisation** --- storing weights as 8-bit indices into a
+256-entry table of `f32` values, rather than as full floats.
 
-**Halanta / virama** (`्`) --- the vowel-killer diacritic; glues consonants into
-conjuncts.
+**Collision bound** --- the accuracy ceiling for any system whose only prior is
+corpus unigram frequency; 99.15% here. Distinguishes "the model is weak" from
+"the task is ambiguous".
 
-**Matra** --- a dependent vowel sign attached to a consonant. Half of this
-system's native errors are matra-only.
+**Conjunct** --- two or more consonants joined by a halanta into one visual and
+orthographic unit, e.g. `क्ष`. Segmented as a single akshara.
 
-**Oracle@k** --- the fraction of cases whose gold answer appears anywhere in the
-top $k$ candidates; the ceiling a perfect reranker could reach.
+**Continuation probability** --- in Kneser-Ney smoothing, a lower-order estimate
+based on the number of *distinct contexts* a token appears in rather than its
+raw frequency [Kneser & Ney 1995]. The reason *Kong* is a poor guess in a novel
+context despite being frequent.
+
+**CSR (compressed sparse row)** --- storing a ragged 2-D structure as one flat
+value array plus row offsets.
+
+**Damerau-Levenshtein distance** --- edit distance allowing insertion, deletion,
+substitution and transposition [Damerau 1964; Levenshtein 1966].
+
+**Delta varint encoding** --- storing an ascending integer sequence as
+variable-length gaps rather than absolute values. Requires and preserves sorted
+order, which is also what makes binary search valid at runtime.
+
+**Discount ($D_i$)** --- the mass subtracted from an $n$-gram's count before
+normalising, and redistributed to unseen events. Modified Kneser-Ney uses three,
+selected by count, each constrained to $0 \le D_i \le i$ [Chen & Goodman 1999].
+
+**Emission** --- $P(\text{chunk} \mid \text{akshara})$, the channel model learned
+by EM.
+
+**EM (expectation-maximisation)** --- iterative maximum-likelihood estimation
+with latent variables [Dempster, Laird & Rubin 1977]; here the latent variable is
+the alignment between Roman chunks and aksharas.
+
+**Forward-backward** --- the dynamic program computing posterior occupancy in a
+chain model [Baum et al. 1970]; the E-step of EM here.
+
+**Front coding** --- dictionary compression storing each entry as a shared-prefix
+length plus a suffix.
+
+**Halanta / virama** (`्`) --- the vowel-killer diacritic. Suppresses a
+consonant's inherent vowel and binds it to the next consonant.
+
+**Hashing trick** --- mapping an unbounded feature space into a fixed-size table
+by hashing, accepting collisions in exchange for a bounded memory budget
+[Weinberger et al. 2009].
+
+**Inherent vowel / schwa** --- the vowel a bare Devanagari consonant carries
+(`क` = *ka*, not *k*). Written or omitted at the typist's discretion, which is a
+major source of alignment ambiguity.
+
+**Lattice** --- a DAG whose nodes are input positions and whose edges are
+labelled hypotheses. Decoding is shortest-path over it.
+
+**Matra** --- a dependent vowel sign attached to a consonant (`ा`, `ि`, `ी`, …).
+**51.9% of this system's native errors are matra-only.**
+
+**McNemar's test** --- a paired significance test for two classifiers on the same
+cases, using only the discordant pairs [McNemar 1947].
+
+**MRR (mean reciprocal rank)** --- the mean of $1/\mathrm{rank}$ of the gold
+answer, 0 when absent. Sensitive to position, not just presence.
+
+**Multi-reference** --- scoring against any of several acceptable romanizations,
+rather than a single reference.
+
+**NFC** --- Unicode Normalization Form C (canonical composition). All string
+comparison here is on NFC-normalised text.
+
+**Oracle@$k$** --- the accuracy a perfect reranker would reach on the candidates
+actually generated. Separates ranking loss from generation loss.
 
 **Purnabiram** (`।`) --- the Devanagari full stop.
 
-**Schwa** --- the inherent vowel of a bare Devanagari consonant, written or
-omitted inconsistently in Roman input.
+**Semiring, tropical** --- $(\min, +)$ arithmetic on negative log probabilities
+[Mohri 1997]. Converts maximum-probability search into shortest-path search, and
+is why all weights in this system add.
 
-**Tropical semiring** --- $(\min, +)$ arithmetic on negative log probabilities;
-turns maximum-probability search into shortest-path search.
+**Source-channel model** --- factoring $P(D \mid R) \propto P(R \mid D)P(D)$ into
+a channel and a source [Shannon 1948]; applied to transliteration by
+[Li, Zhang & Su 2004].
+
+**SymSpell** --- spelling correction by precomputed deletion variants, giving
+lookup independent of dictionary size [Garbe]. A delete-set match is a
+*necessary* condition only, so results must be distance-verified.
+
+**Top-$k$ accuracy** --- the fraction of cases whose gold string appears in the
+first $k$ suggestions, by exact match.
+
+**Trie** --- a prefix tree [Fredkin 1960]. Used for the user dictionary and for
+the vocabulary-constrained decode pass.
+
+**Virama** --- see *halanta*.
+
+**Visarga** (`ः`) --- a diacritic representing a final voiceless breath.
+
+**Welford's algorithm** --- numerically stable online computation of mean and
+variance [Welford 1962].
+
+**ZWJ / ZWNJ** --- zero-width joiner and non-joiner (U+200D, U+200C). Preserved
+next to viramas so Nepali eyelash-ra (`र्‍`) keeps its form.

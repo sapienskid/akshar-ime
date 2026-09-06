@@ -437,6 +437,16 @@ pub fn rerank_with_norm(
 
     let (order, heur, heur_rank) = rank_candidates(candidates, freq);
 
+    // Raw decoder order: `order` is already sorted by emit + lm, so emitting it
+    // with descending scores reproduces the generative ranking exactly.
+    if crate::core::ablation::no_rerank() {
+        return order
+            .iter()
+            .enumerate()
+            .map(|(i, c)| (c.dev.clone(), -(i as f64)))
+            .collect();
+    }
+
     let n = order.len();
     let mut scores: Vec<f64> = Vec::with_capacity(n);
     let mut heur_std: Vec<f64> = Vec::with_capacity(n);

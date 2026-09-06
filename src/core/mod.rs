@@ -27,6 +27,7 @@ pub mod wordtrie;
 /// | :-- | :--- |
 /// | `AKSHAR_NO_TRIE_UNION` | skip the trie-constrained decode pass |
 /// | `AKSHAR_NO_SPARSE` | drop the 2^20 sparse reranker table |
+/// | `AKSHAR_NO_RERANK` | rank by raw decoder score, skipping the rerank stage |
 /// | `AKSHAR_GAMMA` | override the dense/heuristic blend (0.0 = heuristic only) |
 /// | `AKSHAR_NO_TRIGRAM` | force the LM to back off to bigrams |
 /// | `AKSHAR_NO_VARIANTS` | decode the raw query only, no normalizer variants |
@@ -59,6 +60,10 @@ pub mod ablation {
     // but coverage costs 15.6pp of AK-Freq top-1, so it is a diagnostic only.
     cached_flag!(trie_only, "AKSHAR_TRIE_ONLY");
     cached_flag!(no_sparse, "AKSHAR_NO_SPARSE");
+    // Return candidates in raw decoder order (emit + lm), skipping the whole
+    // rerank stage -- heuristic, dense features and sparse table alike. This
+    // is the baseline the rerank stage as a whole must beat.
+    cached_flag!(no_rerank, "AKSHAR_NO_RERANK");
     cached_flag!(no_trigram, "AKSHAR_NO_TRIGRAM");
     cached_flag!(no_variants, "AKSHAR_NO_VARIANTS");
 

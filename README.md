@@ -13,6 +13,20 @@ no tensor library, no GPU.
 
 **11.37 MB desktop, 4.94 MB Brotli in the browser. 0.67 ms per query.**
 
+## What contributes what
+
+Measured by ablation, reproducible from the shipped binary (`make ablate`):
+
+| Ranking stage | `AK-Freq` top-1 | Δ |
+| :--- | ---: | ---: |
+| raw decoder order (`emit + lm`) | 75.38% | — |
+| + frequency heuristic | 81.02% | **+5.64** |
+| + 29 dense features | 81.93% | +0.91 |
+| + 2²⁰ sparse table (shipped) | 81.83% | −0.10 |
+
+Removing the trigram language model costs **−3.89pp**; it is the single largest
+component. See the manual for per-stratum numbers with McNemar p-values.
+
 ## Measured performance
 
 Held-out AI4Bharat Aksharantar Nepali test split (4,101 cases), measured
@@ -39,12 +53,23 @@ here is comparable, named-entity accuracy is well behind.
 
 ## Documentation
 
-**[`docs/MANUAL.md`](docs/MANUAL.md)** is the complete reference — mathematics,
-architecture, training, evaluation methodology, ablations with significance
-tests, performance engineering, deployment, and a register of known defects.
+**[`docs/MANUAL.md`](docs/MANUAL.md)** — the complete reference, 52 pages.
 Build a PDF with `make manual`.
 
-`docs/plans/` holds the live defect register and roadmap.
+| Part | Contents |
+| :--- | :--- |
+| Theory | source-channel formulation, akshara segmentation, EM with scaled forward–backward, modified Kneser-Ney, decoding, discriminative reranking |
+| Implementation | module map, container format, performance engineering |
+| Practice | training pipeline, **evaluation methodology**, ablations with McNemar significance, deployment |
+| Status | known defects, experimental record, roadmap |
+
+Every metric is defined formally, every technique is credited to its authors,
+and every term is in the glossary. Threats to validity are stated explicitly.
+
+`docs/plans/` holds the live defect register and roadmap;
+`docs/plans/archive/` preserves the experiment log, literature review and
+research agenda from development — what was tried and rejected, not just what
+shipped.
 
 ## Quick start
 
@@ -81,8 +106,9 @@ model and language model always use all 3.59M pairs.
 
 - One language (Nepali), one test set (Aksharantar).
 - Named entities are well behind the neural baseline.
-- The discriminative reranker is *worse* than the 3-parameter heuristic when
-  used alone; its net contribution is +0.81pp on native words.
+- Reranking is worth +6.45pp overall, but **87% of that is a 3-parameter
+  frequency heuristic** — the 10⁶-parameter learned stage adds +0.91pp, and its
+  sparse half adds nothing on native words (p = 0.851).
 - 5x more reranker training data was tested and changed nothing; the cause is
   that `W_DENSE` has never been refit by this pipeline (manual §12.3).
 
