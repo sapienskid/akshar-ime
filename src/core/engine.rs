@@ -27,6 +27,8 @@ use crate::fuzzy::symspell::SymSpell;
 use crate::learning::{LearningEngine, WordConfirmation};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::persistence::{load_from_disk, save_to_disk};
+use rustc_hash::FxHashMap;
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -41,8 +43,27 @@ fn decoder_beam() -> usize {
     std::env::var("AKSHAR_BEAM")
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
-        .filter(|&v| (16..=512).contains(&v))
+        .filter(|&v| (8..=512).contains(&v))
         .unwrap_or(DECODER_BEAM)
+}
+
+fn cache_limit() -> usize {
+    std::env::var("AKSHAR_CACHE_SIZE")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|&v| v > 0 && v <= 4096)
+        .unwrap_or(256)
+}
+
+fn adaptive_beam(roman_len: usize) -> usize {
+    let base = decoder_beam();
+    if roman_len <= 3 {
+        (base / 2).max(8)
+    } else if roman_len <= 5 {
+        (base * 3 / 4).max(12)
+    } else {
+        base
+    }
 }
 /// Scale converting a reranker log-score into the engine's higher-better u64 score.
 const FRESH_SCALE: f64 = 800_000.0;
@@ -80,6 +101,7 @@ pub struct ImeEngine {
     dictionary_path: Option<String>,
     pub sparse_table: Option<Vec<i8>>,
     pub sparse_scale: f64,
+    suggestion_cache: RefCell<FxHashMap<String, Vec<(String, u64)>>>,
 }
 
 impl ImeEngine {
@@ -121,6 +143,7 @@ impl ImeEngine {
             dictionary_path: None,
             sparse_table: None,
             sparse_scale: crate::core::reranker_weights::SPARSE_SCALE,
+            suggestion_cache: RefCell::new(FxHashMap::default()),
         }
     }
 
@@ -168,6 +191,7 @@ impl ImeEngine {
             } else {
                 crate::core::reranker_weights::SPARSE_SCALE
             },
+            suggestion_cache: RefCell::new(FxHashMap::default()),
         }
     }
 
@@ -234,6 +258,7 @@ impl ImeEngine {
             dictionary_path: None,
             sparse_table: None,
             sparse_scale: crate::core::reranker_weights::SPARSE_SCALE,
+            suggestion_cache: RefCell::new(FxHashMap::default()),
         }
     }
 
@@ -311,6 +336,13 @@ impl ImeEngine {
             return vec![];
         }
         let count = count.max(1);
+        // Suggestion cache: pure prefix -> ranked list. No hard-coded size;
+        // derived from env AKSHAR_CACHE_SIZE, default 256. Clears on learning.
+        if let Some(cached) = self.suggestion_cache.borrow().get(prefix) {
+            if cached.len() >= count {
+                return cached[..count].to_vec();
+            }
+        }
 
         // Purnabiram (।): a trailing '.' asks for it on the result; a lone
         // '.' *is* purnabiram.
@@ -319,11 +351,20 @@ impl ImeEngine {
             Some(b) => (b, true),
             None => (prefix, false),
         };
+        let cache_key = prefix.to_string();
         let finish = |mut out: Vec<(String, u64)>| {
             if purnabiram {
                 for (s, _) in out.iter_mut() {
                     s.push(PURNABIRAM);
                 }
+            }
+            // cache for next keystroke; evict when over limit
+            {
+                let mut cache = self.suggestion_cache.borrow_mut();
+                if cache.len() >= cache_limit() {
+                    cache.clear();
+                }
+                cache.insert(cache_key.clone(), out.clone());
             }
             out
         };
@@ -540,6 +581,7 @@ impl ImeEngine {
         if roman.is_empty() || devanagari.is_empty() {
             return;
         }
+        self.suggestion_cache.borrow_mut().clear();
         let confirmation = WordConfirmation {
             roman: roman.to_string(),
             devanagari: devanagari.to_string(),
@@ -845,6 +887,7 @@ mod tests {
             dictionary_path: None,
             sparse_table: None,
             sparse_scale: crate::core::reranker_weights::SPARSE_SCALE,
+            suggestion_cache: RefCell::new(FxHashMap::default()),
         }
     }
 
