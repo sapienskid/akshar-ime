@@ -21,7 +21,6 @@ use crate::core::alignment::align_emissive;
 use crate::core::translit_model::{
     pack_chunk, pack_chunk_bytes, unpack_chunk, TranslitModel, MAX_CHUNK,
 };
-use crate::core::pair_model::{pair_akshara, pair_key, AkLm, PairModel};
 use std::collections::{BTreeSet, HashMap};
 
 /// A single training pair held in memory: roman bytes + akshara id sequence.
@@ -363,7 +362,10 @@ impl Trainer {
         std::env::var("AKSHAR_KN_FIXED_DISCOUNT").is_ok_and(|v| v == "1")
     }
 
-    fn modified_discounts(counts: &HashMap<(u32, u32), u64>, counts_tri: Option<&HashMap<(u32, u32, u32), u64>>) -> (f64, f64, f64) {
+    fn modified_discounts(
+        counts: &HashMap<(u32, u32), u64>,
+        counts_tri: Option<&HashMap<(u32, u32, u32), u64>>,
+    ) -> (f64, f64, f64) {
         if Self::use_fixed_discount() {
             return (0.75, 0.75, 0.75);
         }
@@ -436,7 +438,10 @@ impl Trainer {
                 continue;
             };
             let total: u64 = list.iter().map(|(_, c)| c).sum();
-            let disc_sum: f64 = list.iter().map(|(_, c)| Self::discount_for(*c, d1_bi, d2_bi, d3_bi)).sum();
+            let disc_sum: f64 = list
+                .iter()
+                .map(|(_, c)| Self::discount_for(*c, d1_bi, d2_bi, d3_bi))
+                .sum();
             let lambda = disc_sum / total as f64;
             backoff[a] = (-lambda.ln()) as f32;
             let mut v = Vec::with_capacity(list.len());
@@ -475,12 +480,16 @@ impl Trainer {
         let mut trigram_keys = Vec::with_capacity(ctxs.len());
         let mut trigrams = Vec::with_capacity(ctxs.len());
         let mut trigram_backoff = Vec::with_capacity(ctxs.len());
-        let (d1_tri, d2_tri, d3_tri) = Self::modified_discounts(&HashMap::new(), Some(&self.trigram_counts));
+        let (d1_tri, d2_tri, d3_tri) =
+            Self::modified_discounts(&HashMap::new(), Some(&self.trigram_counts));
         eprintln!("  [lm] trigram discounts: d1={d1_tri:.4} d2={d2_tri:.4} d3={d3_tri:.4}");
         for &(a, b) in &ctxs {
             let list = &by_ctx[&(a, b)];
             let c_ab = self.bigram_counts.get(&(a, b)).copied().unwrap_or(1) as f64;
-            let disc_sum: f64 = list.iter().map(|(_, c)| Self::discount_for(*c, d1_tri, d2_tri, d3_tri)).sum();
+            let disc_sum: f64 = list
+                .iter()
+                .map(|(_, c)| Self::discount_for(*c, d1_tri, d2_tri, d3_tri))
+                .sum();
             let lambda = disc_sum / c_ab;
             trigram_backoff.push((-lambda.ln()) as f32);
             let mut v = Vec::with_capacity(list.len());
@@ -712,427 +721,7 @@ impl Default for Trainer {
     }
 }
 
-/// Posterior mass over consecutive aligned pairs: returns
-/// (prev_pair_key, cur_pair_key, posterior) triples.  The unigram posterior is
-/// the ordinary `e_step_chunk` count, so only transitions are collected here.
-#[allow(clippy::type_complexity)]
-fn pair_transitions(
-    pairs: &[Pair],
-    emission: &[HashMap<u32, f64>],
-    _n_aksharas: usize,
-) -> (Vec<(u64, u64, u32, f64)>, Vec<((u64, u64), u64, f64)>) {
-    let mut out: Vec<(u64, u64, u32, f64)> = Vec::new();
-    // Depth-2 pair context: ((pair_{j-2}, pair_{j-1}) -> pair_j) posteriors.
-    let mut out2: Vec<((u64, u64), u64, f64)> = Vec::new();
-    let mut f: Vec<Vec<f64>> = Vec::new();
-    let mut b: Vec<Vec<f64>> = Vec::new();
-
-    for pair in pairs {
-        let m = pair.roman.len();
-        let n = pair.aks.len();
-        if m == 0 || n < 2 {
-            continue;
-        }
-
-        // Forward pass (identical to e_step_chunk).
-        f.clear();
-        f.resize(n + 1, vec![0.0f64; m + 1]);
-        f[0][0] = 1.0;
-        for j in 1..=n {
-            let em = &emission[pair.aks[j - 1] as usize];
-            let prev = f[j - 1].clone();
-            let mut row = vec![0.0f64; m + 1];
-            for i in 0..=m {
-                let maxl = MAX_CHUNK.min(i);
-                let mut acc = 0.0;
-                for l in 0..=maxl {
-                    let key = pack_chunk_bytes(&pair.roman[i - l..i]);
-                    if let Some(&p) = em.get(&key) {
-                        acc += prev[i - l] * p;
-                    }
-                }
-                row[i] = acc;
-            }
-            f[j] = row;
-        }
-        let z = f[n][m];
-        // Guard only against a genuinely degenerate word (the model assigns it
-        // no probability at all, or the arithmetic broke).  The columns are
-        // rescaled above, so `z` here is O(1) and no longer shrinks with word
-        // length: the old 1e-12 floor was ~296 orders of magnitude above the
-        // f64 subnormal limit and silently discarded every long or
-        // flat-emission word from training.
-        if z < 1e-12 || !z.is_finite() {
-            continue;
-        }
-
-        // Backward pass (identical to e_step_chunk).
-        b.clear();
-        b.resize(n + 1, vec![0.0f64; m + 1]);
-        b[n][m] = 1.0;
-        for j in (0..n).rev() {
-            let em = &emission[pair.aks[j] as usize];
-            let next = b[j + 1].clone();
-            let mut row = vec![0.0f64; m + 1];
-            for i in 0..=m {
-                let maxl = MAX_CHUNK.min(m - i);
-                let mut acc = 0.0;
-                for l in 0..=maxl {
-                    let key = pack_chunk_bytes(&pair.roman[i..i + l]);
-                    if let Some(&p) = em.get(&key) {
-                        acc += p * next[i + l];
-                    }
-                }
-                row[i] = acc;
-            }
-            b[j] = row;
-        }
-
-        // Transition posteriors: aksharas j-1 -> j, chunks split at i1.
-        let inv_z = 1.0 / z;
-        for j in 1..n {
-            let a1 = pair.aks[j - 1];
-            let a2 = pair.aks[j];
-            let em1 = &emission[a1 as usize];
-            let em2 = &emission[a2 as usize];
-            for i1 in 1..m {
-                let maxl1 = MAX_CHUNK.min(i1);
-                for l1 in 1..=maxl1 {
-                    let key1 = pack_chunk_bytes(&pair.roman[i1 - l1..i1]);
-                    let Some(&p1) = em1.get(&key1) else {
-                        continue;
-                    };
-                    if p1 <= 0.0 {
-                        continue;
-                    }
-                    let maxl2 = MAX_CHUNK.min(m - i1);
-                    for l2 in 1..=maxl2 {
-                        let key2 = pack_chunk_bytes(&pair.roman[i1..i1 + l2]);
-                        let Some(&p2) = em2.get(&key2) else {
-                            continue;
-                        };
-                        if p2 <= 0.0 {
-                            continue;
-                        }
-                        // Suffix AFTER the cur pair: 1-based b index j+2; when
-                        // the cur pair is the last akshara the suffix is the
-                        // boundary condition (must end exactly at m).
-                        let bval = if j + 2 <= n {
-                            b[j + 2][i1 + l2]
-                        } else if i1 + l2 == m {
-                            1.0
-                        } else {
-                            0.0
-                        };
-                        let post = f[j - 1][i1 - l1] * p1 * p2 * bval * inv_z;
-                        // A true posterior is <= 1; degenerate words (tiny z)
-                        // can numerically violate this and poison counts.
-                        if post >= 1e-6 {
-                            let prev1 = pair_key(a1, key1);
-                            let cur = pair_key(a2, key2);
-                            out.push((prev1, cur, a1, post.min(1.0)));
-                            // Depth-2: enumerate the split of akshara j-2's chunk.
-                            if j >= 2 {
-                                let a0 = pair.aks[j - 2];
-                                let em0 = &emission[a0 as usize];
-                                let f0 = f[j - 2][i1 - l1];
-                                if f0 > 0.0 {
-                                    for l0 in 1..=MAX_CHUNK.min(i1 - l1) {
-                                        let key0 =
-                                            pack_chunk_bytes(&pair.roman[i1 - l1 - l0..i1 - l1]);
-                                        if let Some(&p0) = em0.get(&key0) {
-                                            if p0 > 0.0 {
-                                                let post2 = f[j - 2][i1 - l1 - l0]
-                                                    * p0
-                                                    * p1
-                                                    * p2
-                                                    * bval
-                                                    * inv_z;
-                                                if post2 >= 1e-6 {
-                                                    out2.push((
-                                                        (
-                                                            pair_key(a0, key0),
-                                                            prev1,
-                                                        ),
-                                                        cur,
-                                                        post2.min(1.0),
-                                                    ));
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-    (out, out2)
-}
-
-impl Trainer {
-    /// Train the pair-bigram grammar.  Runs the same EM loop as
-    /// `finalize` (identical unigram emissions — they become the pair unigram
-    /// backoff), then accumulates posteriors over consecutive aligned pairs
-    /// and normalises them into P(cur | prev) with unigram backoff.
-    pub fn finalize_pair(&mut self, config: &TrainerConfig, _alpha_pair: f64) -> PairModel {
-        self.init_emissions(config.seed_from_aligner);
-        self.run_em(config.iterations, config.em_smoothing);
-
-        // --- Collect bigram transition posteriors with the final emissions. ---
-        eprintln!("  [pair_model] collecting pair-bigram transitions...");
-        let n_aksharas = self.akshara_list.len();
-        let pairs = &self.pairs;
-        let emission = &self.emission;
-        let threads = std::thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(4)
-            .min(16);
-        let mut bi: HashMap<(u64, u64), f64> = HashMap::new();
-        // Intermediate backoff level: (prev akshara, cur pair) — much denser
-        // than full pair context, carries genuine akshara bigram structure.
-        let mut bi_ak: HashMap<(u32, u64), f64> = HashMap::new();
-        // Depth-2 pair context (CTW-style deepest level), flat 3-tuple keys.
-        let mut tri: HashMap<((u64, u64), u64), f64> = HashMap::new();
-        if !pairs.is_empty() && threads > 1 {
-            let chunk_size = pairs.len().div_ceil(threads);
-            std::thread::scope(|s| {
-                let mut handles = Vec::with_capacity(threads);
-                for chunk in pairs.chunks(chunk_size) {
-                    handles.push(s.spawn(move || pair_transitions(chunk, emission, n_aksharas)));
-                }
-                for h in handles {
-                    let (out, out2) = h.join().expect("pair e-step panicked");
-                    for (prev, cur, a1, v) in out {
-                        if v >= 1e-4 {
-                            *bi.entry((prev, cur)).or_insert(0.0) += v;
-                            *bi_ak.entry((a1, cur)).or_insert(0.0) += v;
-                        }
-                    }
-                    for (ctx2, cur, v) in out2 {
-                        if v >= 1e-4 {
-                            *tri.entry((ctx2, cur)).or_insert(0.0) += v;
-                        }
-                    }
-                }
-            });
-        } else {
-            let (out, out2) = pair_transitions(pairs, emission, n_aksharas);
-            for (prev, cur, a1, v) in out {
-                if v >= 1e-4 {
-                    *bi.entry((prev, cur)).or_insert(0.0) += v;
-                    *bi_ak.entry((a1, cur)).or_insert(0.0) += v;
-                }
-            }
-            for (ctx2, cur, v) in out2 {
-                if v >= 1e-4 {
-                    *tri.entry((ctx2, cur)).or_insert(0.0) += v;
-                }
-            }
-        }
-        eprintln!(
-            "  [pair_model] {} transitions, {} ak-level, {} tri",
-            bi.len(),
-            bi_ak.len(),
-            tri.len()
-        );
-
-        // Debug: inspect counts for known transitions (na->ma->ste).
-        if std::env::var("AKSHAR_PAIR_DEBUG").is_ok() {
-            let id = |s: &str| self.akshara_map.get(s).copied();
-            let pack = |c: &str| crate::core::translit_model::pack_chunk_bytes(c.as_bytes());
-            for (a1s, c1s, a2s, c2s) in [
-                ("न", "na", "म", "ma"),
-                ("म", "ma", "स्ते", "ste"),
-                ("ना", "na", "मा", "ma"),
-            ] {
-                if let (Some(a1), Some(a2)) = (id(a1s), id(a2s)) {
-                    let prev = pair_key(a1, pack(c1s));
-                    let cur = pair_key(a2, pack(c2s));
-                    eprintln!(
-                        "[dbg] {a1s}+{c1s} -> {a2s}+{c2s}: c={:?} C_prev={:?} ak_c={:?} ak_C={:?}",
-                        bi.get(&(prev, cur)),
-                        bi.iter().filter(|((p, _), _)| *p == prev)
-                            .map(|(_, v)| v).sum::<f64>(),
-                        bi_ak.get(&(a1, cur)),
-                        bi_ak.iter().filter(|((a, _), _)| *a == a1)
-                            .map(|(_, v)| v).sum::<f64>(),
-                    );
-                } else {
-                    eprintln!("[dbg] akshara missing for {a1s}/{a2s}");
-                }
-            }
-        }
-
-        // --- M-step: P(cur | prev) = (c + alpha*P_uni(cur)) / (C_prev + alpha)
-        // with the backoff target P_uni = P(a) * P(s | a) (JOINT pair unigram;
-        // per-akshara normalisation alone makes rare aksharas with peaked
-        // emissions nearly free and junk paths win).
-        let mut emit_w: HashMap<u64, f32> = HashMap::with_capacity(self.emission.len() * 8);
-        for (a, em) in self.emission.iter().enumerate() {
-            for (&chunk, &p) in em {
-                if p > 0.0 {
-                    emit_w.insert(pair_key(a as u32, chunk), -p.ln() as f32);
-                }
-            }
-        }
-        let total_aksharas: u64 = self.unigram_counts.iter().sum();
-        let n_ak = self.akshara_list.len() as f64;
-        let akshara_uni: Vec<f32> = self
-            .unigram_counts
-            .iter()
-            .map(|&c| {
-                let p = (c as f64 + 0.5) / (total_aksharas as f64 + 0.5 * n_ak);
-                -p.ln() as f32
-            })
-            .collect();
-        let uni_logprob = |k: u64| -> f64 {
-            let emit = emit_w.get(&k).copied().unwrap_or(12.0);
-            let a_uni = akshara_uni
-                .get(pair_akshara(k) as usize)
-                .copied()
-                .unwrap_or(14.0);
-            emit as f64 + a_uni as f64
-        };
-
-        // --- Kneser-Ney-style smoothed backoff hierarchy:
-        //   P(cur | prev_pair) = max(c-d,0)/C + lam1 * P(cur | prev_akshara)
-        //   P(cur | prev_akshara) = max(c-d,0)/C + lam2 * P_uni(cur)
-        // Additive smoothing would make single observations in rare contexts
-        // near-certain; the absolute discount keeps them honest.
-        let d = config.kn_discount;
-
-        // Level-2 stats: per prev-akshara totals/distincts over cur pairs.
-        let mut ak_totals: HashMap<u32, f64> = HashMap::new();
-        let mut ak_distinct: HashMap<u32, u64> = HashMap::new();
-        for (&(a1, _cur), &c) in &bi_ak {
-            *ak_totals.entry(a1).or_insert(0.0) += c;
-            *ak_distinct.entry(a1).or_insert(0) += 1;
-        }
-        let lower_ak = |cur: u64| -> f64 { uni_logprob(cur) };
-        let p_ak = |a1: u32, cur: u64| -> f64 {
-            let counts = &bi_ak;
-            let c = counts.get(&(a1, cur)).copied().unwrap_or(0.0);
-            let c_total = ak_totals.get(&a1).copied().unwrap_or(0.0);
-            let lam = if c_total > 0.0 {
-                (d * ak_distinct.get(&a1).copied().unwrap_or(0) as f64) / c_total
-            } else {
-                1.0
-            };
-            (c - d).max(0.0) / c_total.max(1e-12) + lam * lower_ak(cur)
-        };
-
-        // Level-1: per prev-pair totals/distincts.
-        let mut bi_totals: HashMap<u64, f64> = HashMap::new();
-        let mut bi_distinct: HashMap<u64, u64> = HashMap::new();
-        for (&(prev, _), &c) in &bi {
-            *bi_totals.entry(prev).or_insert(0.0) += c;
-            *bi_distinct.entry(prev).or_insert(0) += 1;
-        }
-        let mut bi_out: HashMap<(u64, u64), f32> = HashMap::with_capacity(bi.len());
-        for &(prev, cur) in bi.keys() {
-            let c = bi.get(&(prev, cur)).copied().unwrap_or(0.0);
-            let c_total = bi_totals.get(&prev).copied().unwrap_or(0.0);
-            let lam = if c_total > 0.0 {
-                (d * bi_distinct.get(&prev).copied().unwrap_or(0) as f64) / c_total
-            } else {
-                1.0
-            };
-            let p = (c - d).max(0.0) / c_total.max(1e-12)
-                + lam * p_ak(pair_akshara(prev), cur);
-            if p > 1e-12 {
-                bi_out.insert((prev, cur), -p.ln() as f32);
-            }
-        }
-        let mut bi_ak_out: HashMap<(u32, u64), f32> = HashMap::with_capacity(bi_ak.len());
-        for &(a1, cur) in bi_ak.keys() {
-            let p = p_ak(a1, cur);
-            if p > 1e-12 {
-                bi_ak_out.insert((a1, cur), -p.ln() as f32);
-            }
-        }
-
-        // Depth-2 level: P(cur | ctx2) with the pair-bigram as lower order.
-        let p_bi = |prev: u64, cur: u64| -> f64 {
-            bi_out
-                .get(&(prev, cur))
-                .map(|&w| (-w as f64).exp())
-                .unwrap_or_else(|| {
-                    // Hard fallback mirrors the decoder's chain.
-                    p_ak(pair_akshara(prev), cur)
-                })
-        };
-        let mut tri_totals: HashMap<(u64, u64), f64> = HashMap::new();
-        let mut tri_distinct: HashMap<(u64, u64), u64> = HashMap::new();
-        for (&(ctx2, _), &c) in &tri {
-            *tri_totals.entry(ctx2).or_insert(0.0) += c;
-            *tri_distinct.entry(ctx2).or_insert(0) += 1;
-        }
-        let mut tri_out: HashMap<((u64, u64), u64), f32> = HashMap::with_capacity(tri.len());
-        for &(ctx2, cur) in tri.keys() {
-            let c = tri.get(&(ctx2, cur)).copied().unwrap_or(0.0);
-            let c_total = tri_totals.get(&ctx2).copied().unwrap_or(0.0);
-            let lam = if c_total > 0.0 {
-                (d * tri_distinct.get(&ctx2).copied().unwrap_or(0) as f64) / c_total
-            } else {
-                1.0
-            };
-            let p = (c - d).max(0.0) / c_total.max(1e-12) + lam * p_bi(ctx2.1, cur);
-            if p > 1e-12 {
-                tri_out.insert((ctx2, cur), -p.ln() as f32);
-            }
-        }
-
-        // Word-start prior from the same corpus counts as the syllable LM.
-        let word_start = self
-            .word_initial
-            .iter()
-            .map(|&c| {
-                let p = (c as f64 + 0.5) / (self.total_words as f64 + 0.5 * n_ak);
-                -p.ln() as f32
-            })
-            .collect();
-
-        // Dense akshara KN LM (syllable tables) — the backbone the pair grammar
-        // refines.  build_kn_lm writes into a throwaway TranslitModel.
-        let mut lm_holder = TranslitModel {
-            aksharas: self.akshara_list.clone(),
-            ..TranslitModel::default()
-        };
-        self.build_kn_lm(&mut lm_holder, config.kn_discount);
-        let mut ak_lm = AkLm {
-            bigrams: std::mem::take(&mut lm_holder.bigrams),
-            backoff: std::mem::take(&mut lm_holder.backoff),
-            unigram_kn: std::mem::take(&mut lm_holder.unigram_kn),
-            word_start: std::mem::take(&mut lm_holder.word_start),
-            trigram_keys: std::mem::take(&mut lm_holder.trigram_keys),
-            trigrams: std::mem::take(&mut lm_holder.trigrams),
-            trigram_backoff: std::mem::take(&mut lm_holder.trigram_backoff),
-            ..AkLm::default()
-        };
-        ak_lm.build_index();
-
-        eprintln!(
-            "  [pair_model] {} emit pairs, {} bi, {} bi_ak, {} tri",
-            emit_w.len(),
-            bi_out.len(),
-            bi_ak_out.len(),
-            tri_out.len()
-        );
-        PairModel {
-            aksharas: self.akshara_list.clone(),
-            akshara_uni,
-            emit_w,
-            bi: bi_out,
-            bi_ak: bi_ak_out,
-            tri: tri_out,
-            word_start,
-            ak_lm,
-        }
-    }
-}
+impl Trainer {}
 
 /// A bare-consonant akshara carries an inherent schwa that roman spellings may
 /// write as a trailing "a" or drop.  Such aksharas end in a consonant or halanta
@@ -1249,10 +838,7 @@ mod scaling_tests {
     /// same factor out of the backward pass makes the scale products telescope,
     /// leaving a single 1/c_j correction per column; if that correction is wrong
     /// (or the passes use independent scales) the posteriors silently change.
-    fn unscaled_posteriors(
-        pair: &Pair,
-        emission: &[HashMap<u32, f64>],
-    ) -> Vec<HashMap<u32, f64>> {
+    fn unscaled_posteriors(pair: &Pair, emission: &[HashMap<u32, f64>]) -> Vec<HashMap<u32, f64>> {
         let m = pair.roman.len();
         let n = pair.aks.len();
         let mut f = vec![vec![0.0f64; m + 1]; n + 1];
@@ -1335,7 +921,11 @@ mod scaling_tests {
                     "akshara {a} chunk {k}: scaled {g} vs unscaled {v}"
                 );
             }
-            assert_eq!(got[a].len(), want[a].len(), "chunk set differs for akshara {a}");
+            assert_eq!(
+                got[a].len(),
+                want[a].len(),
+                "chunk set differs for akshara {a}"
+            );
         }
     }
 

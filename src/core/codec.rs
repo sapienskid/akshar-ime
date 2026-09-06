@@ -226,7 +226,9 @@ pub fn decode_adjacency(buf: &[u8]) -> Result<Vec<Vec<(u32, f32)>>, CodecError> 
         let mut prev = 0u32;
         for _ in 0..len {
             let delta = read_varint(buf, &mut pos)? as u32;
-            let id = prev.checked_add(delta).ok_or(CodecError::Malformed("id overflow"))?;
+            let id = prev
+                .checked_add(delta)
+                .ok_or(CodecError::Malformed("id overflow"))?;
             prev = id;
             let idx = *buf.get(pos).ok_or(CodecError::Truncated)? as usize;
             pos += 1;
@@ -383,8 +385,8 @@ pub fn decode_pairs(buf: &[u8]) -> Result<Vec<(u32, u32)>, CodecError> {
             let mut out = vec![(0u32, 0u32); sorted.len()];
             for &pair in &sorted {
                 let i = read_varint(buf, &mut pos)? as usize;
-                *out.get_mut(i).ok_or(CodecError::Malformed("permutation index out of range"))? =
-                    pair;
+                *out.get_mut(i)
+                    .ok_or(CodecError::Malformed("permutation index out of range"))? = pair;
             }
             Ok(out)
         }
@@ -398,10 +400,13 @@ fn read_pairs_delta(buf: &[u8], pos: &mut usize) -> Result<Vec<(u32, u32)>, Code
     let (mut pa, mut pb) = (0u32, 0u32);
     for _ in 0..n {
         let da = read_varint(buf, pos)? as u32;
-        let a = pa.checked_add(da).ok_or(CodecError::Malformed("pair id overflow"))?;
+        let a = pa
+            .checked_add(da)
+            .ok_or(CodecError::Malformed("pair id overflow"))?;
         let raw_b = read_varint(buf, pos)? as u32;
         let b = if a == pa {
-            pb.checked_add(raw_b).ok_or(CodecError::Malformed("pair id overflow"))?
+            pb.checked_add(raw_b)
+                .ok_or(CodecError::Malformed("pair id overflow"))?
         } else {
             raw_b
         };
@@ -433,7 +438,10 @@ fn read_pairs_delta(buf: &[u8], pos: &mut usize) -> Result<Vec<(u32, u32)>, Code
 // rather than assumes.
 
 /// Encode a vocabulary against an akshara table.
-pub fn encode_vocab(vocab: &std::collections::HashMap<String, u32>, aksharas: &[String]) -> Vec<u8> {
+pub fn encode_vocab(
+    vocab: &std::collections::HashMap<String, u32>,
+    aksharas: &[String],
+) -> Vec<u8> {
     let index: std::collections::HashMap<&str, u32> = aksharas
         .iter()
         .enumerate()
@@ -489,7 +497,10 @@ fn to_ids(word: &str, index: &std::collections::HashMap<&str, u32>) -> Option<Ve
     if units.concat() != word {
         return None;
     }
-    units.iter().map(|u| index.get(u.as_str()).copied()).collect()
+    units
+        .iter()
+        .map(|u| index.get(u.as_str()).copied())
+        .collect()
 }
 
 /// Inverse of [`encode_vocab`].
@@ -506,7 +517,9 @@ pub fn decode_vocab(
         let shared = read_varint(buf, &mut pos)? as usize;
         let rest = read_varint(buf, &mut pos)? as usize;
         if shared > prev.len() {
-            return Err(CodecError::Malformed("front-coding prefix exceeds previous word"));
+            return Err(CodecError::Malformed(
+                "front-coding prefix exceeds previous word",
+            ));
         }
         let mut ids = Vec::with_capacity(shared + rest);
         ids.extend_from_slice(&prev[..shared]);
@@ -618,7 +631,17 @@ mod tests {
 
     #[test]
     fn varint_round_trips_across_widths() {
-        for v in [0u64, 1, 127, 128, 300, 16_383, 16_384, u32::MAX as u64, u64::MAX] {
+        for v in [
+            0u64,
+            1,
+            127,
+            128,
+            300,
+            16_383,
+            16_384,
+            u32::MAX as u64,
+            u64::MAX,
+        ] {
             let mut buf = Vec::new();
             write_varint(&mut buf, v);
             let mut pos = 0;
@@ -671,7 +694,9 @@ mod tests {
     #[test]
     fn small_value_sets_are_lossless() {
         // Fewer distinct values than codebook slots: quantization must be exact.
-        let rows = vec![(0..500u32).map(|i| (i, [0.5f32, 1.5, 2.5][i as usize % 3])).collect()];
+        let rows = vec![(0..500u32)
+            .map(|i| (i, [0.5f32, 1.5, 2.5][i as usize % 3]))
+            .collect()];
         let dec = decode_adjacency(&encode_adjacency(&rows)).unwrap();
         for (&(_, want), &(_, got)) in rows[0].iter().zip(&dec[0]) {
             assert_eq!(want, got);
@@ -711,7 +736,10 @@ mod tests {
     #[test]
     fn sorted_pairs_encode_smaller_than_plain() {
         let sorted: Vec<(u32, u32)> = (0..5000u32).map(|i| (i / 4, i % 4)).collect();
-        assert!(sorted.windows(2).all(|w| w[0] <= w[1]), "test data must be sorted");
+        assert!(
+            sorted.windows(2).all(|w| w[0] <= w[1]),
+            "test data must be sorted"
+        );
         let enc = encode_pairs(&sorted);
         assert_eq!(enc[0], TAG_PAIRS_SORTED, "expected the delta layout to win");
         assert!(
@@ -776,7 +804,10 @@ mod tests {
             .map(|s| s.to_string())
             .collect();
         let back = decode_chunks(&encode_chunks(&chunks)).unwrap();
-        assert_eq!(back, chunks, "chunk ids are positional; order and content must be exact");
+        assert_eq!(
+            back, chunks,
+            "chunk ids are positional; order and content must be exact"
+        );
     }
 
     #[test]

@@ -31,8 +31,8 @@
 //     --lm-weight <f> decoder LM weight (default 0.85)
 //     --vocab-weight <f>  frequency rescoring weight (default 0.75; 0 = off)
 
-use akshar_ime::ImeEngine;
 use akshar_ime::core::decoder::{DecoderConfig, ModelDecoder};
+use akshar_ime::ImeEngine;
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
@@ -73,9 +73,19 @@ fn main() {
             "--train" => train_path = args.next().expect("value"),
             "--valid" => valid_path = args.next().expect("value"),
             "--beam" => beam = args.next().expect("value").parse().expect("--beam <n>"),
-            "--lm-weight" => lm_weight = args.next().expect("value").parse().expect("--lm-weight <f>"),
+            "--lm-weight" => {
+                lm_weight = args
+                    .next()
+                    .expect("value")
+                    .parse()
+                    .expect("--lm-weight <f>")
+            }
             "--vocab-weight" => {
-                vocab_weight = args.next().expect("value").parse().expect("--vocab-weight <f>")
+                vocab_weight = args
+                    .next()
+                    .expect("value")
+                    .parse()
+                    .expect("--vocab-weight <f>")
             }
             other => {
                 eprintln!("unknown arg {other}");
@@ -142,9 +152,9 @@ fn main() {
     struct Agg {
         name: &'static str,
         total: usize,
-        dec_hits: [usize; KS.len()],      // strict decoder oracle
-        dec_hits_mr: [usize; KS.len()],   // multi-ref decoder oracle
-        eng_hits: [usize; KS.len()],      // strict engine oracle
+        dec_hits: [usize; KS.len()],    // strict decoder oracle
+        dec_hits_mr: [usize; KS.len()], // multi-ref decoder oracle
+        eng_hits: [usize; KS.len()],    // strict engine oracle
         dec_top1: usize,
         dec_top1_mr: usize,
         eng_top1: usize,
@@ -234,7 +244,10 @@ fn main() {
                 if dec.get(..*k).is_some_and(|p| p.contains(&case.target)) {
                     agg.dec_hits[i] += 1;
                 }
-                if dec.get(..*k).is_some_and(|p| p.iter().any(|c| case.refs.contains(c))) {
+                if dec
+                    .get(..*k)
+                    .is_some_and(|p| p.iter().any(|c| case.refs.contains(c)))
+                {
                     agg.dec_hits_mr[i] += 1;
                 }
                 if eng.get(..*k).is_some_and(|p| p.contains(&case.target)) {
@@ -329,12 +342,12 @@ fn main() {
     }
 
     // --- W4 forensics report ------------------------------------------------
-    let mtot = (matra_gold_freq_higher
-        + matra_pred_freq_higher
-        + matra_gold_oov
-        + matra_both_oov)
+    let mtot = (matra_gold_freq_higher + matra_pred_freq_higher + matra_gold_oov + matra_both_oov)
         .max(1) as f64;
-    println!("\n=== W4 forensics: AK-Freq matra-only engine misses (n={}) ===", mtot as usize);
+    println!(
+        "\n=== W4 forensics: AK-Freq matra-only engine misses (n={}) ===",
+        mtot as usize
+    );
     println!(
         "gold is the MORE frequent word (winnable by a better prior/ranker): {} ({:.1}%)",
         matra_gold_freq_higher,
@@ -368,8 +381,16 @@ fn main() {
     for agg in &aggs {
         let t = agg.total.max(1) as f64;
         println!("\n=== {} (n={}) ===", agg.name, agg.total);
-        println!("decoder top-1: strict {:.2}%  multi-ref {:.2}%", agg.dec_top1 as f64 / t * 100.0, agg.dec_top1_mr as f64 / t * 100.0);
-        println!("engine  top-1: strict {:.2}%  multi-ref {:.2}%", agg.eng_top1 as f64 / t * 100.0, agg.eng_top1_mr as f64 / t * 100.0);
+        println!(
+            "decoder top-1: strict {:.2}%  multi-ref {:.2}%",
+            agg.dec_top1 as f64 / t * 100.0,
+            agg.dec_top1_mr as f64 / t * 100.0
+        );
+        println!(
+            "engine  top-1: strict {:.2}%  multi-ref {:.2}%",
+            agg.eng_top1 as f64 / t * 100.0,
+            agg.eng_top1_mr as f64 / t * 100.0
+        );
         print!("decoder oracle k: ");
         for (i, k) in KS.iter().enumerate() {
             print!("{}:{:.1}% ", k, agg.dec_hits[i] as f64 / t * 100.0);
@@ -411,8 +432,14 @@ fn main() {
             solved,
             agg.eng_top1 as f64 / t * 100.0
         );
-        println!("CER (decoder top-1): {:.2}%", agg.cer_num as f64 / agg.cer_den.max(1) as f64 * 100.0);
-        println!("CER (engine  top-1): {:.2}%", agg.ecer_num as f64 / agg.cer_den.max(1) as f64 * 100.0);
+        println!(
+            "CER (decoder top-1): {:.2}%",
+            agg.cer_num as f64 / agg.cer_den.max(1) as f64 * 100.0
+        );
+        println!(
+            "CER (engine  top-1): {:.2}%",
+            agg.ecer_num as f64 / agg.cer_den.max(1) as f64 * 100.0
+        );
     }
 }
 
@@ -505,10 +532,17 @@ fn collision_bound(cases: &[Case], vocab: &HashMap<String, u32>) {
     }
     let d = n.max(1) as f64;
     println!("\n=== W0 collision bound (perfect generation + perfect unigram prior) ===");
-    println!("cases {n}  unambiguous {single} ({:.1}%)  ambiguous {} ({:.1}%)",
-        single as f64 / d * 100.0, n - single, (n - single) as f64 / d * 100.0);
+    println!(
+        "cases {n}  unambiguous {single} ({:.1}%)  ambiguous {} ({:.1}%)",
+        single as f64 / d * 100.0,
+        n - single,
+        (n - single) as f64 / d * 100.0
+    );
     println!("collision bound Acc* = {:.2}%", hit as f64 / d * 100.0);
-    println!("  (i.e. {:.2}% of cases are unwinnable for ANY string-only system", (d - hit as f64) / d * 100.0);
+    println!(
+        "  (i.e. {:.2}% of cases are unwinnable for ANY string-only system",
+        (d - hit as f64) / d * 100.0
+    );
     println!("   whose only prior is corpus unigram frequency)");
     if !lost_examples.is_empty() {
         println!("  examples lost to the prior (roman / gold / frequency-argmax):");

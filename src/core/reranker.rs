@@ -62,14 +62,48 @@ pub const MATRAS: [char; 10] = [
 ];
 
 pub const MORPH_SUFFIXES: [&str; 34] = [
-    "को", "का", "की", "मा", "ले", "लाई", "बाट", "देखि", "सँग", "सित",
-    "हरू", "हरु", "जी", "एको", "एका", "एकी", "दै", "दा", "एर", "नु",
-    "ने", "छन्", "थिन्", "थियो", "थिए", "ता", "त्व", "पन", "पना",
-    "पनि", "नै", "त", "भने", "भनी",
+    "को",
+    "का",
+    "की",
+    "मा",
+    "ले",
+    "लाई",
+    "बाट",
+    "देखि",
+    "सँग",
+    "सित",
+    "हरू",
+    "हरु",
+    "जी",
+    "एको",
+    "एका",
+    "एकी",
+    "दै",
+    "दा",
+    "एर",
+    "नु",
+    "ने",
+    "छन्",
+    "थिन्",
+    "थियो",
+    "थिए",
+    "ता",
+    "त्व",
+    "पन",
+    "पना",
+    "पनि",
+    "नै",
+    "त",
+    "भने",
+    "भनी",
 ];
 
 pub fn get_morph_suffix(dev: &str) -> Option<&'static str> {
-    MORPH_SUFFIXES.iter().find(|&&s| dev.ends_with(s) && dev.len() > s.len()).copied().map(|v| v as _)
+    MORPH_SUFFIXES
+        .iter()
+        .find(|&&s| dev.ends_with(s) && dev.len() > s.len())
+        .copied()
+        .map(|v| v as _)
 }
 
 pub fn morph_effective_log_freq(dev: &str, freq: &HashMap<String, u32>) -> f64 {
@@ -131,7 +165,10 @@ pub fn extract_dense_features(
     feats[7] = rank_pct;
     feats[8] = if f > 0 { 1.0 } else { 0.0 };
     feats[9] = c.dev.chars().count() as f64;
-    let matra_total: f64 = MATRAS.iter().map(|m| c.dev.matches(*m).count() as f64).sum();
+    let matra_total: f64 = MATRAS
+        .iter()
+        .map(|m| c.dev.matches(*m).count() as f64)
+        .sum();
     feats[10] = matra_total;
     for (k, m) in MATRAS.iter().enumerate() {
         feats[11 + k] = c.dev.matches(*m).count() as f64;
@@ -142,18 +179,18 @@ pub fn extract_dense_features(
     let first = c.dev.chars().next();
     feats[24] = first.is_some_and(|ch| "अआइईउऊएऐओऔऋ".contains(ch)) as i32 as f64;
     feats[25] = c.dev.chars().last().is_some_and(|ch| MATRAS.contains(&ch)) as i32 as f64;
-    feats[26] = c.dev.chars().last().is_some_and(|ch| ch == '\u{0902}' || ch == '\u{0901}' || ch == '\u{0903}') as i32 as f64;
+    feats[26] = c
+        .dev
+        .chars()
+        .last()
+        .is_some_and(|ch| ch == '\u{0902}' || ch == '\u{0901}' || ch == '\u{0903}')
+        as i32 as f64;
     feats[27] = roman.chars().count() as f64;
     feats[28] = morph_effective_log_freq(&c.dev, freq);
     feats
 }
 
-pub fn extract_sparse_features(
-    dev: &str,
-    roman: &str,
-    n_ak: usize,
-    aks: &[String],
-) -> Vec<usize> {
+pub fn extract_sparse_features(dev: &str, roman: &str, n_ak: usize, aks: &[String]) -> Vec<usize> {
     let mut feats = Vec::with_capacity(12);
     let dev_chars: Vec<char> = dev.chars().collect();
     let roman_bytes = roman.as_bytes();
@@ -283,8 +320,7 @@ impl RerankerData {
 
 impl FreqRanks {
     pub fn from_freq_map(freq: &HashMap<String, u32>) -> Self {
-        let mut by_freq: Vec<(&String, u32)> =
-            freq.iter().map(|(w, &c)| (w, c)).collect();
+        let mut by_freq: Vec<(&String, u32)> = freq.iter().map(|(w, &c)| (w, c)).collect();
         by_freq.sort_unstable_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
         let rank_of: HashMap<String, usize> = by_freq
             .into_iter()
@@ -429,7 +465,10 @@ pub fn rerank_with_norm(
         for k in 0..DENSE_DIM {
             s += W_DENSE[k] * norm.z(k, dense[k]);
         }
-        for &h in sparse.iter().filter(|_| !crate::core::ablation::no_sparse()) {
+        for &h in sparse
+            .iter()
+            .filter(|_| !crate::core::ablation::no_sparse())
+        {
             let (b, scale) = match custom_sparse_table {
                 Some(t) if h < t.len() => (t[h], custom_sparse_scale.unwrap_or(SPARSE_SCALE)),
                 // SPARSE_TABLE is empty on a build with no legacy
@@ -437,7 +476,10 @@ pub fn rerank_with_norm(
                 // there instead of panicking -- graceful degradation to "no
                 // sparse contribution", matching how the rest of the engine
                 // treats an absent optional data source.
-                _ => (SPARSE_TABLE.get(h).copied().unwrap_or(0) as i8, SPARSE_SCALE),
+                _ => (
+                    SPARSE_TABLE.get(h).copied().unwrap_or(0) as i8,
+                    SPARSE_SCALE,
+                ),
             };
             s += (b as f64) * scale;
         }
@@ -531,7 +573,10 @@ impl Default for Reranker {
 
 impl Reranker {
     pub fn new(weights: [f64; NUM_FEATURES]) -> Self {
-        Self { weights, freq: None }
+        Self {
+            weights,
+            freq: None,
+        }
     }
 
     pub fn with_freq(mut self, freq: Option<HashMap<String, u32>>) -> Self {

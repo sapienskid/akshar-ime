@@ -24,7 +24,10 @@ fn engine() -> Option<ImeEngine> {
 }
 
 fn tops(e: &ImeEngine, q: &str, n: usize) -> Vec<String> {
-    e.get_suggestions(q, n).into_iter().map(|(s, _)| s).collect()
+    e.get_suggestions(q, n)
+        .into_iter()
+        .map(|(s, _)| s)
+        .collect()
 }
 
 #[test]

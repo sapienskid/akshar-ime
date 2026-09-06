@@ -79,7 +79,12 @@ fn ak_freq_top1_and_top5_do_not_regress() {
     let n = pairs.len() as f64;
     let p1 = top1 as f64 / n * 100.0;
     let p5 = top5 as f64 / n * 100.0;
-    println!("AK-Freq sample n={}: top-1 {:.2}%  top-5 {:.2}%", pairs.len(), p1, p5);
+    println!(
+        "AK-Freq sample n={}: top-1 {:.2}%  top-5 {:.2}%",
+        pairs.len(),
+        p1,
+        p5
+    );
 
     assert!(
         p1 >= MIN_TOP1,

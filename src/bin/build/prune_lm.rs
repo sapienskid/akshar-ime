@@ -122,10 +122,14 @@ fn main() {
     let tri_after: usize = t.trigrams.iter().map(|r| r.len()).sum();
     let bi_after: usize = t.bigrams.iter().map(|r| r.len()).sum();
 
-    println!("trigram transitions: {tri_before} -> {tri_after}  ({:.1}% kept)",
-        pct(tri_after, tri_before));
-    println!("bigram  transitions: {bi_before} -> {bi_after}  ({:.1}% kept)",
-        pct(bi_after, bi_before));
+    println!(
+        "trigram transitions: {tri_before} -> {tri_after}  ({:.1}% kept)",
+        pct(tri_after, tri_before)
+    );
+    println!(
+        "bigram  transitions: {bi_before} -> {bi_after}  ({:.1}% kept)",
+        pct(bi_after, bi_before)
+    );
 
     // Contexts left with no successors still cost a key and a backoff weight
     // each, and the decoder reaches the same answer through the bigram path,

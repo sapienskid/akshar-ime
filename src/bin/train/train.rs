@@ -58,7 +58,11 @@ impl DenseStats {
             .iter()
             .map(|v| {
                 let sd = (v / n).sqrt();
-                if sd < 1e-6 { 1.0 } else { sd }
+                if sd < 1e-6 {
+                    1.0
+                } else {
+                    sd
+                }
             })
             .collect();
         (self.mean.clone(), std)
@@ -122,10 +126,7 @@ fn auto_detect_pairs() -> Option<PathBuf> {
 }
 
 fn auto_detect_text() -> Option<PathBuf> {
-    let candidates = [
-        "data/store/corpus_clean.txt",
-        "data/raw/nepali_text.txt",
-    ];
+    let candidates = ["data/store/corpus_clean.txt", "data/raw/nepali_text.txt"];
     for c in candidates {
         let p = PathBuf::from(c);
         if p.exists() {
@@ -154,9 +155,7 @@ fn main() -> Result<()> {
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--pairs" | "-p" => {
-                pairs_path = Some(PathBuf::from(
-                    args.next().context("value for --pairs")?,
-                ))
+                pairs_path = Some(PathBuf::from(args.next().context("value for --pairs")?))
             }
             "--text" | "-t" => {
                 text_path = Some(PathBuf::from(args.next().context("value for --text")?))
@@ -236,7 +235,9 @@ fn main() -> Result<()> {
     });
 
     if smoke {
-        println!(">>> Running in SMOKE mode (fast validation: 1000 pairs, 3 EM iterations, 1 epoch)");
+        println!(
+            ">>> Running in SMOKE mode (fast validation: 1000 pairs, 3 EM iterations, 1 epoch)"
+        );
         limit = Some(1000);
         iterations = 3;
         epochs = 1;
@@ -367,7 +368,10 @@ fn main() -> Result<()> {
     } else {
         raw_pairs.len().min(reranker_pairs)
     };
-    println!("Pre-decoding candidates for {} training pairs...", num_train_pairs);
+    println!(
+        "Pre-decoding candidates for {} training pairs...",
+        num_train_pairs
+    );
 
     struct RerankItem {
         target_idx: usize,
@@ -423,7 +427,13 @@ fn main() -> Result<()> {
                     .enumerate()
                     .map(|(idx, c)| {
                         let dense = extract_dense_features(
-                            c, idx, heur[idx], heur_rank[idx], roman, &vocab_freq, &ranks,
+                            c,
+                            idx,
+                            heur[idx],
+                            heur_rank[idx],
+                            roman,
+                            &vocab_freq,
+                            &ranks,
                         );
                         (0..DENSE_DIM)
                             .map(|k| W_DENSE[k] * ((dense[k] - MEAN_DENSE[k]) / STD_DENSE[k]))
@@ -503,39 +513,50 @@ fn main() -> Result<()> {
             let end = (start + BATCH_SIZE).min(num_train_pairs);
             let batch = &raw_pairs[start..end];
             let batch_t0 = Instant::now();
-            println!("  Batch {}/{}: decoding {} pairs ...", batch_idx + 1, total_batches, batch.len());
+            println!(
+                "  Batch {}/{}: decoding {} pairs ...",
+                batch_idx + 1,
+                total_batches,
+                batch.len()
+            );
             let mut samples: Vec<RerankItem> = Vec::with_capacity(batch.len());
-                for (roman, gold) in batch {
-                    let cands = decoder.decode_union(roman, RERANK_DECODE_DEPTH, Some(&word_trie));
-                    let (order, heur, heur_rank) = rank_candidates(&cands, &vocab_freq);
-                    if let Some(target_idx) = order.iter().position(|c| c.dev == *gold) {
-                        let n_cand = order.len();
-                        let cand_sparse: Vec<Vec<usize>> = order
-                            .iter()
-                            .map(|c| {
-                                let aks = akshar_ime::core::akshara::segment(&c.dev);
-                                extract_sparse_features(&c.dev, roman, c.akshara_count, &aks)
-                            })
-                            .collect();
-                        let mut base_scores = Vec::with_capacity(n_cand);
-                        for (idx, c) in order.iter().enumerate() {
-                            let dense = extract_dense_features(
-                                c, idx, heur[idx], heur_rank[idx], roman, &vocab_freq, &ranks,
-                            );
-                            dense_stats.push(&dense);
-                            let mut score: f64 = 0.0;
-                            for k in 0..DENSE_DIM {
-                                score += W_DENSE[k] * ((dense[k] - MEAN_DENSE[k]) / STD_DENSE[k]);
-                            }
-                            base_scores.push(score);
+            for (roman, gold) in batch {
+                let cands = decoder.decode_union(roman, RERANK_DECODE_DEPTH, Some(&word_trie));
+                let (order, heur, heur_rank) = rank_candidates(&cands, &vocab_freq);
+                if let Some(target_idx) = order.iter().position(|c| c.dev == *gold) {
+                    let n_cand = order.len();
+                    let cand_sparse: Vec<Vec<usize>> = order
+                        .iter()
+                        .map(|c| {
+                            let aks = akshar_ime::core::akshara::segment(&c.dev);
+                            extract_sparse_features(&c.dev, roman, c.akshara_count, &aks)
+                        })
+                        .collect();
+                    let mut base_scores = Vec::with_capacity(n_cand);
+                    for (idx, c) in order.iter().enumerate() {
+                        let dense = extract_dense_features(
+                            c,
+                            idx,
+                            heur[idx],
+                            heur_rank[idx],
+                            roman,
+                            &vocab_freq,
+                            &ranks,
+                        );
+                        dense_stats.push(&dense);
+                        let mut score: f64 = 0.0;
+                        for k in 0..DENSE_DIM {
+                            score += W_DENSE[k] * ((dense[k] - MEAN_DENSE[k]) / STD_DENSE[k]);
                         }
-                        samples.push(RerankItem {
-                            target_idx,
-                            base_scores,
-                            sparse: cand_sparse,
-                        });
+                        base_scores.push(score);
                     }
+                    samples.push(RerankItem {
+                        target_idx,
+                        base_scores,
+                        sparse: cand_sparse,
+                    });
                 }
+            }
             println!(
                 "    -> {} valid (decoded in {:.1?})",
                 samples.len(),
@@ -615,7 +636,13 @@ fn main() -> Result<()> {
                 let mut base_scores = Vec::with_capacity(n_cand);
                 for (idx, c) in order.iter().enumerate() {
                     let dense = extract_dense_features(
-                        c, idx, heur[idx], heur_rank[idx], roman, &vocab_freq, &ranks,
+                        c,
+                        idx,
+                        heur[idx],
+                        heur_rank[idx],
+                        roman,
+                        &vocab_freq,
+                        &ranks,
                     );
                     dense_stats.push(&dense);
                     let mut score: f64 = 0.0;
@@ -703,7 +730,10 @@ fn main() -> Result<()> {
     println!("Reranker trained in {:.2?}.", rank_t0.elapsed());
 
     // Phase 4: Pack
-    println!("\n[Phase 4/4] Packing Unified Model -> {} ...", out_path.display());
+    println!(
+        "\n[Phase 4/4] Packing Unified Model -> {} ...",
+        out_path.display()
+    );
     let pack_t0 = Instant::now();
 
     // Pack the table that scored best on held-out data, not necessarily the
@@ -796,7 +826,13 @@ fn main() -> Result<()> {
             if !list.is_empty() {
                 new_keys.push((a, b));
                 new_trigrams.push(list);
-                new_backoff.push(translit_model.trigram_backoff.get(i).copied().unwrap_or(0.0));
+                new_backoff.push(
+                    translit_model
+                        .trigram_backoff
+                        .get(i)
+                        .copied()
+                        .unwrap_or(0.0),
+                );
             }
         }
     }

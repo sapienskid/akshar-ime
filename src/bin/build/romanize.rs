@@ -23,7 +23,9 @@
 use akshar_ime::core::akshara::segment;
 use akshar_ime::core::decoder::ModelDecoder;
 use akshar_ime::core::translit_model::TranslitModel;
-use akshar_ime::fuzzy::grammar::{generate_roman_phonetic_variants, orthographic_skeleton, GrammarCanonicalizer};
+use akshar_ime::fuzzy::grammar::{
+    generate_roman_phonetic_variants, orthographic_skeleton, GrammarCanonicalizer,
+};
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
@@ -81,18 +83,28 @@ fn main() {
     let ref_path = Path::new(&ref_vocab_path);
     if ref_path.exists() {
         match canonicalizer.load_reference_vocab(ref_path) {
-            Ok(n) => eprintln!("Loaded {n} reference words for grammar validation from {}", ref_path.display()),
-            Err(e) => eprintln!("Warning: reference vocab failed to load ({e}), using rule-based grammar engine"),
+            Ok(n) => eprintln!(
+                "Loaded {n} reference words for grammar validation from {}",
+                ref_path.display()
+            ),
+            Err(e) => eprintln!(
+                "Warning: reference vocab failed to load ({e}), using rule-based grammar engine"
+            ),
         }
     } else {
         let fallback = Path::new("data/word_freq.bin");
         if fallback.exists() {
             match canonicalizer.load_reference_vocab(fallback) {
-                Ok(n) => eprintln!("Loaded {n} reference words from fallback {}", fallback.display()),
+                Ok(n) => eprintln!(
+                    "Loaded {n} reference words from fallback {}",
+                    fallback.display()
+                ),
                 Err(e) => eprintln!("Warning: fallback failed ({e})"),
             }
         } else {
-            eprintln!("No reference vocabulary found, running with pure grammar transformation engine");
+            eprintln!(
+                "No reference vocabulary found, running with pure grammar transformation engine"
+            );
         }
     }
 
@@ -101,9 +113,7 @@ fn main() {
     for (a, list) in model.emissions.iter().enumerate() {
         let mut v: Vec<(String, f32)> = list
             .iter()
-            .filter_map(|(cid, w)| {
-                model.chunks.get(*cid as usize).map(|s| (s.clone(), *w))
-            })
+            .filter_map(|(cid, w)| model.chunks.get(*cid as usize).map(|s| (s.clone(), *w)))
             .filter(|(_, w)| *w <= max_weight && *w > 0.0)
             .collect();
         v.sort_by(|x, y| x.1.total_cmp(&y.1));
@@ -112,7 +122,10 @@ fn main() {
             cands.insert(a as u32, v);
         }
     }
-    eprintln!("Indexed candidates for {} aksharas (top={top}, max_weight={max_weight:.1})", cands.len());
+    eprintln!(
+        "Indexed candidates for {} aksharas (top={top}, max_weight={max_weight:.1})",
+        cands.len()
+    );
 
     // 4. Load all qualifying vocabulary words
     let f = std::fs::File::open(&vocab_path).unwrap_or_else(|e| {
@@ -273,7 +286,8 @@ fn main() {
                             }
 
                             let emit_discount = (-*w as f64).exp() * 3.0;
-                            let base = (freq as f64) * rank_multiplier * emit_discount.clamp(0.2, 1.0);
+                            let base =
+                                (freq as f64) * rank_multiplier * emit_discount.clamp(0.2, 1.0);
                             let weight = (base.round() as u64).clamp(1, 25) as u32;
 
                             let key = (roman.clone(), canon_word.clone());
@@ -286,7 +300,11 @@ fn main() {
                     let cur = prev + batch.len();
                     if cur / 2500 > prev / 2500 || cur >= total_words {
                         let elapsed = t_start_work.elapsed().as_secs_f64();
-                        let rate = if elapsed > 0.0 { cur as f64 / elapsed } else { 0.0 };
+                        let rate = if elapsed > 0.0 {
+                            cur as f64 / elapsed
+                        } else {
+                            0.0
+                        };
                         let pct = (cur * 100).checked_div(total_words).unwrap_or(100);
                         eprintln!(
                             "[{pct:3}%] Processed {cur}/{total_words} words ({rate:.0} words/s)..."
@@ -294,11 +312,19 @@ fn main() {
                     }
                 }
 
-                (local_weighted, local_canonicalized, local_rejected, local_pairs)
+                (
+                    local_weighted,
+                    local_canonicalized,
+                    local_rejected,
+                    local_pairs,
+                )
             }));
         }
 
-        handles.into_iter().map(|h| h.join().unwrap()).collect::<Vec<_>>()
+        handles
+            .into_iter()
+            .map(|h| h.join().unwrap())
+            .collect::<Vec<_>>()
     });
 
     // 6. Merge thread-local results

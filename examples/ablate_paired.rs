@@ -11,12 +11,16 @@ fn main() {
     let f = std::fs::File::open("data/aksharantar/test_devanagari.jsonl").expect("test split");
     for line in std::io::BufReader::new(f).lines() {
         let Ok(l) = line else { break };
-        let Ok(v) = serde_json::from_str::<serde_json::Value>(&l) else { continue };
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(&l) else {
+            continue;
+        };
         let (Some(roman), Some(gold), Some(src)) = (
             v["english word"].as_str(),
             v["native word"].as_str(),
             v["source"].as_str(),
-        ) else { continue };
+        ) else {
+            continue;
+        };
         let s = engine.get_suggestions(roman, 5);
         let t1 = s.first().is_some_and(|(d, _)| d == gold) as u8;
         let t5 = s.iter().any(|(d, _)| d == gold) as u8;

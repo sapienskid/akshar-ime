@@ -172,8 +172,8 @@ impl UnifiedModel {
     }
 
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, Box<dyn std::error::Error>> {
-        let version = peek_version(bytes)
-            .ok_or("Invalid magic header: not an Akshar unified model")?;
+        let version =
+            peek_version(bytes).ok_or("Invalid magic header: not an Akshar unified model")?;
         let mut model: Self = match version {
             5 => bincode::deserialize::<UnifiedModelV5>(bytes)?.try_into()?,
             4 => bincode::deserialize::<UnifiedModelV4>(bytes)?.try_into()?,

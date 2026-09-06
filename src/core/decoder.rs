@@ -26,11 +26,6 @@ pub struct DecoderConfig {
     pub max_emission_weight: f32,
     pub max_aksharas_per_chunk: usize,
     pub lm_weight: f64,
-    /// S3: when set, edge weights come from the conditional random field
-    /// (emission part + transition part) instead of the EM table + KN LM.
-    /// The two parts are still accumulated separately so the reranker's
-    /// emit/lm features keep their meaning. For CRF scoring use lm_weight 1.0.
-    pub crf: Option<std::sync::Arc<crate::core::crf::CrfModel>>,
 }
 
 impl Default for DecoderConfig {
@@ -40,7 +35,6 @@ impl Default for DecoderConfig {
             max_emission_weight: MAX_EMISSION_WEIGHT,
             max_aksharas_per_chunk: MAX_AKSHARAS_PER_CHUNK,
             lm_weight: 1.0,
-            crf: None,
         }
     }
 }
@@ -51,8 +45,6 @@ struct Edge {
     len: usize,
     a: u32,
     w: f32,
-    /// Chunk id in the CRF feature space (u32::MAX when no CRF).
-    cid: u32,
 }
 
 pub struct ModelDecoder {
@@ -222,21 +214,14 @@ impl ModelDecoder {
                     continue;
                 }
                 for &e in &edges_by_pos[st.pos] {
-                    let (emit_w, fluency) = {
-                        let base_emit = e.w as f64;
-                        let base_lm = match (st.prev2, st.prev) {
-                            (_, None) => self.model.start_weight(e.a),
-                            (None, Some(b)) => self.model.bigram_weight(b, e.a),
-                            (Some(a), Some(b)) if !crate::core::ablation::no_trigram() => {
-                                self.model.trigram_weight(a, b, e.a)
-                            }
-                            (Some(_), Some(b)) => self.model.bigram_weight(b, e.a),
-                        };
-                        if let Some(crf) = &self.config.crf {
-                            crf.edge_parts_with_base(st.prev, e.a, e.cid, base_emit, base_lm)
-                        } else {
-                            (base_emit, base_lm)
+                    let emit_w = e.w as f64;
+                    let fluency = match (st.prev2, st.prev) {
+                        (_, None) => self.model.start_weight(e.a),
+                        (None, Some(b)) => self.model.bigram_weight(b, e.a),
+                        (Some(a), Some(b)) if !crate::core::ablation::no_trigram() => {
+                            self.model.trigram_weight(a, b, e.a)
                         }
+                        (Some(_), Some(b)) => self.model.bigram_weight(b, e.a),
                     };
                     let emit = st.emit + emit_w;
                     let lm = st.lm + fluency;
@@ -583,14 +568,12 @@ impl ModelDecoder {
     fn build_edges(&self, roman: &str) -> Vec<Vec<Edge>> {
         let m = roman.len();
         let mut edges = vec![Vec::new(); m + 1];
-        let crf = self.config.crf.as_deref();
         for pos in 0..m {
             for l in 1..=MAX_CHUNK.min(m - pos) {
                 let chunk = &roman[pos..pos + l];
-                let cid = crf.and_then(|c| c.chunk_id(chunk)).unwrap_or(u32::MAX);
                 if let Some(list) = self.reverse.get(chunk) {
                     for &(a, w) in list {
-                        edges[pos].push(Edge { len: l, a, w, cid });
+                        edges[pos].push(Edge { len: l, a, w });
                     }
                 }
             }

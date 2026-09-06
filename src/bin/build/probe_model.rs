@@ -31,8 +31,12 @@ fn main() {
         if let Ok(unified) = akshar_ime::core::unified::UnifiedModel::load(p) {
             println!("=== Unified Model Inspection: {} ===", p.display());
             let m_bytes = std::fs::metadata(p).map(|m| m.len()).unwrap_or(0);
-            println!("Total file size: {:.2} MB ({} bytes)", m_bytes as f64 / (1024.0 * 1024.0), m_bytes);
-            
+            println!(
+                "Total file size: {:.2} MB ({} bytes)",
+                m_bytes as f64 / (1024.0 * 1024.0),
+                m_bytes
+            );
+
             // Measure sections as they are ACTUALLY STORED, not as they sit in
             // memory.  Since v3 the n-grams, vocabulary and chunk list are
             // re-encoded on save (codec: CSR, delta varints, 8-bit codebooks),
@@ -53,30 +57,72 @@ fn main() {
             let t_sz = ak_sz + ch_sz + em_sz + bi_sz + tri_k_sz + tri_v_sz + tri_b_sz + misc_sz;
             let s_sz = bincode::serialized_size(&unified.sparse_reranker_table).unwrap_or(0);
             let v_sz = codec::encode_vocab(&unified.vocab_freq, &tr.aksharas).len() as u64;
-            
-            println!("  Translit Model    : {:>7.2} MB ({:>5.1}%)", t_sz as f64 / (1024.0 * 1024.0), (t_sz as f64 / m_bytes as f64) * 100.0);
-            println!("  Sparse Reranker   : {:>7.2} MB ({:>5.1}%)", s_sz as f64 / (1024.0 * 1024.0), (s_sz as f64 / m_bytes as f64) * 100.0);
-            println!("  Vocab Frequency   : {:>7.2} MB ({:>5.1}%) [{} words]", v_sz as f64 / (1024.0 * 1024.0), (v_sz as f64 / m_bytes as f64) * 100.0, unified.vocab_freq.len());
+
+            println!(
+                "  Translit Model    : {:>7.2} MB ({:>5.1}%)",
+                t_sz as f64 / (1024.0 * 1024.0),
+                (t_sz as f64 / m_bytes as f64) * 100.0
+            );
+            println!(
+                "  Sparse Reranker   : {:>7.2} MB ({:>5.1}%)",
+                s_sz as f64 / (1024.0 * 1024.0),
+                (s_sz as f64 / m_bytes as f64) * 100.0
+            );
+            println!(
+                "  Vocab Frequency   : {:>7.2} MB ({:>5.1}%) [{} words]",
+                v_sz as f64 / (1024.0 * 1024.0),
+                (v_sz as f64 / m_bytes as f64) * 100.0,
+                unified.vocab_freq.len()
+            );
 
             println!("\n--- Translit Sub-components (as encoded) ---");
             let other_sz = misc_sz;
 
-            println!("    Aksharas list   : {:>6.2} MB ({} aksharas)", ak_sz as f64 / (1024.0 * 1024.0), unified.translit.aksharas.len());
-            println!("    Chunks list     : {:>6.2} MB ({} chunks)", ch_sz as f64 / (1024.0 * 1024.0), unified.translit.chunks.len());
+            println!(
+                "    Aksharas list   : {:>6.2} MB ({} aksharas)",
+                ak_sz as f64 / (1024.0 * 1024.0),
+                unified.translit.aksharas.len()
+            );
+            println!(
+                "    Chunks list     : {:>6.2} MB ({} chunks)",
+                ch_sz as f64 / (1024.0 * 1024.0),
+                unified.translit.chunks.len()
+            );
             let em_count: usize = unified.translit.emissions.iter().map(|e| e.len()).sum();
-            println!("    Emissions       : {:>6.2} MB ({} entries across {} aksharas)", em_sz as f64 / (1024.0 * 1024.0), em_count, unified.translit.emissions.len());
+            println!(
+                "    Emissions       : {:>6.2} MB ({} entries across {} aksharas)",
+                em_sz as f64 / (1024.0 * 1024.0),
+                em_count,
+                unified.translit.emissions.len()
+            );
             let bi_count: usize = unified.translit.bigrams.iter().map(|b| b.len()).sum();
-            println!("    Bigram LM       : {:>6.2} MB ({} transitions)", bi_sz as f64 / (1024.0 * 1024.0), bi_count);
+            println!(
+                "    Bigram LM       : {:>6.2} MB ({} transitions)",
+                bi_sz as f64 / (1024.0 * 1024.0),
+                bi_count
+            );
             let tri_count: usize = unified.translit.trigrams.iter().map(|t| t.len()).sum();
-            println!("    Trigram LM      : {:>6.2} MB ({} contexts, {} transitions)", (tri_k_sz + tri_v_sz + tri_b_sz) as f64 / (1024.0 * 1024.0), unified.translit.trigram_keys.len(), tri_count);
-            println!("    Other fields    : {:>6.2} MB", other_sz as f64 / (1024.0 * 1024.0));
+            println!(
+                "    Trigram LM      : {:>6.2} MB ({} contexts, {} transitions)",
+                (tri_k_sz + tri_v_sz + tri_b_sz) as f64 / (1024.0 * 1024.0),
+                unified.translit.trigram_keys.len(),
+                tri_count
+            );
+            println!(
+                "    Other fields    : {:>6.2} MB",
+                other_sz as f64 / (1024.0 * 1024.0)
+            );
             return;
         }
 
         let model = TranslitModel::load(p).expect("load model");
         let m_bytes = std::fs::metadata(p).map(|m| m.len()).unwrap_or(0);
         println!("=== Translit Model Inspection: {} ===", p.display());
-        println!("Total file size: {:.2} MB ({} bytes)", m_bytes as f64 / (1024.0 * 1024.0), m_bytes);
+        println!(
+            "Total file size: {:.2} MB ({} bytes)",
+            m_bytes as f64 / (1024.0 * 1024.0),
+            m_bytes
+        );
         let ak_sz = bincode::serialized_size(&model.aksharas).unwrap_or(0);
         let ch_sz = bincode::serialized_size(&model.chunks).unwrap_or(0);
         let em_sz = bincode::serialized_size(&model.emissions).unwrap_or(0);
@@ -84,17 +130,43 @@ fn main() {
         let tri_k_sz = bincode::serialized_size(&model.trigram_keys).unwrap_or(0);
         let tri_v_sz = bincode::serialized_size(&model.trigrams).unwrap_or(0);
         let tri_b_sz = bincode::serialized_size(&model.trigram_backoff).unwrap_or(0);
-        let other_sz = m_bytes.saturating_sub(ak_sz + ch_sz + em_sz + bi_sz + tri_k_sz + tri_v_sz + tri_b_sz);
+        let other_sz =
+            m_bytes.saturating_sub(ak_sz + ch_sz + em_sz + bi_sz + tri_k_sz + tri_v_sz + tri_b_sz);
 
-        println!("  Aksharas list   : {:>6.2} MB ({} aksharas)", ak_sz as f64 / (1024.0 * 1024.0), model.aksharas.len());
-        println!("  Chunks list     : {:>6.2} MB ({} chunks)", ch_sz as f64 / (1024.0 * 1024.0), model.chunks.len());
+        println!(
+            "  Aksharas list   : {:>6.2} MB ({} aksharas)",
+            ak_sz as f64 / (1024.0 * 1024.0),
+            model.aksharas.len()
+        );
+        println!(
+            "  Chunks list     : {:>6.2} MB ({} chunks)",
+            ch_sz as f64 / (1024.0 * 1024.0),
+            model.chunks.len()
+        );
         let em_count: usize = model.emissions.iter().map(|e| e.len()).sum();
-        println!("  Emissions       : {:>6.2} MB ({} entries across {} aksharas)", em_sz as f64 / (1024.0 * 1024.0), em_count, model.emissions.len());
+        println!(
+            "  Emissions       : {:>6.2} MB ({} entries across {} aksharas)",
+            em_sz as f64 / (1024.0 * 1024.0),
+            em_count,
+            model.emissions.len()
+        );
         let bi_count: usize = model.bigrams.iter().map(|b| b.len()).sum();
-        println!("  Bigram LM       : {:>6.2} MB ({} transitions)", bi_sz as f64 / (1024.0 * 1024.0), bi_count);
+        println!(
+            "  Bigram LM       : {:>6.2} MB ({} transitions)",
+            bi_sz as f64 / (1024.0 * 1024.0),
+            bi_count
+        );
         let tri_count: usize = model.trigrams.iter().map(|t| t.len()).sum();
-        println!("  Trigram LM      : {:>6.2} MB ({} contexts, {} transitions)", (tri_k_sz + tri_v_sz + tri_b_sz) as f64 / (1024.0 * 1024.0), model.trigram_keys.len(), tri_count);
-        println!("  Other fields    : {:>6.2} MB", other_sz as f64 / (1024.0 * 1024.0));
+        println!(
+            "  Trigram LM      : {:>6.2} MB ({} contexts, {} transitions)",
+            (tri_k_sz + tri_v_sz + tri_b_sz) as f64 / (1024.0 * 1024.0),
+            model.trigram_keys.len(),
+            tri_count
+        );
+        println!(
+            "  Other fields    : {:>6.2} MB",
+            other_sz as f64 / (1024.0 * 1024.0)
+        );
         return;
     }
 

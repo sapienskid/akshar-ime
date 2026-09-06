@@ -7,7 +7,11 @@ fn main() {
     for q in ["kathmandu", "kathmandau", "kathmndu"] {
         println!("\n=== query {q:?} ===");
         for (i, (s, sc)) in e.get_suggestions(q, 8).into_iter().enumerate() {
-            let tag = if s == "काठमाडौँ" { "  <-- LEARNED" } else { "" };
+            let tag = if s == "काठमाडौँ" {
+                "  <-- LEARNED"
+            } else {
+                ""
+            };
             println!("  {i:2}. {sc:>9}  {s}{tag}");
         }
     }

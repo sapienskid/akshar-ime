@@ -178,7 +178,9 @@ pub fn expand_query_variants(input: &str, max_variants: usize) -> Vec<RomanVaria
     });
     if !has_multi_trigger
         && max_variants <= 6
-        && input.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+        && input
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
     {
         return vec![RomanVariant {
             roman: input.to_string(),

@@ -187,7 +187,10 @@ fn main() {
         std::process::exit(1);
     });
     let romanizer = Romanizer::new(&unified.translit);
-    eprintln!("Indexed best roman chunk for {} aksharas", romanizer.best.len());
+    eprintln!(
+        "Indexed best roman chunk for {} aksharas",
+        romanizer.best.len()
+    );
     let mut engine = ImeEngine::from_unified(unified);
 
     let mut misses: Vec<(String, String, Vec<String>, String)> = Vec::new();

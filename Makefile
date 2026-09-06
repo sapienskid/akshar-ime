@@ -25,7 +25,8 @@ DATA_DIR          := $(PREFIX)/share/akshar-ime
 TRIGRAM_THRESHOLD ?= 3e-2
 .PHONY: all release debug test install uninstall reinstall clean reset-learning \
         restart-ibus help wasm wasm-clean wasm-serve release-upload pack web-model \
-        train train-quick train-mid train-full eval eval-full eval-errors
+        train train-quick train-mid train-full eval eval-full eval-errors \
+        ablate manual docs check release-check
 # --- Main Targets ---
 
 all: release  ## Build the engine for release (default).
@@ -141,6 +142,67 @@ eval-full:  ## Accuracy with bootstrap 95% CIs and per-query latency.
 eval-errors:  ## Oracle curves, error taxonomy, CER and the collision bound.
 	@cargo run --release --bin analyze_errors -- \
 		--dataset data/aksharantar/test_devanagari.jsonl --beam 256
+
+ablate:  ## Component ablation: what each part of the pipeline contributes.
+	@cargo build --release --bin evaluate_aksharantar 2>/dev/null
+	@printf '%-30s' "full system"; ./target/release/evaluate_aksharantar \
+		--dataset data/aksharantar/test_devanagari.jsonl --topk 5 --show-misses 0 \
+		| grep AK-Freq | sed 's/.*top1/top1/'
+	@for v in NO_TRIGRAM NO_TRIE_UNION NO_SPARSE NO_VARIANTS; do \
+		printf '%-30s' "  -$$v"; \
+		env AKSHAR_$$v=1 ./target/release/evaluate_aksharantar \
+			--dataset data/aksharantar/test_devanagari.jsonl --topk 5 --show-misses 0 \
+			| grep AK-Freq | sed 's/.*top1/top1/'; \
+	done
+	@printf '%-30s' "  -dense (gamma=0)"; AKSHAR_GAMMA=0.0 ./target/release/evaluate_aksharantar \
+		--dataset data/aksharantar/test_devanagari.jsonl --topk 5 --show-misses 0 \
+		| grep AK-Freq | sed 's/.*top1/top1/'
+
+profile:  ## Per-phase latency breakdown of a suggestion query.
+	@cargo run --release --example profile_decode
+
+# --- Documentation ------------------------------------------------------------
+#
+# The manual contains Devanagari examples, so the body font must cover the
+# Devanagari block. FreeSerif/FreeSans do; most Latin-only faces render tofu.
+# Override on the command line if you have something better installed.
+MANUAL_SERIF ?= FreeSerif
+MANUAL_SANS  ?= FreeSans
+MANUAL_MONO  ?= Liberation Mono
+
+manual: docs/AksharIME-Manual.pdf  ## Build the source manual as a PDF (needs pandoc + xelatex).
+
+docs/AksharIME-Manual.pdf: docs/MANUAL.md
+	@command -v pandoc >/dev/null || { echo "pandoc not found: install pandoc and a LaTeX engine"; exit 1; }
+	@echo "Building $@ ..."
+	@pandoc docs/MANUAL.md -o $@ \
+		--pdf-engine=xelatex \
+		--toc --toc-depth=3 --number-sections \
+		--syntax-highlighting=tango \
+		-V mainfont="$(MANUAL_SERIF)" \
+		-V sansfont="$(MANUAL_SANS)" \
+		-V monofont="$(MANUAL_MONO)"
+	@echo "Wrote $@ ($$(du -h $@ | cut -f1))"
+
+docs: manual  ## Alias for manual.
+
+# --- Release checks -----------------------------------------------------------
+
+check:  ## Format check, clippy with warnings denied, and the test suite.
+	@echo "==> cargo fmt --check"
+	@cargo fmt --check || { echo "run 'cargo fmt' to fix"; exit 1; }
+	@echo "==> cargo clippy -D warnings"
+	@cargo clippy --release --all-targets -- -D warnings
+	@echo "==> cargo test"
+	@cargo test --release
+	@echo "All checks passed."
+
+release-check: check manual  ## Everything a release needs: checks, accuracy, manual.
+	@echo "==> accuracy"
+	@$(MAKE) --no-print-directory eval
+	@echo "==> artefacts"
+	@ls -lh data/akshar.model data/akshar_wasm.model docs/AksharIME-Manual.pdf 2>/dev/null || true
+	@echo "Release checks complete."
 
 pack:  ## Pack model binaries into unified data/akshar.model container.
 	@cargo run --release --bin pack_model

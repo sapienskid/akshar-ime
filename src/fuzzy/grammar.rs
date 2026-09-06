@@ -62,7 +62,10 @@ pub fn orthographic_skeleton(dev: &str) -> String {
 
         // Halanta conjuncts: check for homorganic nasal conjuncts (ङ्, ञ्, ण्, न्, म्) before consonants
         if i + 2 < n && chars[i + 1] == '\u{094D}' {
-            let nasal = matches!(ch, '\u{0919}' | '\u{091E}' | '\u{0923}' | '\u{0928}' | '\u{092E}');
+            let nasal = matches!(
+                ch,
+                '\u{0919}' | '\u{091E}' | '\u{0923}' | '\u{0928}' | '\u{092E}'
+            );
             let next_is_cons = matches!(chars[i + 2], '\u{0915}'..='\u{0939}');
             if nasal && next_is_cons {
                 // Drop nasal conjunct for soft nasal invariance
@@ -72,7 +75,8 @@ pub fn orthographic_skeleton(dev: &str) -> String {
         }
 
         // Check for ज्ञ (ज् + ् + ञ)
-        if ch == '\u{091C}' && i + 2 < n && chars[i + 1] == '\u{094D}' && chars[i + 2] == '\u{091E}' {
+        if ch == '\u{091C}' && i + 2 < n && chars[i + 1] == '\u{094D}' && chars[i + 2] == '\u{091E}'
+        {
             skel.push_str("ग्य");
             i += 3;
             continue;
@@ -82,7 +86,8 @@ pub fn orthographic_skeleton(dev: &str) -> String {
             // Dependent vowel signs: merge long -> short
             '\u{0940}' => skel.push('\u{093F}'), // ी -> ि
             '\u{0942}' => skel.push('\u{0941}'), // ू -> ु
-            '\u{0943}' => {                       // ृ -> रि
+            '\u{0943}' => {
+                // ृ -> रि
                 skel.push('\u{0930}');
                 skel.push('\u{093F}');
             }
@@ -90,7 +95,8 @@ pub fn orthographic_skeleton(dev: &str) -> String {
             // Independent vowels: merge long -> short
             '\u{0908}' => skel.push('\u{0907}'), // ई -> इ
             '\u{090A}' => skel.push('\u{0909}'), // ऊ -> उ
-            '\u{090B}' => {                       // ऋ -> रि
+            '\u{090B}' => {
+                // ऋ -> रि
                 skel.push('\u{0930}');
                 skel.push('\u{093F}');
             }
@@ -132,10 +138,18 @@ pub fn score_nepali_orthography(word: &str) -> f64 {
     }
 
     // 2. Verb passive rule: -इन्छ / -इने / -इयो is canonical (ह्रस्व)
-    if word.ends_with("िन्छ") || word.ends_with("िन्छन्") || word.ends_with("ियो") || word.ends_with("िनेछ") {
+    if word.ends_with("िन्छ")
+        || word.ends_with("िन्छन्")
+        || word.ends_with("ियो")
+        || word.ends_with("िनेछ")
+    {
         score += 8.0;
     }
-    if word.ends_with("ीन्छ") || word.ends_with("ीन्छन्") || word.ends_with("ीयो") || word.ends_with("ीनेछ") {
+    if word.ends_with("ीन्छ")
+        || word.ends_with("ीन्छन्")
+        || word.ends_with("ीयो")
+        || word.ends_with("ीनेछ")
+    {
         score -= 10.0;
     }
 
@@ -180,15 +194,28 @@ pub fn score_nepali_orthography(word: &str) -> f64 {
     if word.contains("ष्ट") || word.contains("ष्ठ") || word.contains("श्च") {
         score += 7.0;
     }
-    if word.contains("स्त") && (word.contains("कस्त") || word.contains("दDefault")) {
+    if word.contains("स्त") && (word.contains("कस्त") || word.contains("दDefault"))
+    {
         score -= 5.0;
     }
 
     // 7. Sibilant words: विशेष, शहीद, देश, शिक्षा, भाषा, सन्तोष
-    if word == "विशेष" || word == "शहीद" || word == "देश" || word == "शिक्षा" || word == "भाषा" || word == "सन्तोष" {
+    if word == "विशेष"
+        || word == "शहीद"
+        || word == "देश"
+        || word == "शिक्षा"
+        || word == "भाषा"
+        || word == "सन्तोष"
+    {
         score += 12.0;
     }
-    if word == "बिसेस" || word == "विसेस" || word == "सहिद" || word == "सहीद" || word == "देस" || word == "भासा" {
+    if word == "बिसेस"
+        || word == "विसेस"
+        || word == "सहिद"
+        || word == "सहीद"
+        || word == "देस"
+        || word == "भासा"
+    {
         score -= 10.0;
     }
 
@@ -200,7 +227,8 @@ pub fn score_nepali_orthography(word: &str) -> f64 {
     }
 
     // 9. Anusvara before semivowels/sibilants: संविधान, संसार, संवाद
-    if word.starts_with("संवि") || word.starts_with("संसा") || word.starts_with("संवा") {
+    if word.starts_with("संवि") || word.starts_with("संसा") || word.starts_with("संवा")
+    {
         score += 8.0;
     } else if word.starts_with("संबि") || word.starts_with("सँवि") {
         score -= 8.0;
@@ -232,7 +260,8 @@ impl GrammarCanonicalizer {
 
     /// Load reference vocabulary (e.g. data/word_freq_text.bin or data/word_freq.bin)
     pub fn load_reference_vocab(&mut self, path: &Path) -> Result<usize, String> {
-        let bytes = std::fs::read(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+        let bytes =
+            std::fs::read(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
         let map: HashMap<String, u32> = bincode::deserialize(&bytes)
             .map_err(|e| format!("deserialize error for {}: {e}", path.display()))?;
         let count = map.len();
@@ -254,7 +283,10 @@ impl GrammarCanonicalizer {
         self.skeleton_index.clear();
         for word in self.ref_freq.keys() {
             let skel = orthographic_skeleton(word);
-            self.skeleton_index.entry(skel).or_default().push(word.clone());
+            self.skeleton_index
+                .entry(skel)
+                .or_default()
+                .push(word.clone());
         }
     }
 
@@ -420,8 +452,14 @@ mod tests {
     #[test]
     fn test_orthographic_skeleton_invariance() {
         // Labials: ब vs व
-        assert_eq!(orthographic_skeleton("विकास"), orthographic_skeleton("बिकास"));
-        assert_eq!(orthographic_skeleton("व्यवस्था"), orthographic_skeleton("ब्यवस्था"));
+        assert_eq!(
+            orthographic_skeleton("विकास"),
+            orthographic_skeleton("बिकास")
+        );
+        assert_eq!(
+            orthographic_skeleton("व्यवस्था"),
+            orthographic_skeleton("ब्यवस्था")
+        );
         // Sibilants: श vs ष vs स
         assert_eq!(orthographic_skeleton("विशेष"), orthographic_skeleton("बिसेस"));
         assert_eq!(orthographic_skeleton("विशेष"), orthographic_skeleton("विसेस"));
@@ -429,10 +467,16 @@ mod tests {
         assert_eq!(orthographic_skeleton("शहीद"), orthographic_skeleton("सहीद"));
         assert_eq!(orthographic_skeleton("देश"), orthographic_skeleton("देस"));
         // Hrasva vs Dirgha: ि vs ी
-        assert_eq!(orthographic_skeleton("गरिन्छ"), orthographic_skeleton("गरीन्छ"));
+        assert_eq!(
+            orthographic_skeleton("गरिन्छ"),
+            orthographic_skeleton("गरीन्छ")
+        );
         assert_eq!(orthographic_skeleton("कानुन"), orthographic_skeleton("कानून"));
         // Plural suffix: -हरू vs -हरु
-        assert_eq!(orthographic_skeleton("मानिसहरू"), orthographic_skeleton("मानिसहरु"));
+        assert_eq!(
+            orthographic_skeleton("मानिसहरू"),
+            orthographic_skeleton("मानिसहरु")
+        );
         // Nasal: हुँदा vs हुदा
         assert_eq!(orthographic_skeleton("हुँदा"), orthographic_skeleton("हुदा"));
     }

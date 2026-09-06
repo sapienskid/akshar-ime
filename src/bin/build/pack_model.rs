@@ -49,25 +49,46 @@ fn main() {
 
     let t0 = Instant::now();
 
-    print!("1. Loading transliteration model ({}) ... ", translit_p.display());
+    print!(
+        "1. Loading transliteration model ({}) ... ",
+        translit_p.display()
+    );
     let translit = TranslitModel::load(&translit_p).expect("load translit model");
-    println!("done ({} aksharas, {} chunks)", translit.aksharas.len(), translit.chunks.len());
+    println!(
+        "done ({} aksharas, {} chunks)",
+        translit.aksharas.len(),
+        translit.chunks.len()
+    );
 
-    print!("2. Loading sparse reranker table ({}) ... ", sparse_p.display());
+    print!(
+        "2. Loading sparse reranker table ({}) ... ",
+        sparse_p.display()
+    );
     let sparse_bytes = std::fs::read(&sparse_p).expect("read sparse table");
     let sparse_table: Vec<i8> = sparse_bytes.into_iter().map(|b| b as i8).collect();
     println!("done ({} weights)", sparse_table.len());
 
-    print!("3. Loading word frequency vocabulary ({}) ... ", vocab_p.display());
+    print!(
+        "3. Loading word frequency vocabulary ({}) ... ",
+        vocab_p.display()
+    );
     let vocab_bytes = std::fs::read(&vocab_p).expect("read vocab");
-    let mut vocab: HashMap<String, u32> = bincode::deserialize(&vocab_bytes).expect("deserialize vocab");
+    let mut vocab: HashMap<String, u32> =
+        bincode::deserialize(&vocab_bytes).expect("deserialize vocab");
     let initial_vocab_len = vocab.len();
     if min_freq > 1 {
         vocab.retain(|_, &mut c| c >= min_freq);
     }
-    println!("done ({} words retained from {})", vocab.len(), initial_vocab_len);
+    println!(
+        "done ({} words retained from {})",
+        vocab.len(),
+        initial_vocab_len
+    );
 
-    println!("4. Assembling and writing unified model -> {} ...", out_p.display());
+    println!(
+        "4. Assembling and writing unified model -> {} ...",
+        out_p.display()
+    );
     let unified = UnifiedModel::new(
         translit,
         sparse_table,

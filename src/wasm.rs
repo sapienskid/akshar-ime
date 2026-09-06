@@ -60,7 +60,9 @@ impl WasmEngine {
     /// Will only do dictionary + fuzzy matching, no transliteration.
     #[wasm_bindgen]
     pub fn empty() -> WasmEngine {
-        WasmEngine { inner: ImeEngine::new() }
+        WasmEngine {
+            inner: ImeEngine::new(),
+        }
     }
 
     /// Get Devanagari suggestions for a roman prefix.
@@ -135,8 +137,7 @@ impl WasmEngine {
         self.inner
             .load_learned_state_from_bytes(&bytes)
             .map_err(|e| JsValue::from_str(&format!("import failed: {}", e)))?;
-        self.save_to_storage()
-            .map_err(|e| JsValue::from_str(&e))?;
+        self.save_to_storage().map_err(|e| JsValue::from_str(&e))?;
         Ok(())
     }
 
@@ -219,7 +220,9 @@ impl WasmEngine {
 async fn fetch_bytes(url: &str) -> Result<Vec<u8>, JsValue> {
     let window = web_sys::window().ok_or_else(|| JsValue::from_str("no window"))?;
     let resp_value = wasm_bindgen_futures::JsFuture::from(window.fetch_with_str(url)).await?;
-    let resp: web_sys::Response = resp_value.dyn_into().map_err(|_| JsValue::from_str("not a Response"))?;
+    let resp: web_sys::Response = resp_value
+        .dyn_into()
+        .map_err(|_| JsValue::from_str("not a Response"))?;
     if !resp.ok() {
         return Err(JsValue::from_str(&format!(
             "fetch {} failed: {} {}",
@@ -242,7 +245,9 @@ async fn fetch_bytes(url: &str) -> Result<Vec<u8>, JsValue> {
 async fn fetch_text(url: &str) -> Result<String, JsValue> {
     let window = web_sys::window().ok_or_else(|| JsValue::from_str("no window"))?;
     let resp_value = wasm_bindgen_futures::JsFuture::from(window.fetch_with_str(url)).await?;
-    let resp: web_sys::Response = resp_value.dyn_into().map_err(|_| JsValue::from_str("not a Response"))?;
+    let resp: web_sys::Response = resp_value
+        .dyn_into()
+        .map_err(|_| JsValue::from_str("not a Response"))?;
     if !resp.ok() {
         return Err(JsValue::from_str(&format!(
             "fetch {} failed: {} {}",
@@ -256,7 +261,8 @@ async fn fetch_text(url: &str) -> Result<String, JsValue> {
             .map_err(|_| JsValue::from_str("text() failed"))?,
     )
     .await?;
-    text.as_string().ok_or_else(|| JsValue::from_str("not a string"))
+    text.as_string()
+        .ok_or_else(|| JsValue::from_str("not a string"))
 }
 
 /// Async factory: fetch model (+ optional lexicon/weights) from URLs and create engine.
@@ -292,11 +298,7 @@ pub async fn create_engine(
     } else {
         None
     };
-    WasmEngine::from_bytes(
-        &model_bytes,
-        lexicon_bytes,
-        reranker_json,
-    )
+    WasmEngine::from_bytes(&model_bytes, lexicon_bytes, reranker_json)
 }
 
 /// Create engine from model URL only (convenience, lexicon optional).

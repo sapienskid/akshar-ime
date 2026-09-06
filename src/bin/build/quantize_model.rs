@@ -130,7 +130,9 @@ fn main() {
             "--out" => out_path = args.next().expect("value for --out"),
             "--levels" => levels = args.next().expect("value for --levels").parse().unwrap(),
             "--help" | "-h" => {
-                println!("quantize_model — measure the accuracy cost of N-level weight quantization");
+                println!(
+                    "quantize_model — measure the accuracy cost of N-level weight quantization"
+                );
                 println!("  --model <path>   input unified model");
                 println!("  --out <path>     output model with quantized weights");
                 println!("  --levels <n>     quantization levels (default 256 = 8 bit)");
@@ -163,7 +165,11 @@ fn main() {
         levels,
     );
     quantize("bigram backoff", t.backoff.iter_mut().collect(), levels);
-    quantize("trigram backoff", t.trigram_backoff.iter_mut().collect(), levels);
+    quantize(
+        "trigram backoff",
+        t.trigram_backoff.iter_mut().collect(),
+        levels,
+    );
     quantize("unigram KN", t.unigram_kn.iter_mut().collect(), levels);
     quantize("word start", t.word_start.iter_mut().collect(), levels);
 

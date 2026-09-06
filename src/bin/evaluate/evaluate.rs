@@ -415,11 +415,7 @@ fn parse_args() -> Args {
                     .expect("--show-misses <n>")
             }
             "--full-case" => full_case = true,
-            "--model" => {
-                model = Some(PathBuf::from(
-                    args.next().expect("value for --model"),
-                ))
-            }
+            "--model" => model = Some(PathBuf::from(args.next().expect("value for --model"))),
             "--help" | "-h" => {
                 print_help();
                 std::process::exit(0);

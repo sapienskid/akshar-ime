@@ -135,7 +135,11 @@ impl ImeEngine {
         let reranker = load_reranker();
         let reranker_data = load_reranker_data();
         let word_trie = reranker_data.as_ref().map(|v| {
-            crate::core::wordtrie::WordTrie::from_freq_map(&v.freq, &|a| decoder.model.akshara_id(a), 1)
+            crate::core::wordtrie::WordTrie::from_freq_map(
+                &v.freq,
+                &|a| decoder.model.akshara_id(a),
+                1,
+            )
         });
         Self {
             decoder,
@@ -223,7 +227,8 @@ impl ImeEngine {
     pub fn from_file_or_new(path: &str) -> Self {
         #[cfg(not(target_arch = "wasm32"))]
         {
-            let mut engine = load_from_disk(std::path::Path::new(path)).unwrap_or_else(|_| Self::new());
+            let mut engine =
+                load_from_disk(std::path::Path::new(path)).unwrap_or_else(|_| Self::new());
             engine.dictionary_path = Some(path.to_string());
             engine
         }
@@ -262,7 +267,11 @@ impl ImeEngine {
         let reranker = reranker.unwrap_or_else(load_reranker);
         let reranker_data = load_reranker_data();
         let word_trie = reranker_data.as_ref().map(|v| {
-            crate::core::wordtrie::WordTrie::from_freq_map(&v.freq, &|a| decoder.model.akshara_id(a), 1)
+            crate::core::wordtrie::WordTrie::from_freq_map(
+                &v.freq,
+                &|a| decoder.model.akshara_id(a),
+                1,
+            )
         });
         Self {
             decoder,
@@ -340,7 +349,10 @@ impl ImeEngine {
     }
 
     /// Load learned state from bytes (e.g. from localStorage).
-    pub fn load_learned_state_from_bytes(&mut self, bytes: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn load_learned_state_from_bytes(
+        &mut self,
+        bytes: &[u8],
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let state = crate::persistence::SerializableState::from_bytes(bytes)?;
         state.apply_to_engine(self);
         Ok(())
@@ -419,8 +431,7 @@ impl ImeEngine {
             d.chars()
                 .map(|c| {
                     if c.is_ascii_digit() {
-                        char::from_u32('\u{0966}' as u32 + c as u32 - '0' as u32)
-                            .unwrap_or(c)
+                        char::from_u32('\u{0966}' as u32 + c as u32 - '0' as u32).unwrap_or(c)
                     } else {
                         c
                     }
@@ -505,7 +516,9 @@ impl ImeEngine {
         let mut fresh_scores: HashMap<String, u64> = HashMap::new();
         if let Some(qv) = query_variants.first() {
             let roman = qv.roman.as_str();
-            let cands = self.decoder.decode_union(roman, (count * 4).max(50), self.word_trie.as_ref());
+            let cands =
+                self.decoder
+                    .decode_union(roman, (count * 4).max(50), self.word_trie.as_ref());
             let ranked: Vec<(String, f64)> = match &self.reranker_data {
                 Some(data) => crate::core::reranker::rerank_with_norm(
                     roman,
@@ -514,10 +527,7 @@ impl ImeEngine {
                     &data.ranks,
                     self.sparse_table.as_deref(),
                     Some(self.sparse_scale),
-                    crate::core::reranker::DenseNorm::from_model(
-                        &self.dense_mean,
-                        &self.dense_std,
-                    ),
+                    crate::core::reranker::DenseNorm::from_model(&self.dense_mean, &self.dense_std),
                 ),
                 None => self.reranker.rerank(roman, cands),
             };
@@ -539,7 +549,10 @@ impl ImeEngine {
             // 3. User-learned dictionary (trie).
             for (word_id, freq) in self.trie.get_top_k_suggestions(roman, count * 3) {
                 if let Some(meta) = self.trie.metadata_store.get(word_id) {
-                    add(meta.devanagari.clone(), user_trie_base().saturating_add(freq));
+                    add(
+                        meta.devanagari.clone(),
+                        user_trie_base().saturating_add(freq),
+                    );
                 }
             }
 
@@ -806,15 +819,17 @@ mod dispatch_tests {
         let mut vocab = HashMap::new();
         vocab.insert("क".to_string(), 9u32);
 
-        let unified =
-            crate::core::unified::UnifiedModel::new(translit, vec![0i8; 4], 0.5, vocab);
+        let unified = crate::core::unified::UnifiedModel::new(translit, vec![0i8; 4], 0.5, vocab);
         let bytes = unified.to_bytes().expect("serialize");
 
         let engine = ImeEngine::from_bytes_with_weights(&bytes, None, None)
             .expect("unified container must load through the WASM entry point");
         // The vocabulary rides along with the container; a bare TranslitModel
         // parse would have produced an engine with none.
-        assert!(engine.reranker_data.is_some(), "vocabulary should be loaded");
+        assert!(
+            engine.reranker_data.is_some(),
+            "vocabulary should be loaded"
+        );
     }
 }
 
