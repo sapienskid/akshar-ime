@@ -38,7 +38,11 @@ impl WasmEngine {
     /// Create an engine from raw bytes already fetched in JS.
     ///
     /// `model_bytes` is the `translit_model.bin` file as Uint8Array.
-    /// `lexicon_bytes` may be null/undefined to skip the lexicon (saves ~118MB download).
+    /// `lexicon_bytes` is accepted and IGNORED. The corpus lexicon was removed
+    /// in v1.1.0 (it measured 0.00pp on every split and was dead by
+    /// construction on the unified-container path); the parameter is retained
+    /// so existing `createEngine(model, lexicon, weights)` callers keep
+    /// working. Pass `null`.
     /// `reranker_json` may be null/undefined for default weights.
     #[wasm_bindgen(constructor)]
     pub fn from_bytes(
@@ -144,19 +148,13 @@ impl WasmEngine {
     /// Clear learned dictionary and persist.
     #[wasm_bindgen(js_name = resetLearning)]
     pub fn reset_learning(&mut self) -> Result<(), JsValue> {
-        // Recreate trie/context/symspell while keeping model/lexicon
+        // Recreate trie/context/symspell while keeping the model and reranker.
         let model = self.inner.decoder.model.clone();
-        let lexicon = self.inner.lexicon.clone();
         let reranker_weights = self.inner.reranker.weights;
-        let lexicon_for_reranker = lexicon.clone();
         *self = WasmEngine {
             inner: ImeEngine::from_model(
                 model,
-                lexicon,
-                Some(crate::core::reranker::Reranker::new(
-                    reranker_weights,
-                    lexicon_for_reranker,
-                )),
+                Some(crate::core::reranker::Reranker::new(reranker_weights)),
             ),
         };
         self.save_to_storage().map_err(|e| JsValue::from_str(&e))?;
@@ -335,7 +333,7 @@ pub fn quick_transliterate(roman: &str) -> String {
 const B64_TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 fn base64_encode(bytes: &[u8]) -> String {
-    let mut out = String::with_capacity((bytes.len() + 2) / 3 * 4);
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
     for chunk in bytes.chunks(3) {
         let b0 = chunk[0] as u32;
         let b1 = chunk.get(1).copied().unwrap_or(0) as u32;
@@ -363,7 +361,7 @@ fn base64_decode(s: &str) -> Result<Vec<u8>, String> {
         table[c as usize] = i as u8;
     }
     let bytes = s.as_bytes();
-    if bytes.len() % 4 != 0 {
+    if !bytes.len().is_multiple_of(4) {
         return Err("invalid base64 length".into());
     }
     let mut out = Vec::with_capacity(bytes.len() / 4 * 3);

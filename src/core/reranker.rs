@@ -35,12 +35,13 @@ use std::collections::HashMap;
 /// decode depth) disables the cascade.
 const DEFAULT_RERANK_FULL_DEPTH: usize = 24;
 
+#[cfg(target_arch = "wasm32")]
 fn rerank_full_depth() -> usize {
-    #[cfg(target_arch = "wasm32")]
-    {
-        return DEFAULT_RERANK_FULL_DEPTH;
-    }
-    #[cfg(not(target_arch = "wasm32"))]
+    DEFAULT_RERANK_FULL_DEPTH
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn rerank_full_depth() -> usize {
     std::env::var("AKSHAR_RERANK_DEPTH")
         .ok()
         .and_then(|v| v.parse::<usize>().ok())

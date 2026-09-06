@@ -26,7 +26,7 @@ TRIGRAM_THRESHOLD ?= 3e-2
 .PHONY: all release debug test install uninstall reinstall clean reset-learning \
         restart-ibus help wasm wasm-clean wasm-serve release-upload pack web-model \
         train train-quick train-mid train-full eval eval-full eval-errors \
-        ablate manual docs check release-check
+        ablate manual docs check check-native check-wasm release-check
 # --- Main Targets ---
 
 all: release  ## Build the engine for release (default).
@@ -188,14 +188,29 @@ docs: manual  ## Alias for manual.
 
 # --- Release checks -----------------------------------------------------------
 
-check:  ## Format check, clippy with warnings denied, and the test suite.
+check: check-native check-wasm  ## Format, clippy, tests, and the wasm target.
+	@echo "All checks passed."
+
+check-native:  ## Format check, clippy with warnings denied, and the test suite.
 	@echo "==> cargo fmt --check"
 	@cargo fmt --check || { echo "run 'cargo fmt' to fix"; exit 1; }
 	@echo "==> cargo clippy -D warnings"
 	@cargo clippy --release --all-targets -- -D warnings
 	@echo "==> cargo test"
 	@cargo test --release
-	@echo "All checks passed."
+
+# The wasm target compiles a different set of cfg branches, so a change can pass
+# every native check and still break the browser build -- which is exactly how a
+# broken wasm build shipped in v1.1.0. This target is not optional.
+check-wasm:  ## Compile-check and lint the wasm32 target (catches cfg-gated breakage).
+	@if ! rustup target list --installed 2>/dev/null | grep -q wasm32-unknown-unknown; then \
+		echo "==> wasm32 target not installed; skipping (rustup target add wasm32-unknown-unknown)"; \
+		exit 0; \
+	fi
+	@echo "==> cargo check --features wasm --target wasm32-unknown-unknown"
+	@cargo check --features wasm --target wasm32-unknown-unknown
+	@echo "==> cargo clippy (wasm) -D warnings"
+	@cargo clippy --features wasm --target wasm32-unknown-unknown -- -D warnings
 
 release-check: check manual  ## Everything a release needs: checks, accuracy, manual.
 	@echo "==> accuracy"

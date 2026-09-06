@@ -1,5 +1,30 @@
 # Changelog
 
+## v1.1.1 — 2026-09-06
+
+Fixes the WebAssembly build, which v1.1.0 shipped broken.
+
+- **`load_reranker` was cfg-gated off for wasm32.** Removing the corpus lexicon
+  in v1.1.0 deleted `load_lexicon`'s body but left its
+  `#[cfg(not(target_arch = "wasm32"))]` attribute orphaned, so it silently
+  attached to the next item — `load_reranker` — making it unavailable on the
+  browser target.
+- **`wasm.rs` still referenced the removed lexicon** in `reset_learning`, and
+  called `ImeEngine::from_model` and `Reranker::new` with their old arities.
+- Three wasm-only clippy lints fixed (`div_ceil`, `is_multiple_of`, a `return`
+  inside a cfg block that is now two cfg-gated functions).
+
+**Root cause: `make check` only compiled the native target.** The wasm target
+compiles a different set of cfg branches, so a change can pass every native
+check and still break the browser build. `make check` now runs `check-native`
+*and* `check-wasm` (compile plus clippy under `-D warnings` for
+`wasm32-unknown-unknown`), so this class of breakage cannot ship again.
+
+No functional change: native accuracy is unchanged at AK-Freq 81.83% / 92.22%.
+
+The JS API is unaffected — `createEngine(model, lexicon, weights)` still
+accepts its lexicon argument and ignores it.
+
 ## v1.1.0 — 2026-09-06
 
 A correctness and performance release. Every figure below was measured on the

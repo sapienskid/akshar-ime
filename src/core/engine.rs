@@ -746,7 +746,6 @@ fn load_model_or_default() -> TranslitModel {
     TranslitModel::default()
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn load_reranker() -> Reranker {
     let mut weights = [1.0f64; NUM_FEATURES];
     weights[0] = 1.0;
