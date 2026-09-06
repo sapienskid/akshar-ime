@@ -13,8 +13,21 @@
 // Everything is stored as additive negative-log weights (tropical semiring),
 // so decoding is shortest-path / Viterbi over the akshara lattice.
 
+use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+
+/// Look up `id` in an adjacency row.
+///
+/// Rows are stored ascending by id -- the trainer sorts them and the container
+/// delta-encodes them, which would be incorrect for any other order -- so this
+/// is a binary search.  It used to be a linear scan, and with ~5,000 hypotheses
+/// expanded per beam step it was the decoder's dominant cost.
+#[inline]
+fn find_weight(row: &[(u32, f32)], id: u32) -> Option<f32> {
+    row.binary_search_by_key(&id, |(k, _)| *k)
+        .ok()
+        .map(|i| row[i].1)
+}
 
 /// Number of leading chars of the file format we can bump when the layout
 /// changes.  Kept small and human readable.
@@ -49,10 +62,10 @@ pub struct TranslitModel {
     pub trigram_backoff: Vec<f32>,
     /// Runtime index from (a,b) -> position in trigram_keys.  Not serialised.
     #[serde(skip)]
-    pub trigram_index: HashMap<(u32, u32), usize>,
+    pub trigram_index: FxHashMap<(u32, u32), usize>,
     /// Runtime index from akshara string -> id.  Not serialised; built on load.
     #[serde(skip)]
-    pub akshara_index: HashMap<String, u32>,
+    pub akshara_index: FxHashMap<String, u32>,
 }
 
 /// Maximum roman characters a single akshara can absorb.
@@ -90,8 +103,8 @@ impl TranslitModel {
         };
         self.emissions
             .get(akshara_id as usize)
-            .and_then(|list| list.iter().find(|(cid, _)| *cid == chunk_id))
-            .map(|(_, w)| *w as f64)
+            .and_then(|list| find_weight(list, chunk_id))
+            .map(|w| w as f64)
             .unwrap_or(f64::INFINITY)
     }
 
@@ -128,8 +141,8 @@ impl TranslitModel {
     /// Bigram weight between consecutive aksharas (-log P_KN), with backoff.
     pub fn bigram_weight(&self, a: u32, b: u32) -> f64 {
         if let Some(list) = self.bigrams.get(a as usize) {
-            if let Some((_, w)) = list.iter().find(|(id, _)| *id == b) {
-                return *w as f64;
+            if let Some(w) = find_weight(list, b) {
+                return w as f64;
             }
         }
         let backoff = self.backoff.get(a as usize).copied().unwrap_or(0.0) as f64;
@@ -148,8 +161,8 @@ impl TranslitModel {
     /// Trigram weight -log P_KN(c | a, b) with backoff to the bigram.
     pub fn trigram_weight(&self, a: u32, b: u32, c: u32) -> f64 {
         if let Some(i) = self.trigram_index.get(&(a, b)) {
-            if let Some((_, w)) = self.trigrams[*i].iter().find(|(id, _)| *id == c) {
-                return *w as f64;
+            if let Some(w) = find_weight(&self.trigrams[*i], c) {
+                return w as f64;
             }
             let backoff = self.trigram_backoff.get(*i).copied().unwrap_or(0.0) as f64;
             return backoff + self.bigram_weight(b, c);
@@ -319,8 +332,8 @@ mod tests {
             trigram_keys: vec![],
             trigrams: vec![],
             trigram_backoff: vec![],
-            trigram_index: HashMap::new(),
-            akshara_index: HashMap::new(),
+            trigram_index: FxHashMap::default(),
+            akshara_index: FxHashMap::default(),
         };
         assert!(m.validate());
         assert_eq!(m.emission_weight(0, "ka"), 0.0);
@@ -341,8 +354,8 @@ mod tests {
             trigram_keys: vec![],
             trigrams: vec![],
             trigram_backoff: vec![],
-            trigram_index: HashMap::new(),
-            akshara_index: HashMap::new(),
+            trigram_index: FxHashMap::default(),
+            akshara_index: FxHashMap::default(),
         };
         // seen: direct weight
         assert_eq!(m.bigram_weight(0, 1), 2.0);

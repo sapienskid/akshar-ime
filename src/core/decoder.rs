@@ -187,11 +187,27 @@ impl ModelDecoder {
         // Complete paths: dev string -> (score, emit, lm, akshara_count).
         let mut seen: FxHashMap<String, (f64, f64, f64, usize)> = FxHashMap::default();
 
+        // A generated hypothesis before it is admitted to the beam.  It carries
+        // its parent's arena index and its own akshara rather than an arena
+        // cell: only the survivors of pruning are materialised, which cuts
+        // arena writes from O(beam x edges) to O(beam) per step.
+        struct Cand {
+            pos: usize,
+            prev2: Option<u32>,
+            score: f64,
+            emit: f64,
+            lm: f64,
+            phash: u64,
+            parent: Option<u32>,
+            akshara: u32,
+        }
+        let mut next: Vec<Cand> = Vec::with_capacity(self.config.beam_width * 16);
+
         for _step in 0..MAX_STEPS {
             if beam.is_empty() {
                 break;
             }
-            let mut next: Vec<BeamState> = Vec::with_capacity(beam.len() * 16);
+            next.clear();
 
             for st in &beam {
                 if st.pos == m {
@@ -211,7 +227,10 @@ impl ModelDecoder {
                         let base_lm = match (st.prev2, st.prev) {
                             (_, None) => self.model.start_weight(e.a),
                             (None, Some(b)) => self.model.bigram_weight(b, e.a),
-                            (Some(a), Some(b)) => self.model.trigram_weight(a, b, e.a),
+                            (Some(a), Some(b)) if !crate::core::ablation::no_trigram() => {
+                                self.model.trigram_weight(a, b, e.a)
+                            }
+                            (Some(_), Some(b)) => self.model.bigram_weight(b, e.a),
                         };
                         if let Some(crf) = &self.config.crf {
                             crf.edge_parts_with_base(st.prev, e.a, e.cid, base_emit, base_lm)
@@ -221,35 +240,51 @@ impl ModelDecoder {
                     };
                     let emit = st.emit + emit_w;
                     let lm = st.lm + fluency;
-                    let score = emit + lm * self.config.lm_weight;
-                    let cell = PathCell {
-                        parent: st.path,
-                        akshara: e.a,
-                    };
-                    let idx = arena.len() as u32;
-                    arena.push(cell);
-                    next.push(BeamState {
+                    next.push(Cand {
                         pos: st.pos + e.len,
-                        prev: Some(e.a),
                         prev2: st.prev,
-                        score,
+                        score: emit + lm * self.config.lm_weight,
                         emit,
                         lm,
                         phash: path_hash(st.phash, e.a),
-                        path: Some(idx),
+                        parent: st.path,
+                        akshara: e.a,
                     });
                 }
             }
 
-            // The path hash alone determines (pos, prev2, prev) -- they are all
-            // functions of the akshara sequence -- so keying a merge map on
-            // (pos, prev2, prev, phash) could only ever merge on a hash
-            // collision.  It built and tore down a hash map every step to do
-            // nothing.  Distinct paths are deliberately kept separate here: the
-            // decoder extracts k-best *paths*, not the 1-best path per state.
-            next.sort_by(|a, b| a.score.total_cmp(&b.score));
-            next.truncate(self.config.beam_width);
-            beam = next;
+            // Keeping the best `beam_width` of ~5,000 hypotheses does not need
+            // them ordered, so partition in O(n) instead of sorting in
+            // O(n log n).  The beam's internal order is irrelevant: complete
+            // paths are collected into `seen` and sorted once at the end.
+            //
+            // Distinct paths are deliberately kept separate rather than merged
+            // by state: this decoder extracts k-best *paths*, not the 1-best
+            // path per state.
+            let width = self.config.beam_width;
+            if next.len() > width {
+                next.select_nth_unstable_by(width, |a, b| a.score.total_cmp(&b.score));
+                next.truncate(width);
+            }
+
+            beam.clear();
+            for c in next.iter() {
+                let idx = arena.len() as u32;
+                arena.push(PathCell {
+                    parent: c.parent,
+                    akshara: c.akshara,
+                });
+                beam.push(BeamState {
+                    pos: c.pos,
+                    prev: Some(c.akshara),
+                    prev2: c.prev2,
+                    score: c.score,
+                    emit: c.emit,
+                    lm: c.lm,
+                    phash: c.phash,
+                    path: Some(idx),
+                });
+            }
         }
 
         let mut results: Vec<DecodedCandidate> = seen
@@ -508,8 +543,13 @@ impl ModelDecoder {
         k: usize,
         trie: Option<&crate::core::wordtrie::WordTrie>,
     ) -> Vec<DecodedCandidate> {
-        let mut cands = self.decode_detailed(roman, k);
-        if let Some(t) = trie {
+        let trie_only = crate::core::ablation::trie_only() && trie.is_some();
+        let mut cands = if trie_only {
+            Vec::new()
+        } else {
+            self.decode_detailed(roman, k)
+        };
+        if let Some(t) = trie.filter(|_| trie_only || !crate::core::ablation::no_trie_union()) {
             let in_words = self.decode_in_words_detailed(roman, k, t);
             let mut seen: FxHashSet<String> = cands.iter().map(|c| c.dev.clone()).collect();
             for c in in_words {

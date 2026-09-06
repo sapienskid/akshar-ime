@@ -430,7 +430,7 @@ pub fn rerank_with_norm(
         for k in 0..DENSE_DIM {
             s += W_DENSE[k] * norm.z(k, dense[k]);
         }
-        for &h in &sparse {
+        for &h in sparse.iter().filter(|_| !crate::core::ablation::no_sparse()) {
             let (b, scale) = match custom_sparse_table {
                 Some(t) if h < t.len() => (t[h], custom_sparse_scale.unwrap_or(SPARSE_SCALE)),
                 // SPARSE_TABLE is empty on a build with no legacy
@@ -470,7 +470,8 @@ pub fn rerank_with_norm(
         }
     }
 
-    if GAMMA >= 1.0 {
+    let gamma = crate::core::ablation::gamma().unwrap_or(GAMMA);
+    if gamma >= 1.0 {
         let mut blended: Vec<(String, f64)> = order
             .iter()
             .zip(scores)
@@ -478,7 +479,7 @@ pub fn rerank_with_norm(
             .collect();
         blended.sort_by(|a, b| b.1.total_cmp(&a.1));
         blended
-    } else if GAMMA <= 0.0 {
+    } else if gamma <= 0.0 {
         let mut blended: Vec<(String, f64)> = order
             .iter()
             .zip(heur)
@@ -493,7 +494,7 @@ pub fn rerank_with_norm(
             .iter()
             .zip(scores)
             .zip(heur_std)
-            .map(|((c, s), zh)| (c.dev.clone(), (1.0 - GAMMA) * (-zh) + GAMMA * s))
+            .map(|((c, s), zh)| (c.dev.clone(), (1.0 - gamma) * (-zh) + gamma * s))
             .collect();
         blended.sort_by(|a, b| b.1.total_cmp(&a.1));
         blended

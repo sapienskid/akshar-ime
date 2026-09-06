@@ -489,7 +489,14 @@ impl ImeEngine {
         if prefix.is_empty() {
             return vec![];
         }
-        let query_variants = expand_query_variants(prefix, QUERY_VARIANT_LIMIT);
+        let query_variants = if crate::core::ablation::no_variants() {
+            vec![crate::core::normalizer::RomanVariant {
+                roman: prefix.to_string(),
+                penalty: 0,
+            }]
+        } else {
+            expand_query_variants(prefix, QUERY_VARIANT_LIMIT)
+        };
 
         let mut candidates: HashMap<String, u64> = HashMap::new();
         let mut add = |dev: String, score: u64| {
@@ -547,7 +554,7 @@ impl ImeEngine {
             //    prefix transliteration.  The bonus is additive on the fresh
             //    score when the decoder also produced the word, so decoder
             //    ranking survives; corpus-only words get a standalone score.
-            if let Some(lx) = &self.lexicon {
+            if let Some(lx) = self.lexicon.as_ref().filter(|_| !crate::core::ablation::no_lexicon()) {
                 for dev in lx.lookup_exact(roman) {
                     let bonus = LEXICON_EXACT_BONUS.saturating_sub(qv.penalty);
                     match fresh_scores.get(&dev) {
