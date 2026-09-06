@@ -30,5 +30,5 @@ echo "  brotli: $(( $(brotli -c wasm/pkg/akshar_ime_bg.wasm 2>/dev/null | wc -c 
 echo ""
 echo "Next: serve data/ via HTTP and init from JS:"
 echo "  import { AksharIME } from './js/akshar-ime.js';"
-echo "  await AksharIME.init({ modelUrl: '/data/translit_model.bin' });"
+echo "  await AksharIME.init({ modelUrl: '/data/akshar_wasm.model' });"
 echo "  AksharIME.attach(document.querySelector('input'));"
