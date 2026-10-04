@@ -60,207 +60,56 @@ pub const MATRAS: [char; 10] = [
     '\u{0943}', // ृ
 ];
 
-/// Morphological suffix union table: (suffix, needs_consonant_before).
+/// Morphological suffix table for Nepali (34 postpositions, clitics, and verb endings).
 ///
-/// Sources (see docs/plans/archive/research/indic-morphology.md for the survey):
-/// - `ne34`: the original 34 hand-listed Nepali postpositions/clitics/verb
-///   endings. Bare match (no gate) — preserved as-is.
-/// - `snow`: Snowball Hindi stemmer suffix list (Ramanathan & Rao 2003;
-///   BSD, snowballstem.org/algorithms/hindi). Rendered deterministically
-///   from the .sbl token strings to Devanagari codepoints. Entries flagged
-///   `true` are Snowball's CONSONANT-gated forms (leading implicit-a forms
-///   like ta/ti/ni/kar): they strip only when the stem ends in a consonant.
-///   Overlaps with ne34 stay bare (union-permissive).
-///
-/// Invariants (pinned by unit test): longest-first by char count, so the
-/// first `ends_with` hit is the longest strip (गरेको yields एको, not को);
-/// vocab gate in `morph_effective_log_freq` keeps false strips at zero/// credit, which is what makes a cross-language union safe.
-pub const MORPH_SUFFIXES: [(&str, bool); 164] = [
-    ("अताएं", false), // snow
-    ("अताओं", false), // snow
-    ("अनाएं", false), // snow
-    ("अनाओं", false), // snow
-    ("आइयाँ", false), // snow
-    ("आइयां", false), // snow
-    ("आइयों", false), // snow
-    ("आऊंगा", false), // snow
-    ("आऊंगी", false), // snow
-    ("आएंगी", false), // snow
-    ("आएंगे", false),  // snow
-    ("ाइयाँ", false), // snow
-    ("ाइयां", false), // snow
-    ("ाइयों", false), // snow
-    ("ाऊंगा", false), // snow
-    ("ाऊंगी", false), // snow
-    ("ाएंगी", false), // snow
-    ("ाएंगे", false),  // snow
-    ("अतीं", false),  // snow
-    ("आएगा", false), // snow
-    ("आएगी", false), // snow
-    ("आओगी", false), // snow
-    ("आओगे", false),  // snow
-    ("आतीं", false),  // snow
-    ("इयाँ", false),  // snow
-    ("इयां", false),  // snow
-    ("इयों", false),  // snow
-    ("ऊंगा", false),  // snow
-    ("ऊंगी", false),  // snow
-    ("एंगी", false),  // snow
-    ("एंगे", false),   // snow
-    ("ताएं", true),   // snow
-    ("ताओं", true),   // snow
-    ("थिन्", false),  // ne34
-    ("थियो", false), // ne34
-    ("देखि", false),  // ne34
-    ("नाएं", true),   // snow
-    ("नाओं", true),   // snow
-    ("ाएगा", false), // snow
-    ("ाएगी", false), // snow
-    ("ाओगी", false), // snow
-    ("ाओगे", false),  // snow
-    ("ातीं", false),  // snow
-    ("ियाँ", false),  // snow
-    ("ियां", false),  // snow
-    ("ियों", false),  // snow
-    ("ूंगा", false),   // snow
-    ("ूंगी", false),   // snow
-    ("ेंगी", false),   // snow
-    ("ेंगे", false),    // snow
-    ("अकर", false),  // snow
-    ("अता", false),  // snow
-    ("अती", false),  // snow
-    ("अते", false),   // snow
-    ("अना", false),  // snow
-    ("अनी", false),  // snow
-    ("अने", false),   // snow
-    ("आइए", false),  // snow
-    ("आईं", false),   // snow
-    ("आएं", false),   // snow
-    ("आओं", false),   // snow
-    ("आकर", false),  // snow
-    ("आता", false),  // snow
-    ("आती", false),  // snow
-    ("आते", false),   // snow
-    ("आना", false),  // snow
-    ("आने", false),   // snow
-    ("आया", false),  // snow
-    ("उआं", false),   // snow
-    ("उएं", false),   // snow
-    ("उओं", false),   // snow
-    ("एका", false),  // ne34
-    ("एकी", false),  // ne34
-    ("एको", false),  // ne34
-    ("एगा", false),  // snow
-    ("एगी", false),  // snow
-    ("ओगी", false),  // snow
-    ("ओगे", false),   // snow
-    ("छन्", false),   // ne34
-    ("तीं", true),    // snow
-    ("त्व", false),   // ne34
-    ("थिए", false),  // ne34
-    ("पना", false),  // ne34
-    ("पनि", false),  // ne34
-    ("बाट", false),  // ne34
-    ("भनी", false),  // ne34
-    ("भने", false),   // ne34
-    ("लाई", false),  // ne34
-    ("सँग", false),   // ne34
-    ("सित", false),  // ne34
-    ("हरु", false),   // ne34
-    ("हरू", false),   // ne34
-    ("ाइए", false),  // snow
-    ("ाईं", false),   // snow
-    ("ाएं", false),   // snow
-    ("ाओं", false),   // snow
-    ("ाकर", false),  // snow
-    ("ाता", false),  // snow
-    ("ाती", false),  // snow
-    ("ाते", false),   // snow
-    ("ाना", false),  // snow
-    ("ाने", false),   // snow
-    ("ाया", false),  // snow
-    ("ुआं", false),    // snow
-    ("ुएं", false),    // snow
-    ("ुओं", false),    // snow
-    ("ेगा", false),   // snow
-    ("ेगी", false),   // snow
-    ("ोगी", false),  // snow
-    ("ोगे", false),   // snow
-    ("आँ", false),    // snow
-    ("आं", false),    // snow
-    ("आई", false),   // snow
-    ("आए", false),   // snow
-    ("आओ", false),   // snow
-    ("इए", false),   // snow
-    ("ईं", false),    // snow
-    ("एं", false),    // snow
-    ("एर", false),   // ne34
-    ("ओं", false),    // snow
-    ("कर", true),    // snow
-    ("का", false),   // ne34
-    ("की", false),   // ne34
-    ("को", false),   // ne34
-    ("जी", false),   // ne34
-    ("ता", false),   // ne34+snow
-    ("ती", true),    // snow
-    ("ते", true),     // snow
-    ("दा", false),   // ne34
-    ("दै", false),    // ne34
-    ("ना", true),    // snow
-    ("नी", true),    // snow
-    ("नु", false),    // ne34
-    ("ने", false),    // ne34+snow
-    ("नै", false),    // ne34
-    ("पन", false),   // ne34
-    ("मा", false),   // ne34
-    ("ले", false),    // ne34
-    ("ाँ", false),    // snow
-    ("ां", false),    // snow
-    ("ाई", false),   // snow
-    ("ाए", false),   // snow
-    ("ाओ", false),   // snow
-    ("िए", false),   // snow
-    ("ीं", false),    // snow
-    ("ें", false),     // snow
-    ("ों", false),    // snow
-    ("अ", false),    // snow
-    ("आ", false),    // snow
-    ("इ", false),    // snow
-    ("ई", false),    // snow
-    ("उ", false),    // snow
-    ("ऊ", false),    // snow
-    ("ए", false),    // snow
-    ("ओ", false),    // snow
-    ("त", false),    // ne34
-    ("ा", false),    // snow
-    ("ि", false),    // snow
-    ("ी", false),    // snow
-    ("ु", false),     // snow
-    ("ू", false),     // snow
-    ("े", false),     // snow
-    ("ो", false),    // snow
-    ("्", false),     // snow
+/// Longest-first order by character count ensures greedy stripping (e.g. गरेको yields को,
+/// आएको yields एको).
+pub const MORPH_SUFFIXES: [&str; 34] = [
+    // 4 chars
+    "देखि",
+    "थियो",
+    "थिन्",
+    // 3 chars
+    "एका",
+    "एकी",
+    "एको",
+    "छन्",
+    "त्व",
+    "थिए",
+    "पना",
+    "पनि",
+    "बाट",
+    "भनी",
+    "भने",
+    "लाई",
+    "सँग",
+    "सित",
+    "हरु",
+    "हरू",
+    // 2 chars
+    "एर",
+    "का",
+    "की",
+    "को",
+    "जी",
+    "ता",
+    "दा",
+    "दै",
+    "नु",
+    "ने",
+    "नै",
+    "पन",
+    "मा",
+    "ले",
+    // 1 char
+    "त",
 ];
 
 pub fn get_morph_suffix(dev: &str) -> Option<&'static str> {
-    MORPH_SUFFIXES.iter().find_map(|&(s, gated)| {
-        if !dev.ends_with(s) || dev.len() <= s.len() {
-            return None;
-        }
-        if gated {
-            // Snowball CONSONANT gate: the stem must end in a consonant
-            // (the suffix's leading vowel was implicit-a on it).
-            let stem = &dev[..dev.len() - s.len()];
-            if !stem
-                .chars()
-                .last()
-                .is_some_and(crate::core::akshara::is_consonant)
-            {
-                return None;
-            }
-        }
-        Some(s)
-    })
+    MORPH_SUFFIXES
+        .iter()
+        .copied()
+        .find(|&s| dev.ends_with(s) && dev.len() > s.len())
 }
 
 /// What the ranker knows about how common a word is.
@@ -881,9 +730,9 @@ mod tests {
 
     #[test]
     fn morph_table_is_longest_first() {
-        assert_eq!(MORPH_SUFFIXES.len(), 164);
+        assert_eq!(MORPH_SUFFIXES.len(), 34);
         let mut prev = usize::MAX;
-        for &(s, _) in MORPH_SUFFIXES.iter() {
+        for &s in MORPH_SUFFIXES.iter() {
             let n = s.chars().count();
             assert!(n <= prev, "table not longest-first at {s}");
             assert!(n > 0);
@@ -894,23 +743,12 @@ mod tests {
     #[test]
     fn longest_match_wins_over_prefix() {
         // "आएको" ends in both "एको" (len 3) and "को" (len 2): longest wins.
-        // (The old hand order returned first-match — "को" — regardless.)
         assert_eq!(get_morph_suffix("आएको"), Some("एको"));
-        assert_eq!(get_morph_suffix("किताबें"), Some("ें"));
-        // Ambiguous readings keep the longest registered strip: "गरेको"
-        // ends in "को" ("ेको" is not a suffix), stem "गरे".
         assert_eq!(get_morph_suffix("गरेको"), Some("को"));
-    }
-
-    #[test]
-    fn consonant_gate_falls_through_to_shorter_bare() {
-        // "ती" is gated (stem must end in a consonant): "अती" has stem "अ"
-        // (independent vowel), so the gate rejects and the bare "ी" matches.
-        assert_eq!(get_morph_suffix("कहती"), Some("ती"));
-        assert_eq!(get_morph_suffix("अती"), Some("ी"));
-        // The whole-word rule leaves at least one character: "ो" strips
-        // "को" to "क", but "ो" itself strips nothing.
-        assert_eq!(get_morph_suffix("को"), Some("ो"));
-        assert_eq!(get_morph_suffix("ो"), None);
+        assert_eq!(get_morph_suffix("घरबाट"), Some("बाट"));
+        assert_eq!(get_morph_suffix("साथीहरू"), Some("हरू"));
+        // The whole-word rule leaves at least one character:
+        assert_eq!(get_morph_suffix("बाट"), None);
+        assert_eq!(get_morph_suffix("त"), None);
     }
 }

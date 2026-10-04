@@ -59,16 +59,7 @@ struct Record {
 /// Published IndicXlit AK-Freq top-1 (Madhani et al., Aksharantar, Table 13):
 /// (without rerank, with IndicCorp word-unigram rerank).  Reference only.
 fn indicxlit_ak_freq(lang: &str) -> Option<(f64, f64)> {
-    Some(match lang {
-        "hin" => (58.61, 67.94),
-        "mar" => (74.69, 85.47),
-        "nep" => (80.17, 86.62),
-        "san" => (81.56, 90.07),
-        "kok" => (65.38, 76.29),
-        "mai" => (78.65, 87.57),
-        "brx" => (74.80, 78.42),
-        _ => return None,
-    })
+    (lang == "nep").then_some((80.17, 86.62))
 }
 
 /// Canonical form under the orthographic equivalences lenient scoring accepts.
