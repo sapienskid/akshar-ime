@@ -1,43 +1,57 @@
 # Experiment archive
 
-Working documents from the development of Akshar IME, kept because they record
-**what was tried, measured and rejected** — which the manual's final numbers
-cannot show on their own. Superseded as plans; preserved as evidence.
+Working documents from the development of Akshar IME. These are **snapshots,
+kept for provenance only** — nothing here is a live plan, and nothing here
+describes the shipped system. Figures are from the configurations of their
+dates and are frequently superseded.
 
-Read in this order:
+Read `docs/MANUAL.md` for the current source of truth and
+`docs/experiments/` for the live experiment log.
 
-| Document | Date | What it records |
-| :--- | :--- | :--- |
-| `2026-08-01-generative-transliteration-design.md` | Aug 1 | Original design of the generative core: the source-channel decision, akshara units, first results. |
-| `2026-09-03-transliteration-accuracy-research.md` | Sep 3 | Error analysis and a ranked technique shortlist (E0–E7) with expected gains. The "95% question". |
-| `2026-09-03-accuracy-experiments.md` | Sep 3 | **The experiment log.** E0–E3 with measured deltas, the v2 WFST core, depth-2 pair context. |
-| `2026-09-05-data-flow.md` | Sep 5 | How raw text becomes the artefacts a keystroke touches. |
-| `2026-09-05-data-research.md` | Sep 5 | Literature review: how IndicXlit uses data, context in production IMEs (Kirov et al. 2024), larger Nepali corpora, prior art on the blocking ambiguity classes. |
-| `2026-09-05-mathematics.md` | Sep 5 | Complete mathematical treatment (equations with code references). Discounting sections superseded by the Sep 6 repair doc. |
-| `2026-09-06-repair-and-path-to-90.md` | Sep 6 | Measured defect audit (A–F), landed fixes, improvement plan. Phases A/B shipped; C–F open. |
-| `2026-09-05-research-agenda.md` | Sep 5 | Mathematics considered but not executed: context-tree weighting, A* anytime decoding, the entropy harness, incremental decoding. |
-| `2026-09-05-roadmap-to-90.md` | Sep 5 | First plan to 90%: audit of how every byte of data is used. |
-| `2026-09-05-path-past-90.md` | Sep 5 | Revision of the above, with the W0 measurement-gate results. |
-| `2026-09-22-factored-matra-model.md` | Sep 22 | Factored P(C\|R)·P(M\|C,R) matra model: implemented, measured, falsified as a word-level prior (78/182 head-to-head); code removed. |
-| `2026-09-22-top2-discriminator.md` | Sep 22 | Top-2 swap discriminator: 3 training regimes (full/string-only/domain-matched), no operating point above baseline; code removed. |
-| `2026-09-22-mbr-selection.md` | Sep 22 | MBR consensus: 24 configs on valid native, best +2/798 (noise); converged lists carry no votable information; probe removed. |
-| `2026-09-22-ne-routing.md` | Sep 22 | NE burial analysis: router/demotion/attenuation killed (deep 6%, demote +140/−138, freq-burial 14%); 46% absent = generation gap, needs training; probe removed. |
-| `2026-09-22-attestation-training.md` | Sep 22 | Attestation-weighted train-mid: entities +13, native −8, pooled +5 (noise) — killed as ship candidate; flag kept, artifact local-only. |
-| `2026-09-08-experiment-report.md` | Sep 8 | Component ablation report (which ideas carry accuracy); superseded by MANUAL §9 but kept for the raw tables. |
-| `correctness-audit-2026-09-10.md` | Sep 10 | Correctness-first audit: 14 fixes + train-mid validation; completed, all landed. |
-| `devanagari-script-plan.md` | Sep 22 | Devanagari multi-language architecture: shared FST lexicon, position-synchronous search, language conditioning. Completed & landed. |
-| `playground-extension.md` | Sep 22 | Migration plan moving browser playground to standalone repo `Fundaments-Work/akshar-playground`. Completed & landed. |
+## Archived by reason
 
-Live planning documents live in `docs/plans/` (not here):
+### Superseded by the Nepali-only scope (2026-09-22 multi-language era)
 
-| Document | Opened | What it plans |
-| :--- | :--- | :--- |
-| `../research-agenda.md` | 2026-09-22 | Ranked accuracy bets with pre-registered kill criteria. |
-| `../browser-extension.md` | 2026-10-03 | Chrome + Firefox MV3 extension; supersedes section B of `playground-extension.md`. Not started. |
+The engine shipped eight Devanagari languages until the per-language corpora
+were dropped. These were written for that edition and cannot be re-run:
 
-The live roadmap is `docs/MANUAL.md` §18.
+| File | Why archived |
+| :--- | :--- |
+| `2026-08-01-generative-transliteration-design.md` | Generative core design; superseded by the lattice + reranker actually built |
+| `2026-09-05-mathematics.md` | Mathematical treatment of the 8-language formulation |
+| `2026-09-05-research-agenda.md` | Ranked bets across 8 languages |
+| `2026-09-05-data-flow.md` | Data flow including the removed IndicCorp path |
+| `2026-09-05-data-research.md` | Corpus survey for 8 languages |
+| `devanagari-script-plan.md` | Script-general research program |
+| `research/indic-morphology.md` | Morphological analyzers for Hindi/Marathi/Sanskrit/Nepali |
+| `research/sota-signals.md` | SOTA signals, framed for a multi-language engine |
+| `research/rerank-beyond-linear.md` | Reranking survey, multi-language framing |
 
-**Caution: the accuracy figures in these documents are historical.** They were
-measured before the 2026-09-06 defect fixes and do not describe the shipped
-system. IndicXlit comparisons are quoted without LM rerank (reranked: 86.6%
-Nepali native, paper Table 6). The manual is authoritative.
+`research/indic-morphology.md` is still the citation for the morphological
+suffix union table in `src/core/reranker.rs` — its *content* survives even
+though its framing does not.
+
+### Measured and rejected
+
+Kept because the numbers are the reason the approach is not in the product:
+
+| File | Outcome |
+| :--- | :--- |
+| `2026-09-03-transliteration-accuracy-research.md` | Feasibility findings that redirected the work |
+| `2026-09-03-accuracy-experiments.md` | Early accuracy log |
+| `2026-09-06-repair-and-path-to-90.md` | Audit and 90% plan; the 90% target was not reached by this route |
+| `2026-09-05-path-past-90.md` | Four levers, none of which closed the gap |
+| `2026-09-05-roadmap-to-90.md` | Roadmap that the measurement later invalidated |
+| `2026-09-08-experiment-report.md` | Which ideas carried the accuracy, and by how much |
+| `2026-09-22-attestation-training.md` | Attestation-weighted training: measured, not adopted |
+| `2026-09-22-factored-matra-model.md` | Factored matra model: measured, folded into the reranker |
+| `2026-09-22-mbr-selection.md` | MBR consensus selection: measured, no gain |
+| `2026-09-22-ne-routing.md` | Named-entity routing: no gain |
+| `2026-09-22-top2-discriminator.md` | Top-2 discriminator: implemented, no gain |
+
+### Process
+
+| File | Outcome |
+| :--- | :--- |
+| `playground-extension.md` | Superseded by section B of `docs/plans/browser-extension.md` |
+| `correctness-audit-2026-09-10.md` | Audit done; findings folded into the defect register, MANUAL §17 |

@@ -16,7 +16,6 @@ use crate::core::{
     context::{ContextModel, CorpusCtx},
     decoder::{DecoderConfig, ModelDecoder},
     normalizer::expand_query_variants,
-    reranker::{Reranker, NUM_FEATURES},
     translit_model::TranslitModel,
     trie::Trie,
     types::{TransliterationModel, WordId},
@@ -145,7 +144,6 @@ fn ctx_weight() -> f64 {
 
 pub struct ImeEngine {
     pub decoder: ModelDecoder,
-    pub reranker: Reranker,
     /// Corpus-vocabulary data for the discriminative reranker (native builds with
     /// word_freq_text.bin present; None on WASM-lite or missing file).
     pub reranker_data: Option<crate::core::reranker::RerankerData>,
@@ -210,7 +208,6 @@ impl ImeEngine {
                 ..DecoderConfig::default()
             },
         );
-        let reranker = load_reranker();
         let reranker_data = load_reranker_data();
         let word_trie = reranker_data.as_ref().map(|v| {
             crate::core::wordtrie::WordTrie::from_freq_map(
@@ -221,7 +218,6 @@ impl ImeEngine {
         });
         Self {
             decoder,
-            reranker,
             reranker_data,
             dense_mean: Vec::new(),
             dense_std: Vec::new(),
@@ -240,7 +236,7 @@ impl ImeEngine {
             learning_engine: LearningEngine::new(),
             dictionary_path: None,
             sparse_table: None,
-            sparse_scale: crate::core::reranker_weights::SPARSE_SCALE,
+            sparse_scale: crate::core::reranker_weights::DEFAULT_SPARSE_SCALE,
             prev_word: None,
             corpus_ctx: None,
             suggestion_cache: RefCell::new(FxHashMap::default()),
@@ -276,10 +272,9 @@ impl ImeEngine {
             .lexicon
             .take()
             .and_then(|data| crate::core::lexicon::Lexicon::from_data(data).ok());
-        let (reranker, word_trie, reranker_data) = if lexicon.is_some() {
-            (load_reranker(), None, None)
+        let (word_trie, reranker_data) = if lexicon.is_some() {
+            (None, None)
         } else {
-            let reranker = load_reranker().with_freq(Some(unified.vocab_freq.clone()));
             let ranks = crate::core::reranker::FreqRanks::from_freq_map(&unified.vocab_freq);
             let word_trie = crate::core::wordtrie::WordTrie::from_freq_map(
                 &unified.vocab_freq,
@@ -290,11 +285,10 @@ impl ImeEngine {
                 freq: unified.vocab_freq,
                 ranks,
             };
-            (reranker, Some(word_trie), Some(data))
+            (Some(word_trie), Some(data))
         };
         Self {
             decoder,
-            reranker,
             reranker_data,
             dense_mean,
             dense_std,
@@ -320,7 +314,7 @@ impl ImeEngine {
             sparse_scale: if unified.sparse_scale > 0.0 {
                 unified.sparse_scale
             } else {
-                crate::core::reranker_weights::SPARSE_SCALE
+                crate::core::reranker_weights::DEFAULT_SPARSE_SCALE
             },
             prev_word: None,
             corpus_ctx: None,
@@ -372,7 +366,7 @@ impl ImeEngine {
     }
 
     /// Build from bytes, allowing caller to supply already-parsed model.
-    pub fn from_model(model: TranslitModel, reranker: Option<Reranker>) -> Self {
+    pub fn from_model(model: TranslitModel) -> Self {
         let decoder = ModelDecoder::with_config(
             model,
             DecoderConfig {
@@ -380,7 +374,6 @@ impl ImeEngine {
                 ..DecoderConfig::default()
             },
         );
-        let reranker = reranker.unwrap_or_else(load_reranker);
         let reranker_data = load_reranker_data();
         let word_trie = reranker_data.as_ref().map(|v| {
             crate::core::wordtrie::WordTrie::from_freq_map(
@@ -391,7 +384,6 @@ impl ImeEngine {
         });
         Self {
             decoder,
-            reranker,
             reranker_data,
             dense_mean: Vec::new(),
             dense_std: Vec::new(),
@@ -410,7 +402,7 @@ impl ImeEngine {
             learning_engine: LearningEngine::new(),
             dictionary_path: None,
             sparse_table: None,
-            sparse_scale: crate::core::reranker_weights::SPARSE_SCALE,
+            sparse_scale: crate::core::reranker_weights::DEFAULT_SPARSE_SCALE,
             prev_word: None,
             corpus_ctx: None,
             suggestion_cache: RefCell::new(FxHashMap::default()),
@@ -442,29 +434,8 @@ impl ImeEngine {
         if !model.validate() {
             return Err("invalid translit model".into());
         }
-        let reranker = if let Some(json) = reranker_json {
-            Self::parse_reranker_json(json)
-        } else {
-            load_reranker()
-        };
-        Ok(Self::from_model(model, Some(reranker)))
-    }
-
-    fn parse_reranker_json(json_str: &str) -> Reranker {
-        let mut weights = [1.0f64; NUM_FEATURES];
-        if let Ok(v) = serde_json::from_str::<serde_json::Value>(json_str) {
-            if let Some(w) = v.get("weights") {
-                let names = crate::core::reranker::feature_names();
-                for (i, name) in names.iter().enumerate() {
-                    if let Some(val) = w.get(*name).and_then(|x| x.as_f64()) {
-                        weights[i] = val;
-                    }
-                }
-            } else if let Ok(arr) = serde_json::from_str::<[f64; NUM_FEATURES]>(json_str) {
-                weights = arr;
-            }
-        }
-        Reranker::new(weights)
+        let _ = reranker_json;
+        Ok(Self::from_model(model))
     }
 
     /// Serialise learned state (trie + context + symspell) to bytes for persistence.
@@ -648,46 +619,31 @@ impl ImeEngine {
                     .map(|c| c as &dyn crate::core::reranker::WordCounts),
             };
             let cands = self.decoder.decode_union(roman, (count * 4).max(50), dict);
-            let ranked: Vec<(String, f64)> = match counts {
-                Some(counts) => crate::core::reranker::rerank_with_norm(
-                    roman,
-                    &cands,
-                    counts,
-                    self.sparse_table.as_deref(),
-                    Some(self.sparse_scale),
-                    crate::core::reranker::DenseNorm::from_model(&self.dense_mean, &self.dense_std),
-                    // v6+: use jointly-trained dense weights; None falls back to compiled-in W_DENSE.
-                    if self.dense_weights.is_empty() {
-                        None
-                    } else {
-                        Some(&self.dense_weights)
-                    },
-                    self.language.and_then(|index| {
-                        self.dense_lang_weights
-                            .get(index)
-                            .map(|dense| crate::core::reranker::LangCond { index, dense })
-                    }),
-                    self.language
-                        .and_then(|l| self.gamma_lang.get(l).copied())
-                        .or(self.gamma_auto),
-                ),
-                None => self.reranker.rerank(roman, cands),
-            };
+            let zero = crate::core::reranker::NoCounts;
+            let counts: &dyn crate::core::reranker::WordCounts = counts.unwrap_or(&zero);
+            let ranked: Vec<(String, f64)> = crate::core::reranker::rerank_with_norm(
+                roman,
+                &cands,
+                counts,
+                self.sparse_table.as_deref(),
+                Some(self.sparse_scale),
+                crate::core::reranker::DenseNorm::from_model(&self.dense_mean, &self.dense_std),
+                if self.dense_weights.is_empty() {
+                    None
+                } else {
+                    Some(&self.dense_weights)
+                },
+                self.language.and_then(|index| {
+                    self.dense_lang_weights
+                        .get(index)
+                        .map(|dense| crate::core::reranker::LangCond { index, dense })
+                }),
+                self.language
+                    .and_then(|l| self.gamma_lang.get(l).copied())
+                    .or(self.gamma_auto),
+            );
             let mut ranked = ranked;
             ranked.sort_by(|a, b| b.1.total_cmp(&a.1));
-
-            // Canonical conjunct guard: when the user types an exact phonetic
-            // conjunct like "tra", ensure the pure akshara ("त्र") is not
-            // displaced by unigram dictionary words with inserted vowels ("तर").
-            if roman == "tra" {
-                if let Some(pos) = ranked.iter().position(|(d, _)| d == "त्र") {
-                    if pos > 0 {
-                        let top_score = ranked[0].1 + 0.1;
-                        ranked[pos].1 = top_score;
-                        ranked.sort_by(|a, b| b.1.total_cmp(&a.1));
-                    }
-                }
-            }
 
             // 1b. Corpus-bigram context blend, pre-squash: the bonus shifts the
             // reranker margin before it is squashed into the u64 band, so the
@@ -1012,41 +968,6 @@ fn load_model_or_default() -> TranslitModel {
     TranslitModel::default()
 }
 
-fn load_reranker() -> Reranker {
-    let mut weights = [1.0f64; NUM_FEATURES];
-    weights[0] = 1.0;
-    weights[1] = 1.0;
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        if let Ok(file) = std::fs::File::open(data_path("reranker_weights.json")) {
-            if let Ok(v) = serde_json::from_reader::<_, serde_json::Value>(file) {
-                if let Some(w) = v.get("weights") {
-                    let names = crate::core::reranker::feature_names();
-                    for (i, name) in names.iter().enumerate() {
-                        if let Some(val) = w.get(*name).and_then(|x| x.as_f64()) {
-                            weights[i] = val;
-                        }
-                    }
-                }
-            }
-        }
-    }
-    let reranker = Reranker::new(weights);
-    // E3: word-frequency evidence (native targets only; absent on wasm unless
-    // fetched separately).
-    #[cfg(not(target_arch = "wasm32"))]
-    let reranker = {
-        let mut r = reranker;
-        if let Ok(bytes) = std::fs::read(data_path("word_freq_text.bin")) {
-            if let Ok(map) = bincode::deserialize::<HashMap<String, u32>>(&bytes) {
-                r = r.with_freq(Some(map));
-            }
-        }
-        r
-    };
-    reranker
-}
-
 /// Reranker data: the corpus vocabulary plus its frequency-rank index.
 /// None when the vocabulary file is unavailable (WASM-lite, fresh clones).
 #[cfg(not(target_arch = "wasm32"))]
@@ -1152,7 +1073,6 @@ mod tests {
         );
         ImeEngine {
             decoder,
-            reranker: Reranker::default(),
             reranker_data: None,
             dense_mean: Vec::new(),
             dense_std: Vec::new(),
@@ -1171,7 +1091,7 @@ mod tests {
             learning_engine: LearningEngine::new(),
             dictionary_path: None,
             sparse_table: None,
-            sparse_scale: crate::core::reranker_weights::SPARSE_SCALE,
+            sparse_scale: crate::core::reranker_weights::DEFAULT_SPARSE_SCALE,
             prev_word: None,
             corpus_ctx: None,
             suggestion_cache: RefCell::new(FxHashMap::default()),

@@ -92,7 +92,7 @@ fn main() {
     let unified = UnifiedModel::new(
         translit,
         sparse_table,
-        akshar_ime::core::reranker_weights::SPARSE_SCALE,
+        akshar_ime::core::reranker_weights::DEFAULT_SPARSE_SCALE,
         vocab,
     );
     unified.save(&out_p).expect("save unified model");

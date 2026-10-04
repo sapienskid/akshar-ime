@@ -108,7 +108,7 @@ impl From<UnifiedModelV1> for UnifiedModel {
             version: UNIFIED_VERSION,
             translit: v1.translit,
             sparse_reranker_table: v1.sparse_reranker_table,
-            sparse_scale: crate::core::reranker_weights::SPARSE_SCALE,
+            sparse_scale: crate::core::reranker_weights::DEFAULT_SPARSE_SCALE,
             vocab_freq: v1.vocab_freq,
             dense_mean: Vec::new(),
             dense_std: Vec::new(),
@@ -668,7 +668,7 @@ mod tests {
         assert_eq!(upgraded.version, UNIFIED_VERSION);
         assert_eq!(
             upgraded.sparse_scale,
-            crate::core::reranker_weights::SPARSE_SCALE
+            crate::core::reranker_weights::DEFAULT_SPARSE_SCALE
         );
 
         let rewritten = upgraded.to_bytes().expect("serialize v2");

@@ -3,7 +3,7 @@
 // Production Discriminative Reranker: 29 dense shape/frequency/morphology
 // features and a 2^20-slot sparse lexicalized hash table.
 //
-// Outperforms SOTA neural models (IndicXlit top-1: 80.25%, AksharIME: 81.02% top-1, 91.75% top-5).
+// Accuracy: docs/MANUAL.md §2.3 and docs/experiments/.
 //
 // Features:
 //   0 emit  1 lm  2 akshara_count  3 decoder_rank  4 heuristic  5 heuristic_rank
@@ -24,9 +24,7 @@
 use crate::core::akshara;
 use crate::core::decoder::DecodedCandidate;
 pub use crate::core::reranker_weights::{DENSE_DIM, HASH_SIZE};
-use crate::core::reranker_weights::{
-    GAMMA, LM_W, MEAN_DENSE, SPARSE_SCALE, SPARSE_TABLE, STD_DENSE, VOCAB_W, W_DENSE,
-};
+use crate::core::reranker_weights::{GAMMA, LM_W, VOCAB_W};
 use std::collections::HashMap;
 
 /// How many candidates get full dense+sparse feature extraction.
@@ -64,7 +62,7 @@ pub const MATRAS: [char; 10] = [
 
 /// Morphological suffix union table: (suffix, needs_consonant_before).
 ///
-/// Sources (see docs/research/indic-morphology.md for the full survey):
+/// Sources (see docs/plans/archive/research/indic-morphology.md for the survey):
 /// - `ne34`: the original 34 hand-listed Nepali postpositions/clitics/verb
 ///   endings. Bare match (no gate) — preserved as-is.
 /// - `snow`: Snowball Hindi stemmer suffix list (Ramanathan & Rao 2003;
@@ -281,6 +279,19 @@ pub trait WordCounts {
 pub struct VocabCounts<'a> {
     pub freq: &'a HashMap<String, u32>,
     pub ranks: &'a FreqRanks,
+}
+
+/// No frequency data: every word is equally unknown. Lets the no-model path
+/// share the one ranking function instead of a second scorer.
+pub struct NoCounts;
+
+impl WordCounts for NoCounts {
+    fn count(&self, _word: &str) -> f64 {
+        0.0
+    }
+    fn rank_pct(&self, _word: &str) -> f64 {
+        1.0
+    }
 }
 
 impl WordCounts for VocabCounts<'_> {
@@ -501,39 +512,36 @@ pub struct RerankerData {
     pub ranks: FreqRanks,
 }
 
-/// Dense-feature standardisation statistics.
-///
-/// The reranker scores `sum_k W_DENSE[k] * (x_k - mean_k) / std_k`.  The weights
-/// were fitted on standardised features, so the means and stds must describe the
-/// distribution the *current* model produces.  When they are stale — as the
-/// compiled-in constants become the moment the EM/LM is retrained — the same
-/// weights are applied to differently-scaled inputs and the dense model
-/// decalibrates.  A v5+ container carries its own; older ones fall back.
+/// Dense-feature standardisation statistics. Travels in the container
+/// (`UnifiedModel::dense_mean` / `dense_std`); no compiled-in fallback.
 #[derive(Debug, Clone, Copy)]
 pub struct DenseNorm<'a> {
     pub mean: &'a [f64],
     pub std: &'a [f64],
 }
 
+static IDENTITY_MEAN: [f64; DENSE_DIM] = [0.0; DENSE_DIM];
+static IDENTITY_STD: [f64; DENSE_DIM] = [1.0; DENSE_DIM];
+
 impl DenseNorm<'static> {
-    /// The compiled-in constants, for containers that carry no statistics.
-    pub const fn compiled_in() -> Self {
+    /// Identity standardisation `(x - 0) / 1`.
+    pub const fn identity() -> Self {
         Self {
-            mean: &MEAN_DENSE,
-            std: &STD_DENSE,
+            mean: &IDENTITY_MEAN,
+            std: &IDENTITY_STD,
         }
     }
 }
 
 impl<'a> DenseNorm<'a> {
-    /// Use the model's own statistics when it has them, else the constants.
+    /// The model's own statistics, else identity.
     pub fn from_model(mean: &'a [f64], std: &'a [f64]) -> Self {
         if mean.len() == DENSE_DIM && std.len() == DENSE_DIM {
             Self { mean, std }
         } else {
             Self {
-                mean: &MEAN_DENSE,
-                std: &STD_DENSE,
+                mean: &IDENTITY_MEAN,
+                std: &IDENTITY_STD,
             }
         }
     }
@@ -651,8 +659,8 @@ pub fn rerank_with_table(
         &VocabCounts { freq, ranks },
         custom_sparse_table,
         custom_sparse_scale,
-        DenseNorm::compiled_in(),
-        None, // No jointly-trained dense weights: use compiled-in W_DENSE.
+        DenseNorm::identity(),
+        None,
         None,
         None,
     )
@@ -732,15 +740,16 @@ pub fn rerank_with_norm(
         );
 
         let mut s = 0.0f64;
-        // Use jointly-trained dense weights from the v6+ container when available;
-        // fall back to the compiled-in W_DENSE constant for v5 and earlier.
-        let w_dense: &[f64] = custom_dense_weights.unwrap_or(&W_DENSE);
-        for k in 0..DENSE_DIM {
-            let wk = w_dense.get(k).copied().unwrap_or(W_DENSE[k])
+        let w_dense: &[f64] = match custom_dense_weights {
+            Some(w) if w.len() >= DENSE_DIM => w,
+            _ => &[],
+        };
+        for (k, &xk) in dense.iter().enumerate() {
+            let wk = w_dense.get(k).copied().unwrap_or(0.0)
                 + lang.map_or(0.0, |l| l.dense.get(k).copied().unwrap_or(0.0));
             // Exp 6: a NaN weight or feature must not poison the whole list.
             if wk.is_finite() {
-                let z = norm.z(k, dense[k]);
+                let z = norm.z(k, xk);
                 if z.is_finite() {
                     s += wk * z;
                 }
@@ -753,20 +762,11 @@ pub fn rerank_with_norm(
             let (b, scale) = match custom_sparse_table {
                 Some(t) if h < t.len() => (
                     t[h],
-                    // Exp 6: a negative/NaN scale would flip or poison scores.
                     custom_sparse_scale
                         .filter(|s| s.is_finite() && *s >= 0.0)
-                        .unwrap_or(SPARSE_SCALE),
+                        .unwrap_or(1.0),
                 ),
-                // SPARSE_TABLE is empty on a build with no legacy
-                // data/reranker_weights_sparse.bin (see build.rs); index 0
-                // there instead of panicking -- graceful degradation to "no
-                // sparse contribution", matching how the rest of the engine
-                // treats an absent optional data source.
-                _ => (
-                    SPARSE_TABLE.get(h).copied().unwrap_or(0) as i8,
-                    SPARSE_SCALE,
-                ),
+                _ => (0, 1.0),
             };
             s += (b as f64) * scale;
         }
@@ -837,74 +837,42 @@ pub fn rerank_with_norm(
 }
 
 // ---------------------------------------------------------------------------
-// Legacy 5-feature MERT Fallback Struct (for WASM-lite / backward compatibility)
+// Feature names
 // ---------------------------------------------------------------------------
 
-pub const F_EMIT: usize = 0;
-pub const F_LM: usize = 1;
-pub const F_LEN: usize = 2;
-pub const F_FREQ: usize = 3;
-pub const NUM_FEATURES: usize = 4;
-
-pub fn feature_names() -> [&'static str; NUM_FEATURES] {
-    ["emission", "lm", "length", "frequency"]
-}
-
-#[derive(Debug, Clone)]
-pub struct Reranker {
-    pub weights: [f64; NUM_FEATURES],
-    freq: Option<HashMap<String, u32>>,
-}
-
-impl Default for Reranker {
-    fn default() -> Self {
-        Self {
-            weights: [1.0, 1.0, 0.0, 0.0],
-            freq: None,
-        }
-    }
-}
-
-impl Reranker {
-    pub fn new(weights: [f64; NUM_FEATURES]) -> Self {
-        Self {
-            weights,
-            freq: None,
-        }
-    }
-
-    pub fn with_freq(mut self, freq: Option<HashMap<String, u32>>) -> Self {
-        self.freq = freq;
-        self
-    }
-
-    pub fn features(&self, _roman: &str, cand: &DecodedCandidate) -> [f64; NUM_FEATURES] {
-        let freq_feat = self
-            .freq
-            .as_ref()
-            .and_then(|f| f.get(&cand.dev))
-            .map(|&c| (1.0 + c as f64).ln() / 100.0f64.ln())
-            .unwrap_or(0.0);
-        [
-            -cand.emit,
-            -cand.lm,
-            -(cand.akshara_count as f64),
-            freq_feat.min(1.0),
-        ]
-    }
-
-    pub fn rerank(&self, roman: &str, candidates: Vec<DecodedCandidate>) -> Vec<(String, f64)> {
-        let mut scored: Vec<(String, f64)> = candidates
-            .into_iter()
-            .map(|c| {
-                let f = self.features(roman, &c);
-                let score: f64 = self.weights.iter().zip(f.iter()).map(|(w, x)| w * x).sum();
-                (c.dev, score)
-            })
-            .collect();
-        scored.sort_by(|a, b| b.1.total_cmp(&a.1));
-        scored
-    }
+/// Dense feature names, in `extract_dense_features` order.
+pub fn feature_names() -> [&'static str; DENSE_DIM] {
+    [
+        "emit",
+        "lm",
+        "akshara_count",
+        "decoder_rank",
+        "heuristic",
+        "heuristic_rank",
+        "log1p_freq",
+        "freq_rank_pct",
+        "in_vocab",
+        "len_dev",
+        "matra_total",
+        "matra_a",
+        "matra_i",
+        "matra_ii",
+        "matra_u",
+        "matra_uu",
+        "matra_e",
+        "matra_ai",
+        "matra_o",
+        "matra_au",
+        "matra_ri",
+        "nasals",
+        "visarga",
+        "halants",
+        "vowel_initial",
+        "ends_matra",
+        "ends_nasal_visarga",
+        "len_roman",
+        "morph_effective_log_freq",
+    ]
 }
 
 #[cfg(test)]

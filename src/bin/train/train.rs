@@ -11,16 +11,12 @@ use akshar_ime::core::reranker::{
     extract_dense_features, extract_sparse_features_lang, rank_candidates, FreqRanks,
     LexiconCounts, VocabCounts, WordCounts, DENSE_DIM, HASH_SIZE,
 };
-use akshar_ime::core::reranker_weights::{MEAN_DENSE, STD_DENSE, W_DENSE};
 
 /// Online mean/variance accumulator for the reranker's dense features.
 ///
-/// `W_DENSE` was fitted on standardised features, so the standardisation must
-/// describe the distribution the model being trained actually produces.  The
-/// compiled-in `MEAN_DENSE`/`STD_DENSE` describe whichever model produced them,
-/// and no training stage ever refreshed them: retraining the EM/LM moves the
-/// `emit`/`lm` features out from under weights fitted on the old scale.  These
-/// statistics are written into the v5 container instead.
+/// The dense weights are fitted on standardised features, so the standardisation
+/// must describe the distribution the model being trained actually produces.
+/// These statistics are measured here and written into the container.
 #[derive(Clone)]
 struct DenseStats {
     n: u64,
@@ -51,7 +47,7 @@ impl DenseStats {
     /// (mean, std), with a floor so a constant feature cannot divide by zero.
     fn finish(&self) -> (Vec<f64>, Vec<f64>) {
         if self.n < 2 {
-            return (MEAN_DENSE.to_vec(), STD_DENSE.to_vec());
+            return (vec![0.0; DENSE_DIM], vec![1.0; DENSE_DIM]);
         }
         let n = self.n as f64;
         let std = self
@@ -815,7 +811,7 @@ fn main() -> Result<()> {
         }
     }
     let mut weights = Weights {
-        dense: W_DENSE.to_vec(),
+        dense: vec![0.0; DENSE_DIM],
         dense_g2: vec![1.0; DENSE_DIM],
         lang: vec![vec![0.0; DENSE_DIM]; langs.len()],
         lang_g2: vec![vec![1.0; DENSE_DIM]; langs.len()],
