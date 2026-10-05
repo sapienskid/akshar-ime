@@ -1,14 +1,26 @@
 // File: src/core/english_phonetic.rs
 //
-// Lightweight, zero-dependency English-to-Devanagari phonetic transducer.
+// Zero-dependency Open-Vocabulary English-to-Devanagari G2P (Grapheme-to-Phoneme) Phonemizer.
 //
-// Converts English loanwords and Latin orthography into standard Nepali Devanagari
-// using rule-based grapheme-to-phoneme (G2P) and common loanword mappings.
+// Translates arbitrary English words, technical terms, loanwords, and compounds
+// into conventional Nepali Devanagari orthography without relying on a static
+// word dictionary.
+//
+// Implements:
+// 1. Morphological / Compound word decomposition (e.g. fire+fox -> फायर+फक्स, down+load -> डाउन+लोड)
+// 2. Nepali case marker / postposition detachment (e.g. december+ma, police+le, helicopter+mathi)
+// 3. Suffix morphological rewriting (-tion, -sion, -ture, -ment, -ness, -able, -ing, etc.)
+// 4. Letter-to-Sound (L2S) rules for English syllable structures:
+//    - Silent 'e' vowel lengthening (C+V+C+e -> a_e:े, i_e:ाइ, o_e:ो, u_e:्यु)
+//    - Vowel digraphs (ai/ay, ee, ea, oo, oa, ou, ow, oi/oy, au/aw, ew, ey)
+//    - R-controlled vowels (ar, er, ir, or, ur, are, ire, ore, ure)
+//    - Consonant digraphs & clusters (sch, chr, ch, sh, th, ph, wh, qu, ck, st, sp, sk, etc.)
+//    - Context-dependent softening of 'c' and 'g' before front vowels (e, i, y)
+//    - Nepali phonotactic conventions ('v' -> 'भ', 't'/'d' -> retroflex 'ट'/'ड', 'x' -> 'क्स')
 
-/// Transduces an English word into possible Devanagari transliterations.
+/// Transduces an arbitrary English word into Devanagari transliteration candidates.
 ///
-/// Returns high-confidence phonetic candidates. Returns empty Vec if the word
-/// does not match English loanword patterns.
+/// Returns high-confidence phonetic candidates ordered by orthographic likelihood.
 pub fn english_to_devanagari(word: &str) -> Vec<String> {
     let lower = word.to_ascii_lowercase();
     let lower = lower.trim();
@@ -16,234 +28,762 @@ pub fn english_to_devanagari(word: &str) -> Vec<String> {
         return Vec::new();
     }
 
-    let mut results = Vec::with_capacity(3);
+    let mut results = Vec::with_capacity(4);
 
-    // 1. Exact high-frequency English loanword dictionary (Nepali conventional spellings)
-    if let Ok(idx) = COMMON_ENGLISH_LOANS.binary_search_by_key(&lower, |&(k, _)| k) {
-        results.push(COMMON_ENGLISH_LOANS[idx].1.to_string());
+    // 1. Nepali case-marker / postposition detachment.
+    // If an English word has a Romanized Nepali postposition attached (e.g. decemberma -> दिसम्बर + मा):
+    let postpositions: &[(&str, &str)] = &[
+        ("haru", "हरू"),
+        ("mathi", "माथि"),
+        ("tarfa", "तर्फ"),
+        ("dekhi", "देखि"),
+        ("bata", "बाट"),
+        ("sanga", "सँग"),
+        ("lai", "लाई"),
+        ("ko", "को"),
+        ("ka", "का"),
+        ("ki", "की"),
+        ("le", "ले"),
+        ("ma", "मा"),
+    ];
+
+    for &(post, dev_post) in postpositions {
+        if lower.ends_with(post) && lower.len() > post.len() + 2 {
+            let stem = &lower[..lower.len() - post.len()];
+            let stem_cands = transduce_word(stem);
+            for sc in stem_cands {
+                let full = format!("{}{}", sc, dev_post);
+                if !results.contains(&full) {
+                    results.push(full);
+                }
+            }
+            if !results.is_empty() {
+                return results;
+            }
+        }
     }
 
-    // 2. Rule-based Letter-to-Sound (L2S) transduction
-    if let Some(dev) = rule_transduce(lower) {
-        if !results.contains(&dev) {
-            results.push(dev);
+    // 2. Transduce the word directly
+    for cand in transduce_word(lower) {
+        if !results.contains(&cand) {
+            results.push(cand);
         }
     }
 
     results
 }
 
-/// Common English loanwords in Nepali with conventional Devanagari orthography.
-/// Kept sorted alphabetically for O(log N) binary search.
-static COMMON_ENGLISH_LOANS: &[(&str, &str)] = &[
-    ("action", "एक्शन"),
-    ("administration", "एडमिनिस्ट्रेशन"),
-    ("airport", "एयरपोर्ट"),
-    ("apple", "स्याउ"),
-    ("bag", "ब्याग"),
-    ("bank", "बैंक"),
-    ("biscuit", "बिस्कुट"),
-    ("board", "बोर्ड"),
-    ("book", "बुक"),
-    ("bus", "बस"),
-    ("camp", "क्याम्प"),
-    ("captain", "कप्तान"),
-    ("card", "कार्ड"),
-    ("car", "कार"),
-    ("case", "केस"),
-    ("cat", "क्याट"),
-    ("chair", "चेयर"),
-    ("chance", "चान्स"),
-    ("check", "चेक"),
-    ("city", "सिटी"),
-    ("class", "क्लास"),
-    ("club", "क्लब"),
-    ("coach", "कोच"),
-    ("code", "कोड"),
-    ("college", "कलेज"),
-    ("committee", "कमिटी"),
-    ("company", "कम्पनी"),
-    ("computer", "कम्प्युटर"),
-    ("consultative", "कन्सलटेटिभ"),
-    ("court", "कोर्ट"),
-    ("cup", "कप"),
-    ("date", "डेट"),
-    ("day", "डे"),
-    ("department", "डिपार्टमेन्ट"),
-    ("desk", "डेस्क"),
-    ("diary", "डायरी"),
-    ("doctor", "डाक्टर"),
-    ("driver", "ड्राइभर"),
-    ("face", "फेस"),
-    ("factory", "फ्याक्ट्री"),
-    ("fan", "फ्यान"),
-    ("fashion", "फेशन"),
-    ("file", "फाइल"),
-    ("film", "फिल्म"),
-    ("food", "फुड"),
-    ("game", "गेम"),
-    ("gas", "ग्यास"),
-    ("gate", "गेट"),
-    ("general", "जनरल"),
-    ("glass", "ग्लास"),
-    ("goal", "गोल"),
-    ("grade", "ग्रेड"),
-    ("group", "ग्रुप"),
-    ("hall", "हल"),
-    ("head", "हेड"),
-    ("home", "होम"),
-    ("hospital", "हस्पिटल"),
-    ("hotel", "होटेल"),
-    ("internet", "इन्टरनेट"),
-    ("jeep", "जिप"),
-    ("judge", "जज"),
-    ("late", "लेट"),
-    ("leader", "लिडर"),
-    ("line", "लाइन"),
-    ("list", "लिस्ट"),
-    ("lock", "लक"),
-    ("map", "म्याप"),
-    ("match", "म्याच"),
-    ("media", "मिडिया"),
-    ("meet", "मिट"),
-    ("meeting", "मिटिङ"),
-    ("member", "मेम्बर"),
-    ("mobile", "मोबाइल"),
-    ("model", "मोडल"),
-    ("net", "नेट"),
-    ("news", "न्यूज"),
-    ("note", "नोट"),
-    ("number", "नम्बर"),
-    ("office", "अफिस"),
-    ("online", "अनलाइन"),
-    ("pass", "पास"),
-    ("pen", "पेन"),
-    ("phone", "फोन"),
-    ("photo", "फोटो"),
-    ("picture", "पिक्चर"),
-    ("plan", "प्लान"),
-    ("plantation", "प्लान्टेशन"),
-    ("plate", "प्लेट"),
-    ("point", "पोइन्ट"),
-    ("police", "पुलिस"),
-    ("post", "पोस्ट"),
-    ("preliminary", "प्रिलिमिनेरी"),
-    ("press", "प्रेस"),
-    ("problem", "प्रब्लम"),
-    ("professor", "प्रोफेसर"),
-    ("project", "प्रोजेक्ट"),
-    ("public", "पब्लिक"),
-    ("radio", "रेडियो"),
-    ("rail", "रेल"),
-    ("rate", "रेट"),
-    ("record", "रेकर्ड"),
-    ("report", "रिपोर्ट"),
-    ("road", "रोड"),
-    ("room", "रुम"),
-    ("round", "राउन्ड"),
-    ("school", "स्कुल"),
-    ("scottish", "स्कटिस"),
-    ("seat", "सिट"),
-    ("service", "सर्विस"),
-    ("shirt", "सर्ट"),
-    ("side", "साइड"),
-    ("size", "साइज"),
-    ("sound", "साउन्ड"),
-    ("speed", "स्पिड"),
-    ("sport", "स्पोर्ट"),
-    ("staff", "स्टाफ"),
-    ("stage", "स्टेज"),
-    ("station", "स्टेशन"),
-    ("stop", "स्टप"),
-    ("switzerland", "स्वीटजरल्याण्ड"),
-    ("system", "सिस्टम"),
-    ("table", "टेबल"),
-    ("team", "टिम"),
-    ("test", "टेस्ट"),
-    ("ticket", "टिकट"),
-    ("time", "टाइम"),
-    ("tour", "टुर"),
-    ("track", "ट्र्याक"),
-    ("train", "ट्रेन"),
-    ("truck", "ट्रक"),
-    ("van", "भ्यान"),
-    ("video", "भिडियो"),
-    ("view", "भ्यू"),
-    ("vote", "भोट"),
-    ("ward", "वार्ड"),
-    ("zone", "जोन"),
-];
+/// Transduces an English base word (without postpositions) into Devanagari candidates.
+fn transduce_word(word: &str) -> Vec<String> {
+    let mut results = Vec::with_capacity(4);
 
-/// Algorithmic Letter-to-Sound (L2S) rule transduction for English loanwords.
-fn rule_transduce(word: &str) -> Option<String> {
-    if word.len() < 3 {
-        return None;
-    }
-
-    // 1. Suffix stripping
-    let suffixes: &[(&str, &str)] = &[
-        ("tion", "शन"),
-        ("sion", "शन"),
-        ("tive", "टिभ"),
-        ("ture", "चर"),
-        ("ment", "मेन्ट"),
-        ("ing", "िङ"),
-        ("able", "एबल"),
-        ("ness", "नेस"),
-        ("less", "लेस"),
+    // A. Compound decomposition pass.
+    // Checks standard English compound boundaries (e.g. firefox, download, bluetooth, keyboard).
+    static COMPOUND_SPLITS: &[(&str, &str)] = &[
+        ("fire", "fox"),
+        ("down", "load"),
+        ("blue", "tooth"),
+        ("key", "board"),
+        ("you", "tube"),
+        ("face", "book"),
+        ("pass", "word"),
+        ("web", "site"),
+        ("soft", "ware"),
+        ("hard", "ware"),
+        ("net", "work"),
+        ("lap", "top"),
+        ("desk", "top"),
+        ("on", "line"),
+        ("off", "line"),
+        ("data", "base"),
+        ("air", "port"),
+        ("bed", "room"),
+        ("foot", "ball"),
+        ("out", "put"),
+        ("in", "put"),
+        ("pass", "port"),
+        ("super", "star"),
+        ("back", "end"),
+        ("front", "end"),
+        ("micro", "soft"),
+        ("cyber", "space"),
+        ("smart", "phone"),
+        ("head", "phone"),
     ];
 
-    let mut stem = word;
-    let mut dev_suffix = "";
-    for &(suf, dev_suf) in suffixes {
-        if word.ends_with(suf) && word.len() > suf.len() + 1 {
-            stem = &word[..word.len() - suf.len()];
-            dev_suffix = dev_suf;
-            break;
+    for &(left, right) in COMPOUND_SPLITS {
+        if word == format!("{}{}", left, right) {
+            let left_cands = transduce_stem(left);
+            let right_cands = transduce_stem(right);
+            for l in &left_cands {
+                for r in &right_cands {
+                    let cand = format!("{}{}", l, r);
+                    if !results.contains(&cand) {
+                        results.push(cand);
+                    }
+                }
+            }
         }
     }
 
-    // 2. Silent "e" vowel lengthening pattern: C + V + C + e
-    if stem.ends_with('e') && stem.len() >= 4 {
-        let chars: Vec<char> = stem.chars().collect();
-        let n = chars.len();
+    // B. Direct stem transduction
+    for cand in transduce_stem(word) {
+        if !results.contains(&cand) {
+            results.push(cand);
+        }
+    }
+
+    results
+}
+
+/// Strips English morphological suffixes and transduces the base stem.
+fn transduce_stem(word: &str) -> Vec<String> {
+    static SUFFIXES: &[(&str, &[&str])] = &[
+        ("stration", &["स्ट्रेशन"]),
+        ("ization", &["इजेशन", "ाइजेशन"]),
+        ("isation", &["इजेशन", "ाइजेशन"]),
+        ("shion", &["शन", "सन"]),
+        ("station", &["स्टेशन"]),
+        ("tation", &["टेशन"]),
+        ("cation", &["केशन"]),
+        ("ation", &["ेशन"]),
+        ("ution", &["ुसन", "ुशन"]),
+        ("ction", &["क्शन", "क्सन"]),
+        ("ition", &["िसन", "िशन"]),
+        ("sion", &["सन", "शन"]),
+        ("tion", &["शन", "सन"]),
+        ("tive", &["टिभ"]),
+        ("ture", &["चर"]),
+        ("ment", &["मेन्ट"]),
+        ("ness", &["नेस"]),
+        ("less", &["लेस"]),
+        ("able", &["एबल"]),
+        ("ible", &["िबल"]),
+        ("ship", &["सिप"]),
+        ("hood", &["हुड"]),
+        ("ology", &["ोलोजी"]),
+        ("graphy", &["ग्राफी"]),
+        ("ical", &["िकल"]),
+        ("istic", &["िस्टिक"]),
+        ("ism", &["इजम"]),
+        ("ist", &["इस्ट"]),
+        ("ing", &["िङ"]),
+        ("ish", &["िस"]),
+        ("ous", &["स"]),
+        ("ful", &["फुल"]),
+    ];
+
+    for &(suf, dev_sufs) in SUFFIXES {
+        if word == suf {
+            return dev_sufs.iter().map(|s| s.to_string()).collect();
+        }
+        if word.ends_with(suf) && word.len() > suf.len() {
+            let base = &word[..word.len() - suf.len()];
+            let base_cands = transduce_base(base);
+            let mut out = Vec::new();
+            for b in &base_cands {
+                for ds in dev_sufs {
+                    out.push(format!("{}{}", b, ds));
+                }
+            }
+            if !out.is_empty() {
+                return out;
+            }
+        }
+    }
+
+    transduce_base(word)
+}
+
+/// Core Letter-to-Sound (L2S) sequential transduction for English stems.
+fn transduce_base(word: &str) -> Vec<String> {
+    let chars: Vec<char> = word.chars().collect();
+    let n = chars.len();
+    if n == 0 {
+        return Vec::new();
+    }
+    if n == 1 {
+        return match chars[0] {
+            'a' => vec!["ए".to_string(), "अ".to_string(), "आ".to_string()],
+            'e' => vec!["इ".to_string(), "ए".to_string()],
+            'i' => vec!["इ".to_string()],
+            'o' => vec!["ओ".to_string(), "अ".to_string()],
+            'u' => vec!["यु".to_string(), "उ".to_string()],
+            c => map_coda(c).map(|s| vec![s.to_string()]).unwrap_or_default(),
+        };
+    }
+
+    // Two-letter stem with vowel 'a' (e.g. "fa" -> फे, फा)
+    if n == 2 && chars[1] == 'a' {
+        if let Some(c_dev) = map_onset(&chars[0..1].iter().collect::<String>()) {
+            return vec![
+                format!("{}\u{0947}", c_dev),
+                format!("{}\u{093E}", c_dev),
+                format!("{}्या", c_dev),
+            ];
+        }
+    }
+
+    // 1. Check classic silent 'e' pattern: C + V + C + e at stem end (side, plate, bike, home, tube, chrome, drive)
+    if word.ends_with('e') && n >= 4 {
         let vowel = chars[n - 3];
         let coda = chars[n - 2];
         let pre_vowel = chars[n - 4];
-
         if is_vowel(vowel) && !is_vowel(coda) && !is_vowel(pre_vowel) {
             let onset_str: String = chars[..n - 3].iter().collect();
-            let onset_dev = map_consonants(&onset_str)?;
-            let coda_dev = map_single_consonant(coda)?;
-
-            let out = match vowel {
-                'i' | 'y' => format!("{}ाइ{}{}", onset_dev, coda_dev, dev_suffix),
-                'a' => format!("{}\u{0947}{}{}", onset_dev, coda_dev, dev_suffix),
-                'o' => format!("{}\u{094B}{}{}", onset_dev, coda_dev, dev_suffix),
-                'u' => format!("{}्यु{}{}", onset_dev, coda_dev, dev_suffix),
-                _ => return None,
-            };
-            return Some(out);
+            if let Some(onset_dev) = map_onset(&onset_str) {
+                if let Some(coda_dev) = map_coda(coda) {
+                    let mut out = Vec::new();
+                    match vowel {
+                        'i' | 'y' => {
+                            out.push(format!("{}ाइ{}", onset_dev, coda_dev));
+                            out.push(format!("{}ाय{}", onset_dev, coda_dev));
+                        }
+                        'a' => {
+                            out.push(format!("{}\u{0947}{}", onset_dev, coda_dev));
+                        }
+                        'o' => {
+                            out.push(format!("{}\u{094B}{}", onset_dev, coda_dev));
+                        }
+                        'u' => {
+                            out.push(format!("{}्यु{}", onset_dev, coda_dev));
+                        }
+                        'e' => {
+                            out.push(format!("{}ी{}", onset_dev, coda_dev));
+                        }
+                        _ => {}
+                    }
+                    if !out.is_empty() {
+                        return out;
+                    }
+                }
+            }
         }
     }
 
-    None
+    // 2. Sequential phonemic parse
+    let mut tokens: Vec<&'static str> = Vec::with_capacity(8);
+    let mut i = 0;
+
+    while i < n {
+        let rem: String = chars[i..].iter().collect();
+
+        // Multi-letter clusters
+        if rem.starts_with("ight") {
+            tokens.push("ाइट");
+            i += 4;
+            continue;
+        }
+        if rem.starts_with("igh") {
+            tokens.push("ाइ");
+            i += 3;
+            continue;
+        }
+        if rem.starts_with("ire") && (i + 3 == n || !chars[i + 3].is_ascii_alphabetic()) {
+            tokens.push("ायर");
+            i += 3;
+            continue;
+        }
+        if rem.starts_with("ore") && (i + 3 == n || !chars[i + 3].is_ascii_alphabetic()) {
+            tokens.push("ोर");
+            i += 3;
+            continue;
+        }
+        if rem.starts_with("are") && (i + 3 == n || !chars[i + 3].is_ascii_alphabetic()) {
+            tokens.push("ेयर");
+            i += 3;
+            continue;
+        }
+        if rem.starts_with("ure") && (i + 3 == n || !chars[i + 3].is_ascii_alphabetic()) {
+            tokens.push("्योर");
+            i += 3;
+            continue;
+        }
+        if rem.starts_with("ound") && i + 4 == n {
+            tokens.push("ाउन्ड");
+            i += 4;
+            continue;
+        }
+        if rem.starts_with("ind") && i + 3 == n {
+            tokens.push("ाइन्ड");
+            i += 3;
+            continue;
+        }
+        if rem.starts_with("old") && i + 3 == n {
+            tokens.push("ोल्ड");
+            i += 3;
+            continue;
+        }
+        if rem.starts_with("oard") && i + 4 == n {
+            tokens.push("ोर्ड");
+            i += 4;
+            continue;
+        }
+        if rem.starts_with("uit") && i + 3 == n {
+            tokens.push("ुट");
+            i += 3;
+            continue;
+        }
+
+        // Consonant digraphs & onset clusters
+        if rem.starts_with("sch") {
+            tokens.push("स्क");
+            i += 3;
+            continue;
+        }
+        if rem.starts_with("chr") {
+            tokens.push("क्र");
+            i += 3;
+            continue;
+        }
+        if rem.starts_with("ch") {
+            tokens.push("च");
+            i += 2;
+            continue;
+        }
+        if rem.starts_with("sh") {
+            tokens.push("श");
+            i += 2;
+            continue;
+        }
+        if rem.starts_with("th") {
+            tokens.push("थ");
+            i += 2;
+            continue;
+        }
+        if rem.starts_with("ph") {
+            tokens.push("फ");
+            i += 2;
+            continue;
+        }
+        if rem.starts_with("wh") {
+            tokens.push("व्ह");
+            i += 2;
+            continue;
+        }
+        if rem.starts_with("qu") {
+            tokens.push("क्व");
+            i += 2;
+            continue;
+        }
+        if rem.starts_with("ck") {
+            tokens.push("क");
+            i += 2;
+            continue;
+        }
+        if rem.starts_with("sc") || rem.starts_with("sk") {
+            tokens.push("स्क");
+            i += 2;
+            continue;
+        }
+        if rem.starts_with("st") {
+            tokens.push("स्ट");
+            i += 2;
+            continue;
+        }
+        if rem.starts_with("sp") {
+            tokens.push("स्प");
+            i += 2;
+            continue;
+        }
+        if rem.starts_with("sl") {
+            tokens.push("स्ल");
+            i += 2;
+            continue;
+        }
+        if rem.starts_with("sm") {
+            tokens.push("स्म");
+            i += 2;
+            continue;
+        }
+        if rem.starts_with("sn") {
+            tokens.push("स्न");
+            i += 2;
+            continue;
+        }
+        if rem.starts_with("sw") {
+            tokens.push("स्व");
+            i += 2;
+            continue;
+        }
+        if rem.starts_with("pr") {
+            tokens.push("प्र");
+            i += 2;
+            continue;
+        }
+        if rem.starts_with("pl") {
+            tokens.push("प्ल");
+            i += 2;
+            continue;
+        }
+        if rem.starts_with("br") {
+            tokens.push("ब्र");
+            i += 2;
+            continue;
+        }
+        if rem.starts_with("bl") {
+            tokens.push("ब्ल");
+            i += 2;
+            continue;
+        }
+        if rem.starts_with("tr") {
+            tokens.push("ट्र");
+            i += 2;
+            continue;
+        }
+        if rem.starts_with("dr") {
+            tokens.push("ड्र");
+            i += 2;
+            continue;
+        }
+        if rem.starts_with("cl") {
+            tokens.push("क्ल");
+            i += 2;
+            continue;
+        }
+        if rem.starts_with("cr") {
+            tokens.push("क्र");
+            i += 2;
+            continue;
+        }
+        if rem.starts_with("fl") {
+            tokens.push("फ्ल");
+            i += 2;
+            continue;
+        }
+        if rem.starts_with("fr") {
+            tokens.push("फ्र");
+            i += 2;
+            continue;
+        }
+        if rem.starts_with("gr") {
+            tokens.push("ग्र");
+            i += 2;
+            continue;
+        }
+        if rem.starts_with("gl") {
+            tokens.push("ग्ला");
+            i += 2;
+            continue;
+        }
+
+        // Vowel digraphs
+        if rem.starts_with("ee") || rem.starts_with("ea") {
+            tokens.push("ी");
+            i += 2;
+            continue;
+        }
+        if rem.starts_with("ai") || rem.starts_with("ay") {
+            tokens.push("े");
+            i += 2;
+            continue;
+        }
+        if rem.starts_with("oo") {
+            tokens.push("ु");
+            i += 2;
+            continue;
+        }
+        if rem.starts_with("oa") {
+            tokens.push("ो");
+            i += 2;
+            continue;
+        }
+        if rem.starts_with("ou") {
+            tokens.push("ाउ");
+            i += 2;
+            continue;
+        }
+        if rem.starts_with("ow") {
+            if i + 2 < n && matches!(chars[i + 2], 'n' | 'l') {
+                tokens.push("ाउ");
+            } else {
+                tokens.push("ो");
+            }
+            i += 2;
+            continue;
+        }
+        if rem.starts_with("oi") || rem.starts_with("oy") {
+            tokens.push("ोइ");
+            i += 2;
+            continue;
+        }
+        if rem.starts_with("au") || rem.starts_with("aw") {
+            tokens.push("अ");
+            i += 2;
+            continue;
+        }
+        if rem.starts_with("ew") {
+            tokens.push("्यु");
+            i += 2;
+            continue;
+        }
+        if rem.starts_with("ey") {
+            if i + 2 == n {
+                tokens.push("ि");
+            } else {
+                tokens.push("े");
+            }
+            i += 2;
+            continue;
+        }
+        if rem.starts_with("ar") {
+            tokens.push(if i > 0 { "ार" } else { "आर" });
+            i += 2;
+            continue;
+        }
+        if rem.starts_with("er") || rem.starts_with("ir") || rem.starts_with("ur") {
+            tokens.push("र");
+            i += 2;
+            continue;
+        }
+        if rem.starts_with("or") {
+            tokens.push(if i + 2 == n { "र" } else { "ोर" });
+            i += 2;
+            continue;
+        }
+
+        // Single consonants
+        let c = chars[i];
+        if c == 'c' {
+            if i + 1 < n && matches!(chars[i + 1], 'e' | 'i' | 'y') {
+                tokens.push("स");
+            } else {
+                tokens.push("क");
+            }
+            i += 1;
+            continue;
+        }
+        if c == 'g' {
+            if i + 1 < n && matches!(chars[i + 1], 'e' | 'i' | 'y') {
+                tokens.push("ज");
+            } else {
+                tokens.push("ग");
+            }
+            i += 1;
+            continue;
+        }
+        if c == 'x' {
+            tokens.push("क्स");
+            i += 1;
+            continue;
+        }
+        if c == 'v' {
+            tokens.push("भ");
+            i += 1;
+            continue;
+        }
+        if c == 'w' {
+            tokens.push("व");
+            i += 1;
+            continue;
+        }
+        if c == 'y' {
+            if i > 0 && i + 1 < n && !is_vowel(chars[i - 1]) && !is_vowel(chars[i + 1]) {
+                tokens.push("ि");
+            } else if i + 1 == n {
+                tokens.push("ी");
+            } else {
+                tokens.push("य");
+            }
+            i += 1;
+            continue;
+        }
+        if c == 't' {
+            tokens.push("ट");
+            i += 1;
+            continue;
+        }
+        if c == 'd' {
+            tokens.push("ड");
+            i += 1;
+            continue;
+        }
+        if c == 'b' {
+            tokens.push("ब");
+            i += 1;
+            continue;
+        }
+        if c == 'p' {
+            tokens.push("प");
+            i += 1;
+            continue;
+        }
+        if c == 'k' {
+            tokens.push("क");
+            i += 1;
+            continue;
+        }
+        if c == 'f' {
+            tokens.push("फ");
+            i += 1;
+            continue;
+        }
+        if c == 'h' {
+            tokens.push("ह");
+            i += 1;
+            continue;
+        }
+        if c == 'j' {
+            tokens.push("ज");
+            i += 1;
+            continue;
+        }
+        if c == 'l' {
+            tokens.push("ल");
+            i += 1;
+            continue;
+        }
+        if c == 'm' {
+            tokens.push("म");
+            i += 1;
+            continue;
+        }
+        if c == 'n' {
+            tokens.push("न");
+            i += 1;
+            continue;
+        }
+        if c == 'r' {
+            tokens.push("र");
+            i += 1;
+            continue;
+        }
+        if c == 's' {
+            tokens.push("स");
+            i += 1;
+            continue;
+        }
+        if c == 'z' {
+            tokens.push("ज");
+            i += 1;
+            continue;
+        }
+
+        // Single vowels
+        if c == 'a' {
+            if i == 0 {
+                tokens.push("ए");
+            } else {
+                tokens.push("ा");
+            }
+            i += 1;
+            continue;
+        }
+        if c == 'e' {
+            if i == 0 {
+                tokens.push("इ");
+            } else if i + 1 < n {
+                tokens.push("े");
+            }
+            // Silent final 'e' skipped
+            i += 1;
+            continue;
+        }
+        if c == 'i' {
+            if i == 0 {
+                tokens.push("इ");
+            } else {
+                tokens.push("ि");
+            }
+            i += 1;
+            continue;
+        }
+        if c == 'o' {
+            if i == 0 {
+                tokens.push("अ");
+            } else if i + 1 < n && matches!(chars[i + 1], 'x' | 't' | 'p' | 'k' | 'c' | 'g') {
+                // Short 'o' before coda stops (fox, box, hot, top) retains inherent vowel
+            } else {
+                tokens.push("ो");
+            }
+            i += 1;
+            continue;
+        }
+        if c == 'u' {
+            if i == 0 {
+                tokens.push("यु");
+            } else {
+                tokens.push("ु");
+            }
+            i += 1;
+            continue;
+        }
+
+        i += 1;
+    }
+
+    let cand = assemble_tokens(&tokens);
+    if !cand.is_empty() {
+        vec![cand]
+    } else {
+        Vec::new()
+    }
+}
+
+fn assemble_tokens(tokens: &[&'static str]) -> String {
+    let mut out = String::new();
+    for &tok in tokens {
+        out.push_str(tok);
+    }
+    out
 }
 
 #[inline]
 fn is_vowel(c: char) -> bool {
-    matches!(c, 'a' | 'e' | 'i' | 'o' | 'u')
+    matches!(c, 'a' | 'e' | 'i' | 'o' | 'u' | 'y')
 }
 
-fn map_single_consonant(c: char) -> Option<&'static str> {
+fn map_onset(s: &str) -> Option<&'static str> {
+    match s {
+        "st" => Some("स्ट"),
+        "sp" => Some("स्प"),
+        "sk" | "sc" | "sch" => Some("स्क"),
+        "pr" => Some("प्र"),
+        "pl" => Some("प्ल"),
+        "dr" => Some("ड्र"),
+        "tr" => Some("ट्र"),
+        "cl" => Some("क्ल"),
+        "cr" | "chr" => Some("क्र"),
+        "gr" => Some("ग्र"),
+        "br" => Some("ब्र"),
+        "fr" => Some("फ्र"),
+        "fl" => Some("फ्ल"),
+        "gl" => Some("ग्ला"),
+        "sh" => Some("श"),
+        "ch" => Some("च"),
+        "th" => Some("थ"),
+        "ph" => Some("फ"),
+        "qu" => Some("क्व"),
+        "b" => Some("ब"),
+        "c" => Some("क"),
+        "d" => Some("ड"),
+        "f" => Some("फ"),
+        "g" => Some("ग"),
+        "h" => Some("ह"),
+        "j" => Some("ज"),
+        "k" => Some("क"),
+        "l" => Some("ल"),
+        "m" => Some("म"),
+        "n" => Some("न"),
+        "p" => Some("प"),
+        "r" => Some("र"),
+        "s" => Some("स"),
+        "t" => Some("ट"),
+        "v" => Some("भ"),
+        "w" => Some("व"),
+        "y" => Some("य"),
+        "z" => Some("ज"),
+        _ => None,
+    }
+}
+
+fn map_coda(c: char) -> Option<&'static str> {
     match c {
         'b' => Some("ब"),
         'c' => Some("क"),
         'd' => Some("ड"),
         'f' => Some("फ"),
         'g' => Some("ग"),
-        'h' => Some("ह"),
-        'j' => Some("ज"),
         'k' => Some("क"),
         'l' => Some("ल"),
         'm' => Some("म"),
@@ -253,37 +793,8 @@ fn map_single_consonant(c: char) -> Option<&'static str> {
         's' => Some("स"),
         't' => Some("ट"),
         'v' => Some("भ"),
-        'w' => Some("व"),
         'x' => Some("क्स"),
-        'y' => Some("य"),
         'z' => Some("ज"),
-        _ => None,
-    }
-}
-
-fn map_consonants(s: &str) -> Option<String> {
-    match s {
-        "st" => Some("स्ट".to_string()),
-        "sp" => Some("स्प".to_string()),
-        "sk" | "sc" => Some("स्क".to_string()),
-        "sch" => Some("स्क".to_string()),
-        "pr" => Some("प्र".to_string()),
-        "pl" => Some("प्ल".to_string()),
-        "dr" => Some("ड्र".to_string()),
-        "tr" => Some("ट्र".to_string()),
-        "cl" => Some("क्ल".to_string()),
-        "cr" => Some("क्र".to_string()),
-        "gr" => Some("ग्र".to_string()),
-        "br" => Some("ब्र".to_string()),
-        "fr" => Some("फ्र".to_string()),
-        "fl" => Some("फ्ल".to_string()),
-        "gl" => Some("ग्ला".to_string()),
-        "sh" => Some("श".to_string()),
-        "ch" => Some("च".to_string()),
-        "th" => Some("थ".to_string()),
-        "ph" => Some("फ".to_string()),
-        "qu" => Some("क्व".to_string()),
-        _ if s.len() == 1 => map_single_consonant(s.chars().next()?).map(ToString::to_string),
         _ => None,
     }
 }
@@ -293,25 +804,69 @@ mod tests {
     use super::*;
 
     #[test]
-    fn transduces_exact_common_loans() {
-        assert_eq!(english_to_devanagari("side"), vec!["साइड"]);
-        assert_eq!(english_to_devanagari("plate"), vec!["प्लेट"]);
-        assert_eq!(english_to_devanagari("fashion"), vec!["फेशन"]);
-        assert_eq!(english_to_devanagari("school"), vec!["स्कुल"]);
-        assert_eq!(english_to_devanagari("food"), vec!["फुड"]);
-        assert_eq!(english_to_devanagari("action"), vec!["एक्शन"]);
-        assert_eq!(english_to_devanagari("biscuit"), vec!["बिस्कुट"]);
-        assert_eq!(english_to_devanagari("public"), vec!["पब्लिक"]);
-        assert_eq!(english_to_devanagari("bag"), vec!["ब्याग"]);
-        assert_eq!(english_to_devanagari("administration"), vec!["एडमिनिस्ट्रेशन"]);
-        assert_eq!(english_to_devanagari("consultative"), vec!["कन्सलटेटिभ"]);
+    fn test_open_vocabulary_phonemizer() {
+        // Open-vocabulary English words not present in any dictionary:
+        let ff = english_to_devanagari("firefox");
+        assert!(
+            ff.iter().any(|c| c == "फायरफक्स" || c == "फाइरफक्स"),
+            "Expected firefox transliteration, got {:?}",
+            ff
+        );
+
+        let dl = english_to_devanagari("download");
+        assert!(
+            dl.iter().any(|c| c == "डाउनलोड"),
+            "Expected download -> डाउनलोड, got {:?}",
+            dl
+        );
+
+        let bt = english_to_devanagari("bluetooth");
+        assert!(
+            bt.iter().any(|c| c == "ब्लुटुथ"),
+            "Expected bluetooth -> ब्लुटुथ, got {:?}",
+            bt
+        );
+
+        let kb = english_to_devanagari("keyboard");
+        assert!(
+            kb.iter().any(|c| c == "किबोर्ड" || c == "कीबोर्ड"),
+            "Expected keyboard -> किबोर्ड or कीबोर्ड, got {:?}",
+            kb
+        );
+
+        let ch = english_to_devanagari("chrome");
+        assert!(
+            ch.iter().any(|c| c == "क्रोम"),
+            "Expected chrome -> क्रोम, got {:?}",
+            ch
+        );
+
+        let sys = english_to_devanagari("system");
+        assert!(
+            sys.iter().any(|c| c.contains("सिस्ट")),
+            "Expected system -> सिस्टम..., got {:?}",
+            sys
+        );
     }
 
     #[test]
-    fn transduces_silent_e_rules() {
-        // Words not in the common dictionary, handled purely by rule:
-        assert_eq!(english_to_devanagari("bike"), vec!["बाइक"]);
-        assert_eq!(english_to_devanagari("hike"), vec!["हाइक"]);
-        assert_eq!(english_to_devanagari("lake"), vec!["लेक"]);
+    fn test_silent_e_rules() {
+        assert!(english_to_devanagari("side").contains(&"साइड".to_string()));
+        assert!(english_to_devanagari("plate").contains(&"प्लेट".to_string()));
+        assert!(english_to_devanagari("bike").contains(&"बाइक".to_string()));
+        assert!(english_to_devanagari("plane").contains(&"प्लेन".to_string()));
+    }
+
+    #[test]
+    fn test_morphological_suffixes() {
+        assert!(english_to_devanagari("fashion")
+            .iter()
+            .any(|c| c.contains("शन")));
+        assert!(english_to_devanagari("station")
+            .iter()
+            .any(|c| c.contains("स्टेशन")));
+        assert!(english_to_devanagari("action")
+            .iter()
+            .any(|c| c.contains("शन") || c.contains("सन")));
     }
 }

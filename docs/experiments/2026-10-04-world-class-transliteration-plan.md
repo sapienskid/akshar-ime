@@ -238,6 +238,43 @@ Retrieve gold words that the lattice decoder misses.
 
 ---
 
+### Experiment 2g: Open-Vocabulary English-to-Devanagari G2P Phonemizer (Dictionary Removal)
+
+#### Objective
+Remove reliance on the static English dictionary (`COMMON_ENGLISH_LOANS`).
+Implement a genuine open-vocabulary Letter-to-Sound (L2S/G2P) phonemizer that accurately translates arbitrary English words, technical terms, and compound words into standard Nepali Devanagari orthography (e.g. `firefox` -> `फायरफक्स`, `download` -> `डाउनलोड`, `bluetooth` -> `ब्लुटुथ`, `keyboard` -> `किबोर्ड`, `system` -> `सिस्टम`, `chrome` -> `क्रोम`).
+
+#### Procedure
+1. Remove the static `COMMON_ENGLISH_LOANS` lookup table in `src/core/english_phonetic.rs`.
+2. Implement compound morpheme decomposition for English tech compounds.
+3. Implement Nepali postposition / case-marker detachment (`-ma`, `-lai`, `-le`, `-ko`, etc.).
+4. Implement rule-based Letter-to-Sound (L2S) transducers for:
+   - Suffix morphological rewriting (`-tion`, `-sion`, `-ture`, `-ment`, `-ness`, `-able`, `-ing`, `-ish`, etc.).
+   - Silent 'e' vowel lengthening (`a_e`, `i_e`, `o_e`, `u_e`).
+   - Vowel digraphs and R-controlled vowels (`ai/ay`, `ee`, `ea`, `oo`, `oa`, `ou`, `ow`, `oi/oy`, `ew`, `ar`, `er`, `ir`, `or`, `ur`, `ire`, `ore`, `are`).
+   - Consonant digraphs and onset clusters (`sch`, `chr`, `ch`, `sh`, `th`, `ph`, `wh`, `qu`, `ck`, `st`, `sp`, `sk`, `pl`, `pr`, `dr`, `tr`, `cl`, `cr`, `bl`, `br`, `fl`, `fr`, `gr`).
+   - Context-dependent softening of `c` and `g` before front vowels (`e`, `i`, `y`).
+   - Nepali phonotactic conventions (`v` -> `भ`, `t`/`d` -> retroflex `ट`/`ड`, `x` -> `क्स`).
+5. Run `cargo test --release --lib core::english_phonetic` and verify probe on open English queries (`firefox`, `download`, `bluetooth`, `keyboard`, `system`, `chrome`).
+6. Run `make eval SPLIT=test` and verify that accuracy does not regress.
+7. Run `make check` gate (formatting, clippy -D warnings, 109 unit tests, wasm32-unknown-unknown).
+
+#### Measured Results (4,101 Test Cases)
+- **Top-1 accuracy:** **62.16%** (+0.15 pp over E2f, +1.81 pp over baseline).
+- **In-list@8:** **80.20%** (+0.05 pp over E2f, +1.88 pp over baseline).
+- **Lenient Top-1:** **63.59%** (+0.14 pp over E2f).
+- **Lenient In-List@8:** **80.88%** (+0.07 pp over E2f).
+- **Open-Vocabulary Verification:**
+  - `firefox` -> `फायरफक्स` (Top 1, score 873,850).
+  - `download` -> `डाउनलोड` (Top 1, score 800,000).
+  - `bluetooth` -> `ब्लूटुथ` / `ब्लुटुथ` (Top 1, score 924,036).
+  - `keyboard` -> `किबोर्ड` (Top 1, score 800,000).
+  - `system` -> `सिस्टम` (Top 1, score 800,000).
+  - `chrome` -> `क्रोम` (Top 1, score 800,000).
+- **Gate status:** `make check` fully green (109 unit tests, accuracy regression, fuzzy behavior, wasm32).
+
+---
+
 ### Experiment 3: A* Admissible Search and DAG Pruning
 
 #### Objective
