@@ -22,7 +22,17 @@ const NORMALIZATION_RULES: &[RewriteRule] = &[
     // Long-vowel alternations.
     RewriteRule {
         from: "ee",
+        to: "i",
+        cost: 1,
+    },
+    RewriteRule {
+        from: "ee",
         to: "ii",
+        cost: 1,
+    },
+    RewriteRule {
+        from: "oo",
+        to: "u",
         cost: 1,
     },
     RewriteRule {

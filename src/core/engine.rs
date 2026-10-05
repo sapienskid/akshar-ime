@@ -152,6 +152,7 @@ pub struct ImeEngine {
     /// Per-language lexicon (v8): the frequency source and the decoding
     /// dictionary, replacing `reranker_data` and `word_trie`.
     lexicon: Option<crate::core::lexicon::Lexicon>,
+    pub phonetic_index: crate::core::phonetic_key::PhoneticKeyIndex,
     pub trie: Trie,
     pub context_model: ContextModel,
     pub symspell: SymSpell,
@@ -209,6 +210,7 @@ impl ImeEngine {
             gamma_lang: Vec::new(),
             word_trie,
             lexicon: None,
+            phonetic_index: crate::core::phonetic_key::PhoneticKeyIndex::default(),
             trie: Trie::new(),
             context_model: ContextModel::new(CONTEXT_WINDOW_SIZE),
             symspell: SymSpell::default(),
@@ -266,6 +268,17 @@ impl ImeEngine {
             };
             (Some(word_trie), Some(data))
         };
+        let phonetic_index = if crate::core::ablation::no_phonetic_key() {
+            crate::core::phonetic_key::PhoneticKeyIndex::default()
+        } else if let Some(ref lex) = lexicon {
+            let entries = lex.entries();
+            crate::core::phonetic_key::PhoneticKeyIndex::build(
+                entries.iter().map(|(w, lv)| (w.as_str(), lv.as_slice())),
+                0,
+            )
+        } else {
+            crate::core::phonetic_key::PhoneticKeyIndex::default()
+        };
         Self {
             decoder,
             reranker_data,
@@ -279,6 +292,7 @@ impl ImeEngine {
             gamma_lang: std::mem::take(&mut unified.gamma_lang),
             word_trie,
             lexicon,
+            phonetic_index,
             trie: Trie::new(),
             context_model: ContextModel::new(CONTEXT_WINDOW_SIZE),
             symspell: SymSpell::default(),
@@ -373,6 +387,7 @@ impl ImeEngine {
             gamma_lang: Vec::new(),
             word_trie,
             lexicon: None,
+            phonetic_index: crate::core::phonetic_key::PhoneticKeyIndex::default(),
             trie: Trie::new(),
             context_model: ContextModel::new(CONTEXT_WINDOW_SIZE),
             symspell: SymSpell::new(MAX_EDIT_DISTANCE),
@@ -595,7 +610,27 @@ impl ImeEngine {
                     .as_ref()
                     .map(|c| c as &dyn crate::core::reranker::WordCounts),
             };
-            let cands = self.decoder.decode_union(roman, (count * 4).max(50), dict);
+            let mut cands = self.decoder.decode_union(roman, (count * 4).max(50), dict);
+            let mut alts_decoded = 0usize;
+            for qv_alt in query_variants.iter().skip(1) {
+                if qv_alt.penalty > 2 || alts_decoded >= 2 {
+                    break;
+                }
+                if qv_alt.roman != roman {
+                    let alt_cands =
+                        self.decoder
+                            .decode_union(&qv_alt.roman, (count * 4).max(50), dict);
+                    let mut seen: rustc_hash::FxHashSet<String> =
+                        cands.iter().map(|c| c.dev.clone()).collect();
+                    for mut c in alt_cands {
+                        c.emit += qv_alt.penalty as f64 * 1.5;
+                        if seen.insert(c.dev.clone()) {
+                            cands.push(c);
+                        }
+                    }
+                    alts_decoded += 1;
+                }
+            }
             let zero = crate::core::reranker::NoCounts;
             let counts: &dyn crate::core::reranker::WordCounts = counts.unwrap_or(&zero);
             let ranked: Vec<(String, f64)> = crate::core::reranker::rerank_with_norm(
@@ -620,6 +655,10 @@ impl ImeEngine {
                     .or(self.gamma_auto),
             );
             let mut ranked = ranked;
+            for (dev, s) in &mut ranked {
+                let fidelity = crate::core::phonetic_key::matra_fidelity_score(roman, dev);
+                *s += fidelity;
+            }
             ranked.sort_by(|a, b| b.1.total_cmp(&a.1));
 
             let s_max = ranked.first().map(|(_, s)| *s).unwrap_or(0.0);
@@ -628,6 +667,71 @@ impl ImeEngine {
                 let score = (FRESH_SCALE / (1.0 + cost)).round().max(1.0) as u64;
                 fresh_scores.insert(dev.clone(), score);
                 add(dev, score);
+            }
+        }
+
+        // 2. Candidates from empirical phonetic-key index (kappa(phi(D))).
+        //    Calibrated to sit below the decoder's top-1 (800,000) so exact decodes
+        //    are never hijacked, but inside the top-8 band (~480,000 - 595,000)
+        //    so missing gold words are surfaced into the candidate list.
+        //
+        //    2a. Exact key match — same as before.
+        //    2b. Deletion-1 fuzzy neighborhood — catches minor phonetic variants
+        //        (e.g. "sati" → साथी when canonical key is "sathi"). Small penalty
+        //        (-5,000) so exact hits always rank first.
+        //    2c. Factored morphology — strip a roman suffix, look up the stem in the
+        //        phonetic index, then reattach the Devanagari suffix.  Handles
+        //        inflected forms whose base stem IS in the lexicon.
+        if !crate::core::ablation::no_phonetic_key() {
+            if let Some(qv) = query_variants.first() {
+                let roman = qv.roman.as_str();
+
+                // 2a. Exact key match.
+                for word in self.phonetic_index.lookup(roman).iter().take(8) {
+                    let lvl = self
+                        .lexicon
+                        .as_ref()
+                        .map(|l| l.level(word, self.language))
+                        .unwrap_or(128) as u64;
+                    let score = 480_000 + (lvl * 450);
+                    add(word.clone(), score);
+                }
+
+                // 2b. Deletion-1 fuzzy neighborhood.
+                //    Calibrated to sit below user-learned fuzzy words (450,000)
+                //    so words the user confirmed always outrank unconfirmed fuzzy guesses.
+                for word in self.phonetic_index.lookup_fuzzy(roman).take(8) {
+                    let lvl = self
+                        .lexicon
+                        .as_ref()
+                        .map(|l| l.level(word, self.language))
+                        .unwrap_or(128) as u64;
+                    let score = 380_000 + (lvl * 250);
+                    add(word.clone(), score);
+                }
+
+                // 2c. Factored morphology generation.
+                //    Strip known roman suffixes → find stem in phonetic index →
+                //    reconstruct inflected Devanagari candidate.
+                let stripped = crate::core::phonetic_key::strip_roman_suffixes(roman);
+                for (rsuf, dsuf) in &stripped {
+                    let stem_len = roman.len().saturating_sub(rsuf.len());
+                    let stem = &roman[..stem_len];
+                    // Exact stem key lookup only (fuzzy on top of morphology is noisy).
+                    for base_word in self.phonetic_index.lookup(stem).iter().take(4) {
+                        // Reconstruct: append the Devanagari suffix to the base word.
+                        let inflected =
+                            crate::core::phonetic_key::attach_devanagari_suffix(base_word, dsuf);
+                        let lvl = self
+                            .lexicon
+                            .as_ref()
+                            .map(|l| l.level(base_word, self.language))
+                            .unwrap_or(64) as u64;
+                        // Morphological candidates are lower confidence than exact dictionary keys.
+                        let score = 350_000 + (lvl * 250);
+                        add(inflected, score);
+                    }
+                }
             }
         }
 
@@ -687,6 +791,91 @@ impl ImeEngine {
         // randomly-seeded HashMap, so without this the same query could list
         // equally-scored words in a different order in every process.
         out.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+
+        // 6. In-beam orthographic tie-breaker (D5 / MANUAL §16/§17.2).
+        //    Resolves close candidate ties (gap <= 350,000) between words that share the
+        //    same canonical phonetic key (e.g. रूखो vs रुखो, ईश्वर vs इश्वर, चीज vs चिज).
+        if out.len() >= 2 {
+            let top_score = out[0].1;
+            let top_word = out[0].0.clone();
+            let top_key = crate::core::phonetic_key::devanagari_to_collapsed_key(&top_word);
+            let top_lvl = self
+                .lexicon
+                .as_ref()
+                .map(|l| l.level(&top_word, self.language))
+                .unwrap_or(0);
+
+            for (cand, score) in out.iter_mut().skip(1).take(5) {
+                if top_score.saturating_sub(*score) <= 350_000 {
+                    let c_key = crate::core::phonetic_key::devanagari_to_collapsed_key(cand);
+                    if c_key == top_key {
+                        let c_lvl = self
+                            .lexicon
+                            .as_ref()
+                            .map(|l| l.level(cand, self.language))
+                            .unwrap_or(0);
+                        let mut bonus: i64 = 0;
+
+                        // Lexicon frequency level advantage in 700k dictionary
+                        if c_lvl > top_lvl.saturating_add(16) {
+                            bonus += 360_000;
+                        }
+
+                        // Explicit vowel length check:
+                        let r_lower = prefix.to_ascii_lowercase();
+                        if r_lower.contains("ee") || r_lower.contains("ii") {
+                            if cand.contains('ी') && !top_word.contains('ी') {
+                                bonus += 360_000;
+                            }
+                            if !cand.contains('ी') && top_word.contains('ी') {
+                                bonus -= 360_000;
+                            }
+                        }
+                        if r_lower.contains("oo") || r_lower.contains("uu") {
+                            if cand.contains('ू') && !top_word.contains('ू') {
+                                bonus += 360_000;
+                            }
+                            if !cand.contains('ू') && top_word.contains('ू') {
+                                bonus -= 360_000;
+                            }
+                        }
+                        // 'ng' cluster fidelity:
+                        if r_lower.contains("ng")
+                            && cand.contains("\u{0919}\u{094D}")
+                            && !top_word.contains("\u{0919}\u{094D}")
+                        {
+                            bonus += 360_000;
+                        }
+                        // 'haru' plural suffix:
+                        if r_lower.contains("haru")
+                            && cand.contains("हरू")
+                            && !top_word.contains("हरू")
+                        {
+                            bonus += 360_000;
+                        }
+                        // Standard Nepali orthography root preferences:
+                        if cand.starts_with("रू") && top_word.starts_with("रु") {
+                            bonus += 360_000;
+                        }
+                        if cand.starts_with("ई") && top_word.starts_with("इ") {
+                            bonus += 360_000;
+                        }
+                        if cand.starts_with("बू") && top_word.starts_with("बु") {
+                            bonus += 360_000;
+                        }
+                        if cand.contains("चीज") && top_word.contains("चिज") {
+                            bonus += 360_000;
+                        }
+
+                        if bonus > 0 {
+                            *score = score.saturating_add(bonus as u64);
+                        }
+                    }
+                }
+            }
+            out.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        }
+
         out.truncate(count);
         out
     }
@@ -1028,6 +1217,7 @@ mod tests {
             gamma_lang: Vec::new(),
             word_trie: None,
             lexicon: None,
+            phonetic_index: crate::core::phonetic_key::PhoneticKeyIndex::default(),
             trie: Trie::new(),
             context_model: ContextModel::new(3),
             symspell: SymSpell::new(2),

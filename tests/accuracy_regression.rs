@@ -130,3 +130,243 @@ fn ak_freq_top1_and_top5_do_not_regress() {
         pairs.len()
     );
 }
+
+#[test]
+#[ignore]
+fn diagnose_unreachable_cases() {
+    let Some(path) = dataset() else { return };
+    let Ok(file) = std::fs::File::open(path) else {
+        return;
+    };
+    let mut pairs = Vec::new();
+    for line in std::io::BufReader::new(file).lines() {
+        let Ok(line) = line else { continue };
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) else {
+            continue;
+        };
+        let roman = v
+            .get("english word")
+            .or_else(|| v.get("roman"))
+            .and_then(|x| x.as_str());
+        let gold = v
+            .get("native word")
+            .or_else(|| v.get("devanagari"))
+            .and_then(|x| x.as_str());
+        if let (Some(r), Some(g)) = (roman, gold) {
+            pairs.push((r.to_string(), g.to_string()));
+        }
+    }
+    if pairs.is_empty() {
+        return;
+    };
+
+    let engine = ImeEngine::new();
+    let total = pairs.len();
+    let mut unreachable = 0usize;
+    let mut oov_count = 0usize;
+    let mut key_exact_count = 0usize;
+    let mut key_dist_1 = 0usize;
+    let mut key_dist_2 = 0usize;
+    let mut key_dist_3plus = 0usize;
+    let mut sample_unreachable = Vec::new();
+
+    for (roman, gold) in &pairs {
+        let suggestions = engine.get_suggestions(roman, 50);
+        let reached = suggestions.iter().any(|(s, _)| s == gold);
+        if !reached {
+            unreachable += 1;
+            // Check if gold in lexicon
+            let in_lex = if let Ok(data) = std::fs::read("data/lexicon.bin") {
+                if let Ok(ld) =
+                    bincode::deserialize::<akshar_ime::core::lexicon::LexiconData>(&data)
+                {
+                    if let Ok(lex) = akshar_ime::core::lexicon::Lexicon::from_data(ld) {
+                        lex.level(gold, None) > 0
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+
+            if !in_lex {
+                oov_count += 1;
+            }
+
+            let r_key = akshar_ime::core::phonetic_key::collapse_key(roman);
+            let g_key = akshar_ime::core::phonetic_key::devanagari_to_collapsed_key(gold);
+            let lev = |a: &str, b: &str| -> usize {
+                let a: Vec<char> = a.chars().collect();
+                let b: Vec<char> = b.chars().collect();
+                let mut prev: Vec<usize> = (0..=b.len()).collect();
+                let mut curr = vec![0; b.len() + 1];
+                for (i, &ca) in a.iter().enumerate() {
+                    curr[0] = i + 1;
+                    for (j, &cb) in b.iter().enumerate() {
+                        let cost = if ca == cb { 0 } else { 1 };
+                        curr[j + 1] = (prev[j + 1] + 1).min(curr[j] + 1).min(prev[j] + cost);
+                    }
+                    prev.copy_from_slice(&curr);
+                }
+                prev[b.len()]
+            };
+            if r_key == g_key {
+                key_exact_count += 1;
+            } else {
+                let dist = lev(&r_key, &g_key);
+                match dist {
+                    1 => key_dist_1 += 1,
+                    2 => key_dist_2 += 1,
+                    _ => key_dist_3plus += 1,
+                }
+            }
+
+            if sample_unreachable.len() < 25 {
+                sample_unreachable.push((roman.clone(), gold.clone(), in_lex, r_key, g_key));
+            }
+        }
+    }
+
+    println!(
+        "\n=== UNREACHABLE DIAGNOSTIC ANALYSIS (Total: {total}, Unreachable: {unreachable}) ==="
+    );
+    println!(
+        "Unreachable rate: {:.2}% ({}/{})",
+        unreachable as f64 / total as f64 * 100.0,
+        unreachable,
+        total
+    );
+    println!(
+        "  - OOV (Gold absent from 700k lexicon): {} ({:.2}%)",
+        oov_count,
+        oov_count as f64 / unreachable as f64 * 100.0
+    );
+    println!(
+        "  - In lexicon, but key exact: {} ({:.2}%)",
+        key_exact_count,
+        key_exact_count as f64 / unreachable as f64 * 100.0
+    );
+    println!(
+        "  - In lexicon, key dist=1: {} ({:.2}%)",
+        key_dist_1,
+        key_dist_1 as f64 / unreachable as f64 * 100.0
+    );
+    println!(
+        "  - In lexicon, key dist=2: {} ({:.2}%)",
+        key_dist_2,
+        key_dist_2 as f64 / unreachable as f64 * 100.0
+    );
+    println!(
+        "  - In lexicon, key dist>=3: {} ({:.2}%)",
+        key_dist_3plus,
+        key_dist_3plus as f64 / unreachable as f64 * 100.0
+    );
+    println!("\nSample unreachable cases:");
+    for (r, g, in_lex, rk, gk) in sample_unreachable {
+        println!(
+            "  roman: {:<20} gold: {:<15} in_lex: {:<5} r_key: {:<15} g_key: {:<15}",
+            r, g, in_lex, rk, gk
+        );
+    }
+}
+
+#[test]
+#[ignore]
+fn diagnose_ranking_errors() {
+    let Some(path) = dataset() else { return };
+    let Ok(file) = std::fs::File::open(path) else {
+        return;
+    };
+    let mut pairs = Vec::new();
+    for line in std::io::BufReader::new(file).lines() {
+        let Ok(line) = line else { continue };
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) else {
+            continue;
+        };
+        let roman = v
+            .get("english word")
+            .or_else(|| v.get("roman"))
+            .and_then(|x| x.as_str());
+        let gold = v
+            .get("native word")
+            .or_else(|| v.get("devanagari"))
+            .and_then(|x| x.as_str());
+        if let (Some(r), Some(g)) = (roman, gold) {
+            pairs.push((r.to_string(), g.to_string()));
+        }
+    }
+    if pairs.is_empty() {
+        return;
+    };
+
+    let engine = ImeEngine::new();
+    let mut ranking_errors = Vec::new();
+
+    for (roman, gold) in &pairs {
+        let suggestions = engine.get_suggestions(roman, 8);
+        if let Some(pos) = suggestions.iter().position(|(s, _)| s == gold) {
+            if pos > 0 {
+                let top1 = &suggestions[0];
+                let gold_cand = &suggestions[pos];
+                ranking_errors.push((
+                    roman.clone(),
+                    gold.clone(),
+                    top1.0.clone(),
+                    top1.1,
+                    gold_cand.1,
+                    pos + 1,
+                ));
+            }
+        }
+    }
+
+    let mut gold_key_exact = 0;
+    let mut top1_key_exact = 0;
+    let mut gold_better_key = 0;
+
+    for (r, g, top1, _, _, _) in &ranking_errors {
+        let r_key = akshar_ime::core::phonetic_key::collapse_key(r);
+        let g_key = akshar_ime::core::phonetic_key::devanagari_to_collapsed_key(g);
+        let t_key = akshar_ime::core::phonetic_key::devanagari_to_collapsed_key(top1);
+        if g_key == r_key {
+            gold_key_exact += 1;
+        }
+        if t_key == r_key {
+            top1_key_exact += 1;
+        }
+        if g_key == r_key && t_key != r_key {
+            gold_better_key += 1;
+        }
+    }
+
+    println!(
+        "\n=== RANKING ERROR ANALYSIS (Total In-List but Not Top-1: {}) ===",
+        ranking_errors.len()
+    );
+    println!(
+        "  Gold has EXACT phonetic key match: {} / {} ({:.2}%)",
+        gold_key_exact,
+        ranking_errors.len(),
+        gold_key_exact as f64 / ranking_errors.len() as f64 * 100.0
+    );
+    println!(
+        "  Top1 has EXACT phonetic key match: {} / {} ({:.2}%)",
+        top1_key_exact,
+        ranking_errors.len(),
+        top1_key_exact as f64 / ranking_errors.len() as f64 * 100.0
+    );
+    println!(
+        "  Gold has EXACT key but Top1 DOES NOT: {} / {} ({:.2}%)",
+        gold_better_key,
+        ranking_errors.len(),
+        gold_better_key as f64 / ranking_errors.len() as f64 * 100.0
+    );
+
+    for (r, g, top1, s_top1, s_gold, rank) in ranking_errors.iter().take(20) {
+        println!("  roman: {:<18} gold: {:<14} rank: {}/8  top1: {:<14} (top1_score: {}, gold_score: {})",
+            r, g, rank, top1, s_top1, s_gold);
+    }
+}

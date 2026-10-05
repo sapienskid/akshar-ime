@@ -117,11 +117,22 @@ fn vowel_length_variants_need_no_learning() {
     // behaviour that does work so the gap cannot widen unnoticed.
     let canonical = tops(&e, "sathi", 10);
     let doubled = tops(&e, "saathi", 10);
-    assert!(!canonical.is_empty() && !doubled.is_empty());
-    let overlap = doubled.iter().filter(|d| canonical.contains(d)).count();
-    assert!(
-        overlap > 0,
-        "no shared candidate between 'sathi' {canonical:?} and 'saathi' {doubled:?}"
+    let ee_variant = tops(&e, "saathee", 10);
+    assert!(!canonical.is_empty() && !doubled.is_empty() && !ee_variant.is_empty());
+    assert_eq!(
+        canonical.first().map(String::as_str),
+        Some("साथी"),
+        "canonical sathi should yield साथी"
+    );
+    assert_eq!(
+        doubled.first().map(String::as_str),
+        Some("साथी"),
+        "saathi should yield साथी"
+    );
+    assert_eq!(
+        ee_variant.first().map(String::as_str),
+        Some("साथी"),
+        "saathee should yield साथी (D25 resolved)"
     );
 }
 
@@ -133,4 +144,41 @@ fn unlearned_typo_falls_through_to_the_decoder() {
     // an empty list — silently returning nothing would be worse than a wrong
     // guess for an IME.
     assert!(!tops(&e, "kthmndu", 5).is_empty());
+}
+
+#[test]
+fn diverse_phonetic_and_vowel_variants_reach_gold() {
+    let Some(e) = engine() else { return };
+    // Diverse test cases covering multiple phonetic phenomena:
+    // 1. ee -> i/ii: geeta, deepak, meet
+    // 2. oo -> u/uu: bhoot, pooja, roop
+    // 3. w/v: widesh / videsh
+    // 4. Common Nepali words: dhanyabad, desh, namaste
+    let cases = [
+        ("geeta", "गीता"),
+        ("deepak", "दीपक"),
+        ("pooja", "पूजा"),
+        ("bhoot", "भूत"),
+        ("widesh", "विदेश"),
+        ("videsh", "विदेश"),
+        ("bikas", "विकास"),
+        ("bikash", "विकास"),
+        ("dhanyabad", "धन्यवाद"),
+        ("namaste", "नमस्ते"),
+        ("desh", "देश"),
+        ("ghar", "घर"),
+        ("nepal", "नेपाल"),
+        ("janata", "जनता"),
+        ("itihas", "इतिहास"),
+        ("gyan", "ज्ञान"),
+        ("vigyan", "विज्ञान"),
+        ("panchayat", "पञ्चायत"),
+    ];
+    for (input, expected) in cases {
+        let suggestions = tops(&e, input, 8);
+        assert!(
+            suggestions.iter().any(|s| s == expected),
+            "Query '{input}' did not produce expected '{expected}' in top 8: got {suggestions:?}"
+        );
+    }
 }

@@ -9,6 +9,7 @@ pub mod engine;
 pub mod holdout;
 pub mod lexicon;
 pub mod normalizer;
+pub mod phonetic_key;
 pub mod reranker;
 pub mod reranker_weights;
 pub mod translit_model;
@@ -73,6 +74,7 @@ pub mod ablation {
     cached_flag!(no_rerank, "AKSHAR_NO_RERANK");
     cached_flag!(no_trigram, "AKSHAR_NO_TRIGRAM");
     cached_flag!(no_variants, "AKSHAR_NO_VARIANTS");
+    cached_flag!(no_phonetic_key, "AKSHAR_NO_PHONETIC_KEY");
     cached_flag!(no_eow, "AKSHAR_NO_EOW");
 
     /// Dense/heuristic blend override; `None` means use the compiled GAMMA.
