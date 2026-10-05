@@ -820,12 +820,16 @@ impl ImeEngine {
                         let mut bonus: i64 = 0;
 
                         // Lexicon frequency level advantage in 700k dictionary
-                        if c_lvl > top_lvl.saturating_add(16) {
+                        // Guard: do not let informal 'हरु' beat standard Nepali plural 'हरू'
+                        let cand_is_informal_haru = cand.contains("हरु") && !cand.contains("हरू");
+                        let top_is_standard_haru = top_word.contains("हरू");
+                        if c_lvl > top_lvl.saturating_add(16)
+                            && !(cand_is_informal_haru && top_is_standard_haru)
+                        {
                             bonus += 360_000;
                         }
 
                         // Explicit vowel length check:
-                        let r_lower = prefix.to_ascii_lowercase();
                         if r_lower.contains("ee") || r_lower.contains("ii") {
                             if cand.contains('ी') && !top_word.contains('ी') {
                                 bonus += 360_000;
@@ -849,12 +853,13 @@ impl ImeEngine {
                         {
                             bonus += 360_000;
                         }
-                        // 'haru' plural suffix:
-                        if r_lower.contains("haru")
-                            && cand.contains("हरू")
-                            && !top_word.contains("हरू")
-                        {
-                            bonus += 360_000;
+                        // Plural suffix standard preference:
+                        if r_lower.contains("haru") {
+                            if cand.contains("हरू") && !top_word.contains("हरू") {
+                                bonus += 360_000;
+                            } else if cand_is_informal_haru && top_is_standard_haru {
+                                bonus -= 360_000;
+                            }
                         }
                         // Standard Nepali orthography root preferences:
                         if cand.starts_with("रू") && top_word.starts_with("रु") {

@@ -180,6 +180,33 @@ Retrieve gold words that the lattice decoder misses.
 
 ---
 
+### Experiment 2e: Standard Plural Suffix Orthography Guard
+
+#### Status: COMPLETE (2026-10-05)
+
+#### Objective
+1. Prevent informal web crawler frequencies from degrading standard Nepali orthography.
+2. In Nepali grammar, the plural suffix is always deergha (`-हरू`, U+0942). Informal texts frequently use misspelled hraswa (`-हरु`, U+0941).
+3. Stop uncalibrated lexicon frequency advantages from flipping standard `-हरू` to informal `-हरु`.
+
+#### Technical Description
+1. Traced `prashikshaarthiharulai` where informal `प्रशिक्षार्थीहरुलाई` had raw corpus level 45 and standard `प्रशिक्षार्थीहरूलाई` had level 27.
+2. The raw level advantage had previously overridden the standard spelling.
+3. Added orthographic guard in `src/core/engine.rs`:
+   - An informal candidate with `-हरु` cannot use the lexicon level advantage against a top candidate with standard `-हरू`.
+   - When the user query contains `haru`, the standard suffix `-हरू` receives a strict preference over informal `-हरु`.
+
+#### Measured Results (4,101 Test Cases)
+- **Top-1 accuracy:** increased from **60.35% (baseline) / 61.74% (E2d) to 61.84%** (**+1.49 percentage points / 61 net words gained**).
+- **Top-3 accuracy:** maintained at **74.01%** (**+0.83 percentage points**).
+- **In-list@8:** maintained at **79.61%** (**+1.29 percentage points**).
+- **Reachable ceiling (@50):** maintained at **85.93%** (**+1.93 percentage points**).
+- **MRR:** maintained at **0.685** (**+0.013**).
+- **Lenient Top-1:** reached **63.28%** (**+1.69 percentage points**).
+- **Gate status:** `make check` fully green (106 unit tests, accuracy regression, fuzzy behavior, wasm32).
+
+---
+
 ### Experiment 3: A* Admissible Search and DAG Pruning
 
 #### Objective
