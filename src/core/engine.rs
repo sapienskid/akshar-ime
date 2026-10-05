@@ -732,6 +732,25 @@ impl ImeEngine {
                         add(inflected, score);
                     }
                 }
+
+                // 2d. English loanword phonemic transduction.
+                //     Converts English orthography into conventional Devanagari spellings
+                //     (e.g. side -> साइड, plate -> प्लेट, fashion -> फेशन, biscuit -> बिस्कुट).
+                for eng_dev in crate::core::english_phonetic::english_to_devanagari(roman) {
+                    let lvl = self
+                        .lexicon
+                        .as_ref()
+                        .map(|l| l.level(&eng_dev, self.language))
+                        .unwrap_or(0) as u64;
+                    // If word is attested in the 700k lexicon, give it high confidence in the in-list band.
+                    // If not attested, still surface it in the reachability band.
+                    let score = if lvl > 0 {
+                        490_000 + (lvl * 450)
+                    } else {
+                        380_000
+                    };
+                    add(eng_dev, score);
+                }
             }
         }
 
@@ -895,6 +914,23 @@ impl ImeEngine {
                                 || r_key.chars().last() != top_key.chars().last();
 
                             if promote {
+                                *score = score.saturating_add(360_000);
+                            }
+                        }
+                    } else if top_lvl == 0 {
+                        // Case C: Top-1 candidate is an unlexicalized OOV non-word (level == 0),
+                        // while competing candidate is an attested common Nepali word
+                        // produced by English loanword phonemic transduction.
+                        let c_lvl = self
+                            .lexicon
+                            .as_ref()
+                            .map(|l| l.level(cand, self.language))
+                            .unwrap_or(0);
+
+                        if c_lvl >= 48 {
+                            let eng_candidates =
+                                crate::core::english_phonetic::english_to_devanagari(&r_lower);
+                            if eng_candidates.iter().any(|e| e == cand) {
                                 *score = score.saturating_add(360_000);
                             }
                         }

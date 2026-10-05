@@ -182,3 +182,24 @@ fn diverse_phonetic_and_vowel_variants_reach_gold() {
         );
     }
 }
+
+#[test]
+fn test_english_loanword_transliteration() {
+    let Some(e) = engine() else { return };
+    let cases = [
+        ("side", "साइड"),
+        ("plate", "प्लेट"),
+        ("fashion", "फेशन"),
+        ("school", "स्कुल"),
+        ("biscuit", "बिस्कुट"),
+        ("action", "एक्शन"),
+        ("public", "पब्लिक"),
+    ];
+    for (input, expected) in cases {
+        let suggestions = tops(&e, input, 8);
+        assert!(
+            suggestions.iter().any(|s| s == expected),
+            "English loanword '{input}' did not produce expected '{expected}' in top 8: got {suggestions:?}"
+        );
+    }
+}

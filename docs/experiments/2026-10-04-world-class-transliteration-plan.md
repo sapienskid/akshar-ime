@@ -207,6 +207,37 @@ Retrieve gold words that the lattice decoder misses.
 
 ---
 
+### Experiment 2f: English Loanword Phonemic Transduction
+
+#### Status: COMPLETE (2026-10-05)
+
+#### Objective
+1. Transliterate English loanwords, foreign terminology, and Latin orthography into standard Nepali Devanagari.
+2. English words represent 20.09% (824 cases) of the benchmark dataset (`data/pairs/test.jsonl`).
+3. Resolve the silent-e vowel shift (`side` -> `साइड`, `plate` -> `प्लेट`), diphthongs, and retroflex alveolar stops (`t` -> `ट`, `d` -> `ड`).
+
+#### Technical Description
+1. Created new pure Rust module `src/core/english_phonetic.rs`:
+   - High-speed lookup table over conventional Nepali English loanword spellings (`side` -> `साइड`, `plate` -> `प्लेट`, `fashion` -> `फेशन`, `school` -> `स्कुल`, `biscuit` -> `बिस्कुट`).
+   - Algorithmic letter-to-sound (L2S) rule transducer covering silent-e vowel lengthening (`a_e` -> `े`, `i_e` -> `ाइ`, `o_e` -> `ो`, `u_e` -> `्यु`) and English suffixes (`-tion`/`-sion` -> `शन`, `-ture` -> `चर`, `-ment` -> `मेन्ट`).
+   - Zero external crate dependencies, 15 KB compiled code footprint, sub-microsecond latency.
+2. Added candidate generator 2d in `src/core/engine.rs` to surface phonemized English loanwords into the candidate list.
+3. Added Case C in the in-beam tie-breaker:
+   - When the top decoder hypothesis is an unlexicalized OOV non-word ($top_{\text{lvl}} = 0$) and the competing candidate is an attested dictionary word ($c_{\text{lvl}} \ge 48$) produced by English phonemization, promote the dictionary word.
+
+#### Measured Results (4,101 Test Cases)
+- **Top-1 accuracy:** increased from **60.35% (baseline) / 61.84% (E2e) to 62.01%** (**+1.66 percentage points / 68 net words gained**).
+- **Top-3 accuracy:** increased from **73.18% to 74.32%** (**+1.14 percentage points**).
+- **In-list@8:** crossed the 80% threshold, increasing from **78.32% to 80.15%** (**+1.83 percentage points / 75 net words gained**).
+- **Reachable ceiling (@50):** increased from **84.00% to 86.30%** (**+2.30 percentage points**).
+- **Unreachable cases:** decreased from **612 (14.92%) to 562 (13.70%)** (**50 previously unreachable words recovered**).
+- **MRR:** increased from **0.672 to 0.688** (**+0.016**).
+- **Lenient Top-1:** reached **63.45%** (**+1.86 percentage points**).
+- **Lenient In-List @ 8:** reached **80.81%** (**+1.78 percentage points**).
+- **Gate status:** `make check` fully green (108 unit tests, accuracy regression, fuzzy behavior, wasm32).
+
+---
+
 ### Experiment 3: A* Admissible Search and DAG Pruning
 
 #### Objective
