@@ -19,6 +19,10 @@ IBUS_ENGINE_DIR    := $(PREFIX)/lib/ibus/engines
 IBUS_COMPONENT_DIR := $(PREFIX)/share/ibus/component
 DATA_DIR           := $(PREFIX)/share/akshar-ime
 
+# Privilege management: drop privileges to SUDO_USER for cargo, elevate for install
+SUDO        := $(if $(filter 0,$(shell id -u)),,sudo)
+RUN_AS_USER := $(if $(and $(filter 0,$(shell id -u)),$(SUDO_USER)),sudo -u $(SUDO_USER),)
+
 # Trigram pruning threshold for fitting size budget (25MB desktop budget)
 DESKTOP_TRIGRAM_THRESHOLD ?= 3e-2
 
@@ -43,11 +47,11 @@ test:  ## Run Rust tests and regression suites.
 
 rust_lib:
 	@echo "Building Rust library in release mode..."
-	@cargo build --release
+	@$(RUN_AS_USER) cargo build --release
 
 c_engine: rust_lib
 	@echo "Building C engine against release library..."
-	@$(CC) $(CFLAGS) -o $(TARGET_DIR)/$(C_ENGINE_NAME) src/ibus_engine.c \
+	@$(RUN_AS_USER) $(CC) $(CFLAGS) -o $(TARGET_DIR)/$(C_ENGINE_NAME) src/ibus_engine.c \
 		-L$(TARGET_DIR) -lakshar_ime $(LDFLAGS) -Wl,-rpath,$(LIB_DIR)
 
 # --- Quality & Lint Checks ---
@@ -77,17 +81,17 @@ check-wasm:  ## Check compilation and clippy for the wasm32 target.
 
 install: release  ## Install engine and unified Devanagari model to system directories.
 	@echo "Installing Akshar Devanagari IME..."
-	@sudo mkdir -p $(IBUS_ENGINE_DIR) $(IBUS_COMPONENT_DIR) $(DATA_DIR)
-	@sudo install -m 755 $(TARGET_DIR)/$(C_ENGINE_NAME) $(IBUS_ENGINE_DIR)/$(C_ENGINE_NAME).new
-	@sudo mv -f $(IBUS_ENGINE_DIR)/$(C_ENGINE_NAME).new $(IBUS_ENGINE_DIR)/$(C_ENGINE_NAME)
-	@sudo install -m 755 $(TARGET_DIR)/$(RUST_LIB_NAME) $(LIB_DIR)/$(RUST_LIB_NAME).new
-	@sudo mv -f $(LIB_DIR)/$(RUST_LIB_NAME).new $(LIB_DIR)/$(RUST_LIB_NAME)
-	@sudo cp devanagari-smart.xml $(IBUS_COMPONENT_DIR)/
+	@$(SUDO) mkdir -p $(IBUS_ENGINE_DIR) $(IBUS_COMPONENT_DIR) $(DATA_DIR)
+	@$(SUDO) install -m 755 $(TARGET_DIR)/$(C_ENGINE_NAME) $(IBUS_ENGINE_DIR)/$(C_ENGINE_NAME).new
+	@$(SUDO) mv -f $(IBUS_ENGINE_DIR)/$(C_ENGINE_NAME).new $(IBUS_ENGINE_DIR)/$(C_ENGINE_NAME)
+	@$(SUDO) install -m 755 $(TARGET_DIR)/$(RUST_LIB_NAME) $(LIB_DIR)/$(RUST_LIB_NAME).new
+	@$(SUDO) mv -f $(LIB_DIR)/$(RUST_LIB_NAME).new $(LIB_DIR)/$(RUST_LIB_NAME)
+	@$(SUDO) cp devanagari-smart.xml $(IBUS_COMPONENT_DIR)/
 	@if [ -f data/akshar.model ]; then \
 		echo "Installing model: data/akshar.model -> $(DATA_DIR)/akshar.model"; \
-		sudo cp data/akshar.model $(DATA_DIR)/akshar.model; \
+		$(SUDO) cp data/akshar.model $(DATA_DIR)/akshar.model; \
 	fi
-	@sudo ldconfig
+	@$(SUDO) ldconfig
 	@echo "\nInstallation complete. Run 'make restart-ibus' (without sudo) to reload IBus."
 
 restart-ibus:  ## Restart user IBus daemon (run WITHOUT sudo).
