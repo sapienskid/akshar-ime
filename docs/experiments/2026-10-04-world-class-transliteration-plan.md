@@ -151,6 +151,35 @@ Retrieve gold words that the lattice decoder misses.
 
 ---
 
+### Experiment 2d: Structural Phonetic Mismatch Resolution
+
+#### Status: COMPLETE (2026-10-05)
+
+#### Objective
+1. Detect and resolve structural phonetic mismatches between the top prediction and the user query.
+2. Stop the decoder from hallucinating extra suffixes (for example, `chudkaka` for query `chudkaa`).
+3. Stop the decoder from dropping explicit final sounds (for example, `set` for query `seta`, `adhyatmi` for query `adhyatmik`).
+
+#### Technical Description
+1. Identified 86 failure cases where gold words had exact phonetic key matches ($\kappa(\phi(D)) = \kappa(R)$), but top-1 candidates failed the key match.
+2. Implemented Case B in `src/core/engine.rs`:
+   - Activated when candidate $C$ has $\kappa(\phi(C)) = \kappa(R)$ and top prediction $T$ has $\kappa(\phi(T)) \neq \kappa(R)$.
+   - Guarded by lexicon level threshold ($c_{\text{lvl}} \ge 24$) to prevent promotion of obscure non-words.
+   - Triggers when:
+     - $T$ has hallucinated extra sounds ($\text{len}(\kappa(T)) > \text{len}(\kappa(R))$).
+     - $T$ has dropped or changed the explicit final sound typed by the user ($\text{last}(\kappa(R)) \neq \text{last}(\kappa(T))$).
+
+#### Measured Results (4,101 Test Cases)
+- **Top-1 accuracy:** increased from **60.35% (baseline) / 61.55% (E2c) to 61.74%** (**+1.39 percentage points / 57 net words gained**).
+- **Top-3 accuracy:** increased from **73.18% to 74.01%** (**+0.83 percentage points**).
+- **In-list@8:** maintained at **79.61%** (+1.29 percentage points).
+- **Reachable ceiling (@50):** maintained at **85.93%** (+1.93 percentage points).
+- **MRR:** increased from **0.672 to 0.685** (**+0.013**).
+- **Lenient Top-1:** reached **63.18%** (**+1.59 percentage points**).
+- **Gate status:** `make check` fully green (106 unit tests, accuracy regression, fuzzy behavior, wasm32).
+
+---
+
 ### Experiment 3: A* Admissible Search and DAG Pruning
 
 #### Objective

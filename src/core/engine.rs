@@ -805,6 +805,9 @@ impl ImeEngine {
                 .map(|l| l.level(&top_word, self.language))
                 .unwrap_or(0);
 
+            let r_lower = prefix.to_ascii_lowercase();
+            let r_key = crate::core::phonetic_key::collapse_key(&r_lower);
+
             for (cand, score) in out.iter_mut().skip(1).take(5) {
                 if top_score.saturating_sub(*score) <= 350_000 {
                     let c_key = crate::core::phonetic_key::devanagari_to_collapsed_key(cand);
@@ -869,6 +872,26 @@ impl ImeEngine {
 
                         if bonus > 0 {
                             *score = score.saturating_add(bonus as u64);
+                        }
+                    } else if c_key == r_key && top_key != r_key {
+                        // Case B: Candidate matches user query key exactly, but top1 does not.
+                        // Checks for decoder hallucinations, missing trailing vowels, split clusters.
+                        let c_lvl = self
+                            .lexicon
+                            .as_ref()
+                            .map(|l| l.level(cand, self.language))
+                            .unwrap_or(0);
+
+                        if c_lvl >= 24 {
+                            // Promote candidate when it matches user query key exactly, but top1 either:
+                            //  1. Hallucinated extra sounds (e.g. चुड्काका vs चुड्का, खाँडाएपनि vs खाँदापनि)
+                            //  2. Dropped/altered ending sound that user typed (e.g. seta -> सेता vs सेट, adhyatmik -> आध्यात्मिक vs आध्यात्मि)
+                            let promote = top_key.len() > r_key.len()
+                                || r_key.chars().last() != top_key.chars().last();
+
+                            if promote {
+                                *score = score.saturating_add(360_000);
+                            }
                         }
                     }
                 }

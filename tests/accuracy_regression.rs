@@ -365,8 +365,21 @@ fn diagnose_ranking_errors() {
         gold_better_key as f64 / ranking_errors.len() as f64 * 100.0
     );
 
-    for (r, g, top1, s_top1, s_gold, rank) in ranking_errors.iter().take(20) {
-        println!("  roman: {:<18} gold: {:<14} rank: {}/8  top1: {:<14} (top1_score: {}, gold_score: {})",
-            r, g, rank, top1, s_top1, s_gold);
+    println!("\n  Sample cases where Gold has exact key match but Top1 does not:");
+    for (r, g, top1, s_top1, s_gold, rank) in ranking_errors
+        .iter()
+        .filter(|(r, g, top1, _, _, _)| {
+            let r_key = akshar_ime::core::phonetic_key::collapse_key(r);
+            let g_key = akshar_ime::core::phonetic_key::devanagari_to_collapsed_key(g);
+            let t_key = akshar_ime::core::phonetic_key::devanagari_to_collapsed_key(top1);
+            g_key == r_key && t_key != r_key
+        })
+        .take(25)
+    {
+        let r_key = akshar_ime::core::phonetic_key::collapse_key(r);
+        let g_key = akshar_ime::core::phonetic_key::devanagari_to_collapsed_key(g);
+        let t_key = akshar_ime::core::phonetic_key::devanagari_to_collapsed_key(top1);
+        println!("  roman: {:<20} gold: {:<14} top1: {:<14} rank: {}/8 (s_top1: {}, s_gold: {})\n    r_key: {}  g_key: {}  t_key: {}",
+            r, g, top1, rank, s_top1, s_gold, r_key, g_key, t_key);
     }
 }
