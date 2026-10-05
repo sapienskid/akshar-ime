@@ -75,11 +75,7 @@ check-wasm:  ## Check compilation and clippy for the wasm32 target.
 
 # --- IBus Installation ---
 
-install:  ## Install engine and unified Devanagari model to system directories.
-	@if [ ! -f $(TARGET_DIR)/$(RUST_LIB_NAME) ] || [ ! -f $(TARGET_DIR)/$(C_ENGINE_NAME) ]; then \
-		echo "Building release artifacts first..."; \
-		$(MAKE) release; \
-	fi
+install: release  ## Install engine and unified Devanagari model to system directories.
 	@echo "Installing Akshar Devanagari IME..."
 	@sudo mkdir -p $(IBUS_ENGINE_DIR) $(IBUS_COMPONENT_DIR) $(DATA_DIR)
 	@sudo install -m 755 $(TARGET_DIR)/$(C_ENGINE_NAME) $(IBUS_ENGINE_DIR)/$(C_ENGINE_NAME).new
