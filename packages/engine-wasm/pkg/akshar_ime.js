@@ -157,19 +157,23 @@ function getArrayJsValueFromWasm0(ptr, len) {
     return result;
 }
 /**
- * Create engine from model URL only (convenience, lexicon optional).
- * @param {string} model_url
- * @returns {Promise<WasmEngine>}
+ * Transliterate without needing an engine instance, using an empty model — mainly for testing wiring.
+ * @param {string} roman
+ * @returns {string}
  */
-export function createEngineFromModelUrl(model_url) {
-    const ptr0 = passStringToWasm0(model_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.createEngineFromModelUrl(ptr0, len0);
-    return ret;
-}
-
-export function init_panic_hook() {
-    wasm.init_panic_hook();
+export function quickTransliterate(roman) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passStringToWasm0(roman, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.quickTransliterate(ptr0, len0);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
 }
 
 /**
@@ -214,32 +218,28 @@ export function getVersion() {
     }
 }
 
+export function init_panic_hook() {
+    wasm.init_panic_hook();
+}
+
 /**
- * Transliterate without needing an engine instance, using an empty model — mainly for testing wiring.
- * @param {string} roman
- * @returns {string}
+ * Create engine from model URL only (convenience, lexicon optional).
+ * @param {string} model_url
+ * @returns {Promise<WasmEngine>}
  */
-export function quickTransliterate(roman) {
-    let deferred2_0;
-    let deferred2_1;
-    try {
-        const ptr0 = passStringToWasm0(roman, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.quickTransliterate(ptr0, len0);
-        deferred2_0 = ret[0];
-        deferred2_1 = ret[1];
-        return getStringFromWasm0(ret[0], ret[1]);
-    } finally {
-        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
-    }
+export function createEngineFromModelUrl(model_url) {
+    const ptr0 = passStringToWasm0(model_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.createEngineFromModelUrl(ptr0, len0);
+    return ret;
 }
 
 function __wbg_adapter_22(arg0, arg1, arg2) {
-    wasm.closure91_externref_shim(arg0, arg1, arg2);
+    wasm.closure92_externref_shim(arg0, arg1, arg2);
 }
 
 function __wbg_adapter_82(arg0, arg1, arg2, arg3) {
-    wasm.closure115_externref_shim(arg0, arg1, arg2, arg3);
+    wasm.closure116_externref_shim(arg0, arg1, arg2, arg3);
 }
 
 const WasmEngineFinalization = (typeof FinalizationRegistry === 'undefined')
@@ -339,9 +339,9 @@ export class WasmEngine {
         }
     }
     /**
-     * Rank suggestions for one language: an ISO 639-3 code ("hin", "nep",
-     * ...) or ISO 639-1 alias ("hi"); null, "" or "auto" for language-blind.
-     * Returns false if the model does not support it (auto is used).
+     * Rank suggestions for Nepali: "nep", or the ISO 639-1 alias "ne"; null,
+     * "" or "auto" for language-blind.  The model ships Nepali-only priors, so
+     * any other code returns false and language-blind ranking is used.
      * @param {string | null} [code]
      * @returns {boolean}
      */
@@ -657,8 +657,8 @@ function __wbg_get_imports() {
         const ret = false;
         return ret;
     };
-    imports.wbg.__wbindgen_closure_wrapper504 = function(arg0, arg1, arg2) {
-        const ret = makeMutClosure(arg0, arg1, 92, __wbg_adapter_22);
+    imports.wbg.__wbindgen_closure_wrapper498 = function(arg0, arg1, arg2) {
+        const ret = makeMutClosure(arg0, arg1, 93, __wbg_adapter_22);
         return ret;
     };
     imports.wbg.__wbindgen_init_externref_table = function() {

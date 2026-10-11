@@ -1,10 +1,9 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Create engine from model URL only (convenience, lexicon optional).
+ * Transliterate without needing an engine instance, using an empty model — mainly for testing wiring.
  */
-export function createEngineFromModelUrl(model_url: string): Promise<WasmEngine>;
-export function init_panic_hook(): void;
+export function quickTransliterate(roman: string): string;
 /**
  * Async factory: fetch model (+ optional lexicon/weights) from URLs and create engine.
  *
@@ -20,10 +19,11 @@ export function createEngine(model_url: string, lexicon_url?: string | null, rer
  * Returns the engine version (crate version).
  */
 export function getVersion(): string;
+export function init_panic_hook(): void;
 /**
- * Transliterate without needing an engine instance, using an empty model — mainly for testing wiring.
+ * Create engine from model URL only (convenience, lexicon optional).
  */
-export function quickTransliterate(roman: string): string;
+export function createEngineFromModelUrl(model_url: string): Promise<WasmEngine>;
 export class WasmEngine {
   free(): void;
   /**
@@ -51,9 +51,9 @@ export class WasmEngine {
    */
   importState(b64: string): void;
   /**
-   * Rank suggestions for one language: an ISO 639-3 code ("hin", "nep",
-   * ...) or ISO 639-1 alias ("hi"); null, "" or "auto" for language-blind.
-   * Returns false if the model does not support it (auto is used).
+   * Rank suggestions for Nepali: "nep", or the ISO 639-1 alias "ne"; null,
+   * "" or "auto" for language-blind.  The model ships Nepali-only priors, so
+   * any other code returns false and language-blind ranking is used.
    */
   setLanguage(code?: string | null): boolean;
   /**
@@ -129,8 +129,8 @@ export interface InitOutput {
   readonly __externref_table_dealloc: (a: number) => void;
   readonly __wbindgen_free: (a: number, b: number, c: number) => void;
   readonly __externref_drop_slice: (a: number, b: number) => void;
-  readonly closure91_externref_shim: (a: number, b: number, c: any) => void;
-  readonly closure115_externref_shim: (a: number, b: number, c: any, d: any) => void;
+  readonly closure92_externref_shim: (a: number, b: number, c: any) => void;
+  readonly closure116_externref_shim: (a: number, b: number, c: any, d: any) => void;
   readonly __wbindgen_start: () => void;
 }
 
