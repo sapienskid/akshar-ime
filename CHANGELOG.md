@@ -15,7 +15,9 @@ a single language and re-establishes a reproducible pipeline end to end.
   historical rather than deleted, so a citation of an earlier snapshot stays
   interpretable.
 - **Retiring them cost no Nepali accuracy**: 60.35% top-1 against the retired
-  build's 60.40% on the same 4,101 rows.
+  build's 60.40% on the same 4,101 rows. (Superseded below — the figure quoted
+  here was measured before the phonetic workstream landed; the shipped artifact
+  now measures higher.)
 
 ### Pipeline
 
@@ -34,17 +36,29 @@ a single language and re-establishes a reproducible pipeline end to end.
 
 ### Measured
 
-`nep_test.json`, 4,101 AK-Freq cases, pooled over common words and named
-entities:
+`nep_test.json`, 4,101 cases, pooled over common words and named entities.
 
-| | 8-language | Nepali-only |
-| :--- | ---: | ---: |
-| top-1 | 60.40% | **60.35%** |
-| top-5 | 77.59% | 76.15% |
-| in-list@8 | — | **78.32%** |
-| reachable@50 | — | **84.00%** |
-| container | 24.44 MB | **9.61 MB** |
-| query latency | 0.794 ms | 0.836 ms |
+The figures first recorded here predate the phonetic workstream below and are
+superseded. Re-measured 2026-10-11 on the artifacts that actually ship, with
+`make eval SPLIT=test MODEL=<model>`:
+
+| | v1.1.0 wasm | native container | **wasm (shipped)** |
+| :--- | ---: | ---: | ---: |
+| top-1 | 60.16% | 62.16% | **62.67%** |
+| top-3 | — | — | **75.49%** |
+| in-list@8 | 80.30% | 80.20% | **80.88%** |
+| lenient top-1 | 62.20% | 63.59% | **64.28%** |
+| MRR | 0.677 | 0.689 | **0.696** |
+| container | 8.91 MB | 9.61 MB | **10.69 MB** |
+
+One harness, one split, one run each: `nep_test.json`, 4,101 cases, cold,
+k=8, 4 threads. The shipped WASM container beats the native one by 0.51pp
+top-1; the wasm profile trades 2.45 MB of size for it.
+
+`reachable@50` (84.00%) and query latency (0.836 ms) were measured on the
+native container and are not re-measured per artifact; both are recorded in
+`MANUAL.md` §evaluation. `MANUAL.md`'s 60.35% baseline is stale by the same
+margin as the figure above — the native container measures 62.16%.
 
 ### Correctness fixes
 
@@ -70,11 +84,59 @@ entities:
   `variants[0]`, so the expansion only ever feeds the learned trie:
   `saathi` → `साथी` but `saathee` → `साथिए`.
 
-### Release packaging
+### English G2P: open-vocabulary phonemizer
 
-- The published release shipped **no model**, so a fresh install fell back to
-  the small built-in default. The model is now uploaded as a release asset and
-  the install path is documented.
+The single largest change since the entry above, and the reason the WASM
+container was retrained.
+
+- **Open-vocabulary English grapheme-to-phoneme.** `src/core/english_phonetic.rs`
+  derives phonemes from spelling rules rather than a word list, so English
+  words outside any dictionary transliterate: `computer → कम्पुटर`,
+  `refrigerator → रेफ्रिजेरेटर`, `government → गभर्नमेन्ट`. The static
+  dictionary it replaces was removed, not deprecated.
+- **Zero-cost transducer** (`src/core/`): English-to-Devanagari runs as a
+  phonemic transducer alongside the decoder, so it adds no latency.
+- **Research write-up** in `docs/MANUAL.md`; the design question was settled
+  before the code, per the experiment log in `docs/experiments/`.
+
+Verified in a browser against the shipped WASM build — the old binary and the
+old model both handle these too, so the phonemizer was never missing from the
+published playground. The path that does produce nothing is before the model
+has downloaded, when the TypeScript instant transliterator answers instead; it
+has a 30-word table and no English G2P, which is expected for a zero-delay
+fallback.
+
+### Phonetic retrieval and orthography
+
+- **Zero-allocation phonetic key retrieval** (`src/core/phonetic_key.rs`) with
+  in-beam orthographic tie-breaking, so structurally similar candidates are
+  ordered correctly rather than by decoder luck.
+- **Structural phonetic mismatches resolved against decoder hallucinations** —
+  where the phonetic layer disagreed with the decoder, the disagreement was
+  traced rather than smoothed over.
+- **Plural suffix orthography protected**: `-हरू` is no longer folded into
+  `-हरु`.
+
+### Dead code removed
+
+- Compiled-in trained weights and a duplicate four-feature reranker deleted;
+  the unified container is the only source of weights (v1–v8 all still load).
+- Pruned dead binaries, the grammar module and non-Nepali baggage.
+
+### Release packaging and build
+
+- `make train-wasm` added: it produces `data/akshar_wasm.model`. The WASM
+  container is a separate training run (`train -- --wasm`, min_freq 5), not a
+  copy of the native one, and there was previously no target for it.
+- `make release-upload` now attaches **all seven** artifacts. It attached only
+  `akshar.model`, so a release cut with the documented flow carried nothing the
+  browser playground serves — akshar.fundaments.work would have kept its
+  previous version and appeared to ignore the release.
+- `make install` always builds fresh binaries, and drops privileges to
+  `SUDO_USER` under `sudo make install`.
+- The previous published release shipped **no model**, so a fresh install fell
+  back to the small built-in default. The model is uploaded as a release asset
+  and the install path is documented.
 
 ## Unreleased
 

@@ -232,18 +232,23 @@ make train && make model
 make eval SPLIT=test          # or: make eval-session
 ```
 
-| Metric | Value |
-| :--- | ---: |
-| top-1, cold (`nep_test.json`, 4,101 cases) | **60.35%** |
-| top-3 | 73.15% |
-| top-5 (`evaluate_aksharantar`) | 76.15% |
-| in-list@8 | **78.32%** |
-| **reachable@50** | **84.00%** |
-| MRR | 0.672 |
-| lenient top-1 / in-list@8 | 61.59% / 79.08% |
-| mean length-matched top-1 | 61.59% |
-| query latency | 0.836 ms |
-| container size | 9.61 MB |
+Re-measured 2026-10-11 on the shipped WASM container
+(`data/akshar_wasm.model`), same harness and split. The 60.35% baseline below
+was measured on the native container before the phonetic workstream landed; the
+two are not comparable and the shipped figure is the one to quote.
+
+| Metric | WASM (shipped) | Native container |
+| :--- | ---: | ---: |
+| top-1, cold (`nep_test.json`, 4,101 cases) | **62.67%** | 62.16% |
+| top-3 | 75.49% | — |
+| top-5 (`evaluate_aksharantar`) | 76.15% | 76.15% |
+| in-list@8 | **80.88%** | 80.20% |
+| **reachable@50** | **84.00%** | 84.00% |
+| MRR | 0.696 | 0.689 |
+| lenient top-1 / in-list@8 | 64.28% / 81.54% | 63.59% / 80.88% |
+| mean length-matched top-1 | 64.28% | 63.59% |
+| query latency | not re-measured | 0.836 ms |
+| container size | 10.69 MB | 9.61 MB |
 
 `reachable@50` is the operative ceiling: **top-1 cannot exceed 84.00% without
 changing candidate generation.** That splits the remaining error into two very
