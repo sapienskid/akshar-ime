@@ -127,6 +127,12 @@ EPOCHS ?= 5
 train:  ## Train model (PAIRS=500000 by default; PAIRS=0 for all pairs).
 	@cargo run --release --bin train -- --reranker-pairs $(PAIRS) --epochs $(EPOCHS) --iterations 12
 
+train-wasm:  ## Train the WASM container the browser build serves -> data/akshar_wasm.model.
+	@cargo run --release --bin train -- --wasm --reranker-pairs $(PAIRS) --epochs $(EPOCHS) --iterations 12
+	@echo ""
+	@echo "Now evaluate it before releasing anything:"
+	@echo "  make eval SPLIT=test MODEL=data/akshar_wasm.model"
+
 calibrate:  ## Calibrate heuristic/learned blend weights on validation set.
 	@cargo run --release --bin calibrate_blend -- --model data/akshar.model --out data/akshar.model
 
@@ -169,15 +175,37 @@ reset-learning:  ## Reset user learned dictionary.
 release-upload:  ## Upload locally-built artifacts to an existing release (TAG=v1.2.0).
 	@if [ -z "$(TAG)" ]; then echo "Usage: make release-upload TAG=v1.2.0"; exit 1; fi
 	@missing=0; \
-	for f in data/akshar.model; do \
-		if [ ! -f "$$f" ]; then echo "missing: $$f (run 'make train && make model')"; missing=1; fi; \
+	for f in data/akshar.model data/akshar_wasm.model \
+	         packages/engine-wasm/pkg/akshar_ime_bg.wasm \
+	         packages/engine-wasm/pkg/akshar_ime.js; do \
+		if [ ! -f "$$f" ]; then echo "missing: $$f"; missing=1; fi; \
 	done; \
-	if [ "$$missing" = "1" ]; then exit 1; fi
-	@echo "Uploading model to release $(TAG)..."
-	@gh release upload $(TAG) data/akshar.model --clobber \
-		|| gh release view $(TAG) >/dev/null 2>&1 \
+	if [ "$$missing" = "1" ]; then \
+		echo ""; \
+		echo "  Build the missing pieces first:"; \
+		echo "    make train && make model   # data/akshar.model"; \
+		echo "    make train-wasm             # data/akshar_wasm.model"; \
+		echo "    make wasm                   # packages/engine-wasm/pkg/"; \
+		exit 1; \
+	fi
+	@gh release view $(TAG) >/dev/null 2>&1 \
 		|| gh release create $(TAG) --generate-notes --verify-tag
-	@echo "Verify the release lists akshar.model and akshar-ime-model.bin."
+	@echo "Uploading artifacts to release $(TAG)..."
+	@gh release upload $(TAG) --clobber \
+		data/akshar.model \
+		data/akshar_wasm.model \
+		packages/engine-wasm/pkg/akshar_ime_bg.wasm \
+		packages/engine-wasm/pkg/akshar_ime_bg.wasm.d.ts \
+		packages/engine-wasm/pkg/akshar_ime.js \
+		packages/engine-wasm/pkg/akshar_ime.d.ts \
+		packages/engine-js/akshar-ime.js
+	@echo ""
+	@echo "Verify the release lists all seven artifacts:"
+	@echo "  akshar.model, akshar_wasm.model, akshar_ime_bg.wasm,"
+	@echo "  akshar_ime_bg.wasm.d.ts, akshar_ime.js, akshar_ime.d.ts, akshar-ime.js"
+	@echo ""
+	@echo "The wasm model and package are what akshar-playground serves. Without"
+	@echo "them the playground keeps its previous version rather than updating."
 
 help:  ## Show this help message.
 	@echo "Akshar Devanagari IME"
