@@ -31,6 +31,7 @@ fn console_error_panic_hook() {
 #[wasm_bindgen]
 pub struct WasmEngine {
     inner: ImeEngine,
+    save_callback: Option<js_sys::Function>,
 }
 
 #[wasm_bindgen]
@@ -54,7 +55,10 @@ impl WasmEngine {
         let json_slice = reranker_json.as_deref();
         let engine = ImeEngine::from_bytes_with_weights(model_bytes, lexicon_slice, json_slice)
             .map_err(|e| JsValue::from_str(&format!("failed to load model: {}", e)))?;
-        let mut w = WasmEngine { inner: engine };
+        let mut w = WasmEngine {
+            inner: engine,
+            save_callback: None,
+        };
         // Try to restore learned state from localStorage (silent if missing)
         let _ = w.restore_from_storage();
         Ok(w)
@@ -66,7 +70,23 @@ impl WasmEngine {
     pub fn empty() -> WasmEngine {
         WasmEngine {
             inner: ImeEngine::new(),
+            save_callback: None,
         }
+    }
+
+    /// Register a custom save callback for learned state persistence.
+    /// When set, this callback is invoked with the base64-encoded learned state
+    /// whenever the user confirms a word, instead of saving to browser localStorage.
+    /// On learning reset, the callback is invoked with an empty string ("").
+    #[wasm_bindgen(js_name = setSaveHandler)]
+    pub fn set_save_handler(&mut self, handler: js_sys::Function) {
+        self.save_callback = Some(handler);
+    }
+
+    /// Check whether a custom save handler is registered.
+    #[wasm_bindgen(js_name = hasCustomSaveHandler)]
+    pub fn has_custom_save_handler(&self) -> bool {
+        self.save_callback.is_some()
     }
 
     /// Get Devanagari suggestions for a roman prefix.
@@ -169,10 +189,15 @@ impl WasmEngine {
         // Exp 6: reset in place so the unified vocab/word-trie/sparse table
         // survive (from_model would drop them on wasm32).
         self.inner.reset_learned_state();
-        self.save_to_storage().map_err(|e| JsValue::from_str(&e))?;
-        // Also clear storage key
-        if let Some(storage) = local_storage() {
-            let _ = storage.remove_item(STORAGE_KEY);
+        if let Some(ref cb) = self.save_callback {
+            cb.call1(&JsValue::NULL, &JsValue::from_str(""))
+                .map_err(|e| JsValue::from_str(&format!("{:?}", e)))?;
+        } else {
+            self.save_to_storage().map_err(|e| JsValue::from_str(&e))?;
+            // Also clear storage key
+            if let Some(storage) = local_storage() {
+                let _ = storage.remove_item(STORAGE_KEY);
+            }
         }
         Ok(())
     }
@@ -196,13 +221,18 @@ fn local_storage() -> Option<web_sys::Storage> {
 
 impl WasmEngine {
     fn save_to_storage(&self) -> Result<(), String> {
-        let storage = local_storage().ok_or("no localStorage")?;
         let bytes = self
             .inner
             .learned_state_to_bytes()
             .map_err(|e| e.to_string())?;
-        // localStorage has ~5MB limit; bincode of learned trie is tiny (<100KB for thousands of words)
         let b64 = base64_encode(&bytes);
+        if let Some(ref cb) = self.save_callback {
+            cb.call1(&JsValue::NULL, &JsValue::from_str(&b64))
+                .map_err(|e| format!("{:?}", e))?;
+            return Ok(());
+        }
+        let storage = local_storage().ok_or("no localStorage")?;
+        // localStorage has ~5MB limit; bincode of learned trie is tiny (<100KB for thousands of words)
         storage
             .set_item(STORAGE_KEY, &b64)
             .map_err(|_| "localStorage set failed".to_string())?;

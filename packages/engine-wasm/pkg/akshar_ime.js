@@ -133,6 +133,71 @@ function makeMutClosure(arg0, arg1, dtor, f) {
     return real;
 }
 
+function debugString(val) {
+    // primitive types
+    const type = typeof val;
+    if (type == 'number' || type == 'boolean' || val == null) {
+        return  `${val}`;
+    }
+    if (type == 'string') {
+        return `"${val}"`;
+    }
+    if (type == 'symbol') {
+        const description = val.description;
+        if (description == null) {
+            return 'Symbol';
+        } else {
+            return `Symbol(${description})`;
+        }
+    }
+    if (type == 'function') {
+        const name = val.name;
+        if (typeof name == 'string' && name.length > 0) {
+            return `Function(${name})`;
+        } else {
+            return 'Function';
+        }
+    }
+    // objects
+    if (Array.isArray(val)) {
+        const length = val.length;
+        let debug = '[';
+        if (length > 0) {
+            debug += debugString(val[0]);
+        }
+        for(let i = 1; i < length; i++) {
+            debug += ', ' + debugString(val[i]);
+        }
+        debug += ']';
+        return debug;
+    }
+    // Test for built-in
+    const builtInMatches = /\[object ([^\]]+)\]/.exec(toString.call(val));
+    let className;
+    if (builtInMatches && builtInMatches.length > 1) {
+        className = builtInMatches[1];
+    } else {
+        // Failed to match the standard '[object ClassName]'
+        return toString.call(val);
+    }
+    if (className == 'Object') {
+        // we're a user defined class or Object
+        // JSON.stringify avoids problems with cycles, and is generally much
+        // easier than looping through ownProperties of `val`.
+        try {
+            return 'Object(' + JSON.stringify(val) + ')';
+        } catch (_) {
+            return 'Object';
+        }
+    }
+    // errors
+    if (val instanceof Error) {
+        return `${val.name}: ${val.message}\n${val.stack}`;
+    }
+    // TODO we could test for more things here, like `Set`s and `Map`s.
+    return className;
+}
+
 function passArray8ToWasm0(arg, malloc) {
     const ptr = malloc(arg.length * 1, 1) >>> 0;
     getUint8ArrayMemory0().set(arg, ptr / 1);
@@ -234,12 +299,12 @@ export function createEngineFromModelUrl(model_url) {
     return ret;
 }
 
-function __wbg_adapter_22(arg0, arg1, arg2) {
-    wasm.closure92_externref_shim(arg0, arg1, arg2);
+function __wbg_adapter_24(arg0, arg1, arg2) {
+    wasm.closure93_externref_shim(arg0, arg1, arg2);
 }
 
-function __wbg_adapter_82(arg0, arg1, arg2, arg3) {
-    wasm.closure116_externref_shim(arg0, arg1, arg2, arg3);
+function __wbg_adapter_86(arg0, arg1, arg2, arg3) {
+    wasm.closure117_externref_shim(arg0, arg1, arg2, arg3);
 }
 
 const WasmEngineFinalization = (typeof FinalizationRegistry === 'undefined')
@@ -403,6 +468,24 @@ export class WasmEngine {
         return v2;
     }
     /**
+     * Register a custom save callback for learned state persistence.
+     * When set, this callback is invoked with the base64-encoded learned state
+     * whenever the user confirms a word, instead of saving to browser localStorage.
+     * On learning reset, the callback is invoked with an empty string ("").
+     * @param {Function} handler
+     */
+    setSaveHandler(handler) {
+        wasm.wasmengine_setSaveHandler(this.__wbg_ptr, handler);
+    }
+    /**
+     * Check whether a custom save handler is registered.
+     * @returns {boolean}
+     */
+    hasCustomSaveHandler() {
+        const ret = wasm.wasmengine_hasCustomSaveHandler(this.__wbg_ptr);
+        return ret !== 0;
+    }
+    /**
      * Get suggestions with scores: returns JSON string `[{"text":"नमस्ते","score":123}, ...]`
      * @param {string} prefix
      * @param {number | null} [count]
@@ -562,7 +645,7 @@ function __wbg_get_imports() {
                 const a = state0.a;
                 state0.a = 0;
                 try {
-                    return __wbg_adapter_82(a, state0.b, arg0, arg1);
+                    return __wbg_adapter_86(a, state0.b, arg0, arg1);
                 } finally {
                     state0.a = a;
                 }
@@ -657,9 +740,16 @@ function __wbg_get_imports() {
         const ret = false;
         return ret;
     };
-    imports.wbg.__wbindgen_closure_wrapper498 = function(arg0, arg1, arg2) {
-        const ret = makeMutClosure(arg0, arg1, 93, __wbg_adapter_22);
+    imports.wbg.__wbindgen_closure_wrapper502 = function(arg0, arg1, arg2) {
+        const ret = makeMutClosure(arg0, arg1, 94, __wbg_adapter_24);
         return ret;
+    };
+    imports.wbg.__wbindgen_debug_string = function(arg0, arg1) {
+        const ret = debugString(arg1);
+        const ptr1 = passStringToWasm0(ret, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        getDataViewMemory0().setInt32(arg0 + 4 * 1, len1, true);
+        getDataViewMemory0().setInt32(arg0 + 4 * 0, ptr1, true);
     };
     imports.wbg.__wbindgen_init_externref_table = function() {
         const table = wasm.__wbindgen_export_2;

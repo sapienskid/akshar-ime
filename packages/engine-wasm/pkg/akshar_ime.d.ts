@@ -74,6 +74,17 @@ export class WasmEngine {
    */
   getSuggestions(prefix: string, count?: number | null): any[];
   /**
+   * Register a custom save callback for learned state persistence.
+   * When set, this callback is invoked with the base64-encoded learned state
+   * whenever the user confirms a word, instead of saving to browser localStorage.
+   * On learning reset, the callback is invoked with an empty string ("").
+   */
+  setSaveHandler(handler: Function): void;
+  /**
+   * Check whether a custom save handler is registered.
+   */
+  hasCustomSaveHandler(): boolean;
+  /**
    * Get suggestions with scores: returns JSON string `[{"text":"नमस्ते","score":123}, ...]`
    */
   getSuggestionsWithScores(prefix: string, count?: number | null): string;
@@ -111,12 +122,14 @@ export interface InitOutput {
   readonly wasmengine_from_bytes: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
   readonly wasmengine_getSuggestions: (a: number, b: number, c: number, d: number) => [number, number];
   readonly wasmengine_getSuggestionsWithScores: (a: number, b: number, c: number, d: number) => [number, number];
+  readonly wasmengine_hasCustomSaveHandler: (a: number) => number;
   readonly wasmengine_importState: (a: number, b: number, c: number) => [number, number];
   readonly wasmengine_isReady: (a: number) => number;
   readonly wasmengine_languages: (a: number) => [number, number];
   readonly wasmengine_learnedCount: (a: number) => number;
   readonly wasmengine_resetLearning: (a: number) => [number, number];
   readonly wasmengine_setLanguage: (a: number, b: number, c: number) => number;
+  readonly wasmengine_setSaveHandler: (a: number, b: any) => void;
   readonly wasmengine_transliterate: (a: number, b: number, c: number) => [number, number];
   readonly wasmengine_vocabSize: (a: number) => number;
   readonly init_panic_hook: () => void;
@@ -129,8 +142,8 @@ export interface InitOutput {
   readonly __externref_table_dealloc: (a: number) => void;
   readonly __wbindgen_free: (a: number, b: number, c: number) => void;
   readonly __externref_drop_slice: (a: number, b: number) => void;
-  readonly closure92_externref_shim: (a: number, b: number, c: any) => void;
-  readonly closure116_externref_shim: (a: number, b: number, c: any, d: any) => void;
+  readonly closure93_externref_shim: (a: number, b: number, c: any) => void;
+  readonly closure117_externref_shim: (a: number, b: number, c: any, d: any) => void;
   readonly __wbindgen_start: () => void;
 }
 

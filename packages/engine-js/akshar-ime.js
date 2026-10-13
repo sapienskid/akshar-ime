@@ -62,6 +62,27 @@ export const AksharIME = {
         opts.lexiconUrl || opts.lexicon_url || null,
         opts.rerankerUrl || opts.reranker_url || null
       );
+
+      if (opts.storage) {
+        if (typeof opts.storage.get === 'function') {
+          try {
+            const saved = await opts.storage.get();
+            if (saved) engine.importState(saved);
+          } catch (e) {
+            console.warn('[AksharIME] failed to restore state from custom storage:', e);
+          }
+        }
+        if (typeof opts.storage.set === 'function') {
+          engine.setSaveHandler((b64) => {
+            try {
+              opts.storage.set(b64);
+            } catch (e) {
+              console.warn('[AksharIME] failed to save state to custom storage:', e);
+            }
+          });
+        }
+      }
+
       this.engine = engine;
       this.version = getVersion();
       console.info(`[AksharIME] ready v${this.version} vocab=${engine.vocabSize()} learned=${engine.learnedCount()}`);
