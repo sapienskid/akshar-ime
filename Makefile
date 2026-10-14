@@ -29,6 +29,7 @@ DESKTOP_TRIGRAM_THRESHOLD ?= 3e-2
 .PHONY: all release debug test check check-native check-wasm \
         install uninstall reinstall restart-ibus \
         data-prepare lexicon train calibrate promote model eval eval-session \
+        eval-stratified eval-interactive \
         wasm wasm-clean clean reset-learning release-upload help
 
 # --- Build Targets ---
@@ -153,6 +154,12 @@ eval:  ## Evaluate the Nepali benchmark on data/pairs/$(SPLIT).jsonl (SPLIT=vali
 
 eval-session:  ## Cold vs. adaptive-learning session accuracy on held-out sentences.
 	@cargo run --release --bin eval_session -- $(if $(MODEL),--model $(MODEL),)
+
+eval-stratified:  ## Stratified multi-strata benchmark (Native, Inflected, Social Media, English, Homographs).
+	@cargo run --release --bin eval_stratified -- $(if $(MODEL),--model $(MODEL),) $(if $(INTERACTIVE),--interactive,)
+
+eval-interactive:  ## Interactive CLI harness for real-time typing and suggestion testing.
+	@cargo run --release --bin eval_stratified -- --interactive $(if $(MODEL),--model $(MODEL),)
 
 # --- WebAssembly ---
 

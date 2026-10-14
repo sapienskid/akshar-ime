@@ -323,7 +323,17 @@ impl PhoneticKeyIndex {
             }
             let k = devanagari_to_collapsed_key(w);
             if !k.is_empty() {
-                map.entry(k).or_default().push((w.to_string(), max_lvl));
+                map.entry(k.clone())
+                    .or_default()
+                    .push((w.to_string(), max_lvl));
+            }
+            for mk in crate::core::multi_key_generator::project_multi_keys(w) {
+                let mk_collapsed = collapse_key(&mk);
+                if !mk_collapsed.is_empty() && mk_collapsed != k {
+                    map.entry(mk_collapsed)
+                        .or_default()
+                        .push((w.to_string(), max_lvl));
+                }
             }
         }
 

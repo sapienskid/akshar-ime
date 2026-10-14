@@ -65,6 +65,10 @@ path = "src/bin/evaluate/eval_langs.rs"
 name = "eval_session"
 path = "src/bin/evaluate/eval_session.rs"
 
+[[bin]]
+name = "eval_stratified"
+path = "src/bin/evaluate/eval_stratified.rs"
+
 # ------------------------------------------------------------------------------
 # Data Construction & Utility Binaries (src/bin/build/)
 # ------------------------------------------------------------------------------
