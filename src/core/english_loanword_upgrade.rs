@@ -22,221 +22,48 @@ pub struct EnglishCandidate {
     pub devanagari: String,
     /// Confidence / log-odds weight in [0.0, 1.0].
     pub confidence: f32,
-    /// Effective stem frequency proxy for `reranker.rs` (prevents OOV cliff).
-    pub effective_stem_freq: u32,
-    /// True if this input collides with a high-frequency native Nepali Roman word
-    /// and should be capped at Rank >= 2 in cold isolation.
-    pub homograph_cap_rank2: bool,
     /// Decomposition metadata for debugging & feature extraction.
     pub english_stem: String,
     pub nepali_suffix_devanagari: String,
 }
 
-/// High-frequency Romanized Nepali words that also appear in English / CMUdict.
-/// Without gating, a 134k English dictionary hijacks Rank #1 on these words.
-const NEPALI_CORE_HOMOGRAPHS: &[(&str, &str)] = &[
-    ("ma", "म"),
-    ("ko", "को"),
-    ("ka", "का"),
-    ("ki", "की"),
-    ("le", "ले"),
-    ("ta", "त"),
-    ("ti", "ती"),
-    ("to", "तो"),
-    ("ho", "हो"),
-    ("yo", "यो"),
-    ("so", "सो"),
-    ("na", "न"),
-    ("ni", "नि"),
-    ("po", "पो"),
-    ("la", "ल"),
-    ("ha", "ह"),
-    ("ke", "के"),
-    ("am", "आम"),
-    ("ok", "ओक"),
-    ("man", "मन"),
-    ("din", "दिन"),
-    ("ram", "राम"),
-    ("ban", "वन"),
-    ("pan", "पात"),
-    ("kam", "काम"),
-    ("dam", "दाम"),
-    ("nam", "नाम"),
-    ("gham", "घाम"),
-    ("san", "सान"),
-    ("tan", "तन"),
-    ("dan", "दान"),
-    ("kan", "कान"),
-    ("chor", "चोर"),
-    ("chori", "छोरी"),
-    ("mor", "मोर"),
-    ("bor", "बोर"),
-    ("par", "पर"),
-    ("tar", "तर"),
-    ("bar", "बर"),
-    ("kar", "कर"),
-    ("mar", "मार"),
-    ("sar", "सर"),
-    ("har", "हार"),
-    ("sal", "साल"),
-    ("mal", "माल"),
-    ("hal", "हाल"),
-    ("kal", "काल"),
-    ("bal", "बाल"),
-    ("dal", "दाल"),
-    ("jal", "जाल"),
-    ("pal", "पाल"),
-    ("tal", "ताल"),
-    ("gal", "गाल"),
-    ("sat", "सात"),
-    ("aat", "आठ"),
-    ("char", "चार"),
-    ("tin", "तीन"),
-    ("dui", "दुई"),
-    ("ek", "एक"),
-    ("das", "दस"),
-    ("bas", "बस"),
-    ("ras", "रस"),
-    ("nas", "नास"),
-    ("pas", "पास"),
-    ("gas", "ग्यास"),
-    ("hat", "हात"),
-    ("rat", "रात"),
-    ("bat", "बात"),
-    ("pat", "पात"),
-    ("jat", "जात"),
-    ("mat", "मत"),
-    ("gat", "गत"),
-    ("khat", "खाट"),
-    ("bhat", "भात"),
-    ("chat", "चाट"),
-    ("dhan", "धन"),
-    ("jhan", "झन्"),
-    ("chan", "छन्"),
-    ("hun", "हुन्"),
-    ("chha", "छ"),
-    ("cha", "छ"),
-    ("xa", "छ"),
-    ("xan", "छन्"),
-    ("xu", "छु"),
-];
-
-/// Nativized Nepali loanword overrides where standard Nepali pronunciation/orthography
-/// diverges from American English CMUdict ARPAbet.
-const NEPALI_NATIVIZED_LOANWORDS: &[(&str, &[&str], u32)] = &[
-    ("biscuit", &["बिस्कुट", "बिस्किट"], 45_000),
-    ("biskut", &["बिस्कुट"], 45_000),
-    ("school", &["स्कुल", "स्कूल"], 180_000),
-    ("iskul", &["स्कुल", "इस्कुल"], 90_000),
-    ("skul", &["स्कुल", "स्कूल"], 120_000),
-    ("hospital", &["अस्पताल", "हस्पिटल"], 140_000),
-    ("aspatal", &["अस्पताल"], 140_000),
-    ("doctor", &["डाक्टर", "डक्टर"], 130_000),
-    ("daktar", &["डाक्टर"], 130_000),
-    ("office", &["अफिस", "कार्यालय"], 150_000),
-    ("afis", &["अफिस"], 110_000),
-    ("police", &["पुलिस", "प्रहरी"], 140_000),
-    ("pulis", &["पुलिस"], 110_000),
-    ("government", &["गभर्नमेन्ट"], 95_000),
-    ("university", &["युनिभर्सिटी"], 85_000),
-    ("college", &["कलेज"], 160_000),
-    ("campus", &["क्याम्पस"], 125_000),
-    ("computer", &["कम्प्युटर"], 140_000),
-    ("technology", &["टेक्नोलोजी"], 95_000),
-    ("management", &["म्यानेजमेन्ट"], 85_000),
-    ("manager", &["म्यानेजर"], 80_000),
-    ("video", &["भिडियो"], 175_000),
-    ("visa", &["भिसा"], 95_000),
-    ("vote", &["भोट"], 135_000),
-    ("voter", &["भोटर"], 75_000),
-    ("vaccine", &["भ्याक्सिन"], 80_000),
-    ("vitamin", &["भिटामिन"], 65_000),
-    ("virus", &["भाइरस"], 85_000),
-    ("facebook", &["फेसबुक"], 210_000),
-    ("youtube", &["युट्युब"], 180_000),
-    ("whatsapp", &["ह्वाट्सएप", "वाट्सएप"], 95_000),
-    ("internet", &["इन्टरनेट"], 145_000),
-    ("mobile", &["मोबाइल"], 190_000),
-    ("phone", &["फोन"], 195_000),
-    ("number", &["नम्बर"], 170_000),
-    ("ticket", &["टिकट"], 120_000),
-    ("market", &["मार्केट"], 110_000),
-    ("packet", &["प्याकेट"], 75_000),
-    ("jacket", &["ज्याकेट"], 70_000),
-    ("bank", &["बैंक", "ब्याङ्क"], 185_000),
-    ("account", &["अकाउन्ट", "एकाउन्ट"], 115_000),
-    ("budget", &["बजेट"], 140_000),
-    ("project", &["प्रोजेक्ट"], 115_000),
-    ("program", &["प्रोग्राम"], 105_000),
-    ("programme", &["प्रोग्राम"], 105_000),
-    ("schedule", &["सेड्युल", "स्केड्युल"], 65_000),
-    ("traffic", &["ट्राफिक"], 110_000),
-    ("petrol", &["पेट्रोल"], 105_000),
-    ("diesel", &["डिजेल"], 90_000),
-    ("station", &["स्टेसन", "स्टेशन"], 115_000),
-    ("bus", &["बस"], 180_000),
-    ("micro", &["माइक्रो"], 80_000),
-    ("driver", &["ड्राइभर"], 95_000),
-    ("license", &["लाइसेन्स"], 85_000),
-    ("passport", &["पासपोर्ट"], 95_000),
-    ("airport", &["एयरपोर्ट"], 105_000),
-    ("hotel", &["होटल", "होटेल"], 135_000),
-    ("restaurant", &["रेस्टुरेन्ट"], 95_000),
-    ("coffee", &["कफी"], 90_000),
-    ("glass", &["गिलास", "ग्लास"], 85_000),
-    ("table", &["टेबल"], 100_000),
-    ("chair", &["चेयर"], 50_000),
-    ("camera", &["क्यामेरा"], 95_000),
-    ("photo", &["फोटो"], 175_000),
-    ("message", &["म्यासेज", "मेसेज"], 130_000),
-    ("link", &["लिङ्क", "लिंक"], 115_000),
-    ("email", &["इमेल", "ईमेल"], 120_000),
-    ("website", &["वेबसाइट"], 110_000),
-    ("download", &["डाउनलोड"], 115_000),
-    ("upload", &["अपलोड"], 90_000),
-    ("browser", &["ब्राउजर"], 75_000),
-    ("extension", &["एक्सटेन्सन"], 60_000),
-    ("server", &["सर्भर"], 75_000),
-    ("service", &["सर्भिस"], 95_000),
-    ("system", &["सिस्टम"], 130_000),
-    ("report", &["रिपोर्ट"], 145_000),
-    ("meeting", &["मिटिङ", "मिटिङ्ग"], 125_000),
-    ("training", &["ट्रेनिङ"], 95_000),
-    ("planning", &["प्लानिङ"], 80_000),
-    ("party", &["पार्टी"], 185_000),
-    ("leader", &["लिडर"], 85_000),
-    ("minister", &["मिनिस्टर"], 70_000),
-    ("parliament", &["पार्लियामेन्ट"], 60_000),
-    ("court", &["कोर्ट"], 85_000),
-    ("film", &["फिल्म"], 135_000),
-    ("movie", &["मुभी"], 95_000),
-    ("music", &["म्युजिक"], 105_000),
-    ("radio", &["रेडियो"], 125_000),
-    ("television", &["टेलिभिजन"], 95_000),
-    ("tv", &["टिभी"], 115_000),
-    ("channel", &["च्यानल"], 105_000),
-    ("team", &["टिम", "टीम"], 130_000),
-    ("group", &["ग्रुप"], 115_000),
-    ("center", &["सेन्टर"], 120_000),
-    ("centre", &["सेन्टर"], 120_000),
-    ("company", &["कम्पनी"], 155_000),
-    ("factory", &["फ्याक्ट्री"], 70_000),
-    ("engine", &["इन्जिन"], 75_000),
-    ("engineer", &["इन्जिनियर"], 105_000),
-    ("engineering", &["इन्जिनियरिङ"], 95_000),
-    ("science", &["साइन्स"], 85_000),
-    ("psychology", &["साइकोलोजी"], 55_000),
-    ("pm", &["पीएम", "पिएम", "PM"], 250_000),
-    ("am", &["एएम", "AM"], 180_000),
-    ("cm", &["सिएम", "सीएम", "CM"], 150_000),
-    ("ac", &["एसी", "AC"], 150_000),
-    ("dc", &["डिसी", "DC"], 140_000),
-    ("ok", &["ओके", "OK"], 220_000),
-];
+/// Standard English alphabet letter names in Devanagari (used for open-vocabulary acronym pronunciation,
+/// e.g. PM -> पीएम, TV -> टिभी, OTP -> ओटिपी, PDF -> पीडिएफ).
+pub fn letter_name_devanagari(c: char) -> &'static str {
+    match c.to_ascii_uppercase() {
+        'A' => "ए",
+        'B' => "बि",
+        'C' => "सि",
+        'D' => "डि",
+        'E' => "इ",
+        'F' => "एफ",
+        'G' => "जि",
+        'H' => "एच",
+        'I' => "आइ",
+        'J' => "जे",
+        'K' => "के",
+        'L' => "एल",
+        'M' => "एम",
+        'N' => "एन",
+        'O' => "ओ",
+        'P' => "पी",
+        'Q' => "क्यु",
+        'R' => "आर",
+        'S' => "एस",
+        'T' => "टि",
+        'U' => "यु",
+        'V' => "भी",
+        'W' => "डब्लु",
+        'X' => "एक्स",
+        'Y' => "वाइ",
+        'Z' => "जेट",
+        _ => "",
+    }
+}
 
 /// Ordered longest-first so chained suffixes (`-harulai`, `-haruko`) strip before
 /// single suffixes (`-lai`, `-ko`).
-const NEPALI_PRODUCTIVE_SUFFIXES: &[(&str, &str)] = &[
+pub const NEPALI_PRODUCTIVE_SUFFIXES: &[(&str, &str)] = &[
     ("harulai", "हरूलाई"),
     ("haruko", "हरूको"),
     ("haruka", "हरूका"),
@@ -300,13 +127,6 @@ pub fn should_bypass_transliteration(token: &str) -> bool {
     false
 }
 
-pub fn is_nepali_core_homograph(roman: &str) -> bool {
-    let lower = roman.to_ascii_lowercase();
-    NEPALI_CORE_HOMOGRAPHS
-        .iter()
-        .any(|(k, _)| *k == lower.as_str())
-}
-
 pub fn english_orthographic_score(roman: &str) -> f32 {
     let s = roman.to_ascii_lowercase();
     let mut score = 0.0f32;
@@ -367,10 +187,6 @@ pub fn english_orthographic_score(roman: &str) -> f32 {
         }
     }
 
-    if is_nepali_core_homograph(&s) {
-        score -= 0.55;
-    }
-
     score.clamp(-1.0, 1.0)
 }
 
@@ -380,54 +196,6 @@ pub fn split_nepali_suffix(input: &str) -> Option<(&str, &'static str, &'static 
         if input.len() >= suf_rom.len() + 3 && input.ends_with(suf_rom) {
             let stem_len = lower_bytes.len() - suf_rom.len();
             let stem = &input[..stem_len];
-            if NEPALI_NATIVIZED_LOANWORDS
-                .iter()
-                .any(|(w, _, _)| *w == input)
-            {
-                return None;
-            }
-            if matches!(
-                input,
-                "cinema"
-                    | "drama"
-                    | "trauma"
-                    | "comma"
-                    | "asthma"
-                    | "diploma"
-                    | "karma"
-                    | "sharma"
-                    | "table"
-                    | "cable"
-                    | "apple"
-                    | "simple"
-                    | "sample"
-                    | "people"
-                    | "double"
-                    | "trouble"
-                    | "uncle"
-                    | "circle"
-                    | "cycle"
-                    | "article"
-                    | "vehicle"
-                    | "female"
-                    | "male"
-                    | "sale"
-                    | "scale"
-                    | "file"
-                    | "mile"
-                    | "smile"
-                    | "style"
-                    | "while"
-                    | "profile"
-                    | "mobile"
-                    | "role"
-                    | "whole"
-                    | "rule"
-                    | "schedule"
-                    | "module"
-            ) {
-                return None;
-            }
             return Some((stem, suf_rom, suf_dev));
         }
     }
@@ -441,63 +209,69 @@ pub fn generate_english_and_codemixed_candidates(roman: &str) -> Vec<EnglishCand
     }
 
     let mut results = Vec::new();
-    let homograph_cap = is_nepali_core_homograph(&clean);
     let ortho_score = english_orthographic_score(&clean);
 
-    for &(word, dev_forms, freq) in NEPALI_NATIVIZED_LOANWORDS {
-        if word == clean {
-            for (idx, &dev) in dev_forms.iter().enumerate() {
-                results.push(EnglishCandidate {
-                    devanagari: dev.to_string(),
-                    confidence: (0.95 - (idx as f32) * 0.08).max(0.5),
-                    effective_stem_freq: freq,
-                    homograph_cap_rank2: homograph_cap,
-                    english_stem: clean.clone(),
-                    nepali_suffix_devanagari: String::new(),
-                });
-            }
-            return results;
-        }
-    }
-
+    // 1. Suffix detachment for agglutinative code-mixing (e.g. facebookma, linkharulai, driverle)
     if let Some((stem, _suf_rom, suf_dev)) = split_nepali_suffix(&clean) {
-        for &(word, dev_forms, freq) in NEPALI_NATIVIZED_LOANWORDS {
-            if word == stem {
-                for (idx, &dev_stem) in dev_forms.iter().enumerate() {
-                    let combined = format!("{}{}", dev_stem, suf_dev);
-                    results.push(EnglishCandidate {
-                        devanagari: combined,
-                        confidence: (0.92 - (idx as f32) * 0.08).max(0.5),
-                        effective_stem_freq: (freq * 4) / 5,
-                        homograph_cap_rank2: false,
-                        english_stem: stem.to_string(),
-                        nepali_suffix_devanagari: suf_dev.to_string(),
-                    });
-                }
-                return results;
+        let mut stem_cands = Vec::new();
+        for s in crate::core::english_phonetic::english_to_devanagari(stem) {
+            if !stem_cands.contains(&s) {
+                stem_cands.push(s);
+            }
+        }
+        if let Some(s) = transduce_english_stem_fallback(stem) {
+            if !stem_cands.contains(&s) {
+                stem_cands.push(s);
             }
         }
 
-        if let Some(stem_dev) = transduce_english_stem_fallback(stem) {
+        for (idx, stem_dev) in stem_cands.into_iter().enumerate() {
             let combined = format!("{}{}", stem_dev, suf_dev);
+            let conf = (0.75 - (idx as f32) * 0.05 + 0.15 * ortho_score).clamp(0.40, 0.90);
             results.push(EnglishCandidate {
                 devanagari: combined,
-                confidence: (0.70 + 0.20 * ortho_score).clamp(0.35, 0.90),
-                effective_stem_freq: 25_000,
-                homograph_cap_rank2: false,
+                confidence: conf,
                 english_stem: stem.to_string(),
                 nepali_suffix_devanagari: suf_dev.to_string(),
             });
         }
     }
 
-    if let Some(dev) = transduce_english_stem_fallback(&clean) {
+    // 2. Full-word open-vocabulary English phonemic transduction
+    let mut word_cands = Vec::new();
+    for w in crate::core::english_phonetic::english_to_devanagari(&clean) {
+        if !word_cands.contains(&w) {
+            word_cands.push(w);
+        }
+    }
+    if let Some(w) = transduce_english_stem_fallback(&clean) {
+        if !word_cands.contains(&w) {
+            word_cands.push(w);
+        }
+    }
+
+    // Consonant-only acronym letter-name pronunciation (e.g. pm -> पीएम, tv -> टिभी)
+    if clean.len() >= 2
+        && clean.len() <= 3
+        && !clean
+            .chars()
+            .any(|c| matches!(c, 'a' | 'e' | 'i' | 'o' | 'u'))
+    {
+        let acronym_dev = clean
+            .chars()
+            .map(letter_name_devanagari)
+            .collect::<String>();
+        if !acronym_dev.is_empty() && !word_cands.contains(&acronym_dev) {
+            word_cands.push(acronym_dev);
+        }
+    }
+
+    for (idx, dev) in word_cands.into_iter().enumerate() {
+        let conf = (0.70 - (idx as f32) * 0.05 + 0.20 * ortho_score).clamp(0.30, 0.88);
         results.push(EnglishCandidate {
             devanagari: dev,
-            confidence: (0.65 + 0.25 * ortho_score).clamp(0.25, 0.88),
-            effective_stem_freq: if homograph_cap { 1_500 } else { 20_000 },
-            homograph_cap_rank2: homograph_cap,
-            english_stem: clean,
+            confidence: conf,
+            english_stem: clean.clone(),
             nepali_suffix_devanagari: String::new(),
         });
     }
@@ -544,6 +318,10 @@ pub fn transduce_english_stem_fallback(stem: &str) -> Option<String> {
         ("ptor", "प्टर"),
         ("ance", "एन्स"),
         ("ence", "ेन्स"),
+        ("spital", "स्पिटल"),
+        ("ital", "िटल"),
+        ("ical", "िकल"),
+        ("al", "ल"),
         ("ing", "िङ"),
         ("er", "र"),
         ("or", "र"),
@@ -614,6 +392,26 @@ pub fn transduce_english_stem_fallback(stem: &str) -> Option<String> {
             out.push('न');
             after_consonant = true;
             i += 2;
+        } else if rem.starts_with("nk") {
+            out.push_str("ङ्क");
+            after_consonant = true;
+            i += 2;
+        } else if rem.starts_with("ng") {
+            out.push('ङ');
+            after_consonant = true;
+            i += 2;
+        } else if rem.starts_with("mp") {
+            out.push_str("म्प");
+            after_consonant = true;
+            i += 2;
+        } else if rem.starts_with("nt") {
+            out.push_str("न्ट");
+            after_consonant = true;
+            i += 2;
+        } else if rem.starts_with("nd") {
+            out.push_str("न्ड");
+            after_consonant = true;
+            i += 2;
         } else if rem.starts_with("ee") || rem.starts_with("ea") {
             out.push(if after_consonant { 'ि' } else { 'इ' });
             after_consonant = false;
@@ -654,7 +452,15 @@ pub fn transduce_english_stem_fallback(stem: &str) -> Option<String> {
                     after_consonant = false;
                 }
                 b'o' => {
-                    out.push(if after_consonant { 'ो' } else { 'ओ' });
+                    let next_is_stop_or_sib = (i + 1 < bytes.len()
+                        && matches!(bytes[i + 1], b'x' | b't' | b'p' | b'k' | b'c' | b'g' | b's'))
+                        || (i + 1 == bytes.len()
+                            && (suffix_dev.starts_with('स') || suffix_dev.starts_with("स्")));
+                    if after_consonant && next_is_stop_or_sib {
+                        // Short 'o' before coda stops/sibilants retains inherent vowel
+                    } else {
+                        out.push(if after_consonant { 'ो' } else { 'ओ' });
+                    }
                     after_consonant = false;
                 }
                 b'u' => {
@@ -959,37 +765,12 @@ pub fn special_token_suggestions(token: &str) -> Option<Vec<(String, u64)>> {
 
     // 5. Standalone all-uppercase Latin acronyms (2 to 6 uppercase ASCII characters)
     if t.len() >= 2 && t.len() <= 6 && t.chars().all(|c| c.is_ascii_uppercase()) {
-        match t {
-            "PM" => {
-                return Some(vec![
-                    ("PM".to_string(), 800_000),
-                    ("पीएम".to_string(), 795_000),
-                    ("पिएम".to_string(), 790_000),
-                ]);
-            }
-            "AM" => {
-                return Some(vec![
-                    ("AM".to_string(), 800_000),
-                    ("एएम".to_string(), 795_000),
-                    ("आम".to_string(), 790_000),
-                ]);
-            }
-            "OK" => {
-                return Some(vec![
-                    ("OK".to_string(), 800_000),
-                    ("ओके".to_string(), 795_000),
-                ]);
-            }
-            "RAM" => {
-                return Some(vec![
-                    ("RAM".to_string(), 800_000),
-                    ("राम".to_string(), 795_000),
-                ]);
-            }
-            _ => {
-                return Some(vec![(t.to_string(), 800_000)]);
-            }
+        let mut out = vec![(t.to_string(), 800_000)];
+        let letter_reading = t.chars().map(letter_name_devanagari).collect::<String>();
+        if !letter_reading.is_empty() {
+            out.push((letter_reading, 795_000));
         }
+        return Some(out);
     }
 
     None
@@ -1015,23 +796,14 @@ mod tests {
     }
 
     #[test]
-    fn test_homograph_detection() {
-        assert!(is_nepali_core_homograph("man"));
-        assert!(is_nepali_core_homograph("din"));
-        assert!(is_nepali_core_homograph("ram"));
-        assert!(!is_nepali_core_homograph("computer"));
-        assert!(!is_nepali_core_homograph("facebook"));
-    }
-
-    #[test]
-    fn test_nativized_loanwords() {
+    fn test_open_vocabulary_loanwords() {
         let cands = generate_english_and_codemixed_candidates("biscuit");
         assert!(cands.iter().any(|c| c.devanagari == "बिस्कुट"));
 
         let hosp = generate_english_and_codemixed_candidates("hospital");
         assert!(hosp
             .iter()
-            .any(|c| c.devanagari == "अस्पताल" || c.devanagari == "हस्पिटल"));
+            .any(|c| c.devanagari == "हस्पिटल" || c.devanagari == "अस्पताल"));
     }
 
     #[test]

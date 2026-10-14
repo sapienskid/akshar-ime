@@ -749,49 +749,50 @@ impl ImeEngine {
                         roman,
                     )
                 {
-                    let lvl = self
+                    let full_lvl = self
                         .lexicon
                         .as_ref()
                         .map(|l| l.level(&cand.devanagari, self.language))
                         .unwrap_or(0) as u64;
 
-                    let score = if cand.homograph_cap_rank2 {
-                        // Homograph collision guard: keep English loanword candidate in top-5
-                        // but strictly cap below core native Devanagari words (base 420,000).
-                        420_000 + (lvl * 150)
-                    } else if cand.effective_stem_freq >= 100_000
-                        && cand.nepali_suffix_devanagari.is_empty()
-                    {
-                        // High-confidence nativized standalone loanword / acronym without homograph collision
-                        // (e.g. "pm" -> "पीएम", "tv" -> "टिभी")
-                        800_000 + ((cand.confidence * 5_000.0) as u64) + (lvl * 50)
-                    } else if lvl > 0 {
-                        // Attested in the 700k lexicon
-                        500_000 + ((cand.confidence * 70_000.0) as u64) + (lvl * 400)
-                    } else if cand.effective_stem_freq >= 50_000 {
-                        // High-frequency nativized stem with attached Nepali suffix (e.g. facebookma, linkharulai)
-                        495_000 + ((cand.confidence * 60_000.0) as u64)
+                    let stem_lvl = if !cand.nepali_suffix_devanagari.is_empty() {
+                        let dev_stem = cand
+                            .devanagari
+                            .strip_suffix(&cand.nepali_suffix_devanagari)
+                            .unwrap_or(&cand.devanagari);
+                        self.lexicon
+                            .as_ref()
+                            .map(|l| l.level(dev_stem, self.language))
+                            .unwrap_or(0) as u64
                     } else {
+                        0
+                    };
+
+                    let effective_lvl = full_lvl.max(stem_lvl);
+
+                    let score = if effective_lvl > 0 {
+                        // Attested in the 700k lexicon (either as full word or attested stem + suffix)
+                        500_000 + ((cand.confidence * 70_000.0) as u64) + (effective_lvl * 400)
+                    } else {
+                        // Unattested in lexicon: reachability band
                         390_000 + ((cand.confidence * 40_000.0) as u64)
                     };
                     add(cand.devanagari, score);
                 }
 
-                // Also supplement with open-vocabulary English phonemizer for broad coverage if not a core homograph
-                if !crate::core::english_loanword_upgrade::is_nepali_core_homograph(roman) {
-                    for eng_dev in crate::core::english_phonetic::english_to_devanagari(roman) {
-                        let lvl = self
-                            .lexicon
-                            .as_ref()
-                            .map(|l| l.level(&eng_dev, self.language))
-                            .unwrap_or(0) as u64;
-                        let score = if lvl > 0 {
-                            490_000 + (lvl * 450)
-                        } else {
-                            380_000
-                        };
-                        add(eng_dev, score);
-                    }
+                // Also supplement with open-vocabulary English phonemizer for broad coverage
+                for eng_dev in crate::core::english_phonetic::english_to_devanagari(roman) {
+                    let lvl = self
+                        .lexicon
+                        .as_ref()
+                        .map(|l| l.level(&eng_dev, self.language))
+                        .unwrap_or(0) as u64;
+                    let score = if lvl > 0 {
+                        490_000 + (lvl * 450)
+                    } else {
+                        380_000
+                    };
+                    add(eng_dev, score);
                 }
             }
         }
@@ -998,11 +999,7 @@ impl ImeEngine {
                             .map(|l| l.level(cand, self.language))
                             .unwrap_or(0);
 
-                        if c_lvl >= 48
-                            && !crate::core::english_loanword_upgrade::is_nepali_core_homograph(
-                                &r_lower,
-                            )
-                        {
+                        if c_lvl >= 48 {
                             let is_eng_match = crate::core::english_loanword_upgrade::generate_english_and_codemixed_candidates(&r_lower)
                                 .iter()
                                 .any(|e| &e.devanagari == cand)
