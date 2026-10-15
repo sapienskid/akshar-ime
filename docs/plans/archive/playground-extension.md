@@ -1,6 +1,6 @@
 # Playground + Browser Extension Plan (2026-09-22)
 
-Status: playground DONE (shipped to `Fundaments-Work/akshar-playground`,
+Status: playground DONE (shipped to `sapienskid/akshar-playground`,
 private); extension still to build. Training (`train-mid-att`) is running;
 nothing here touches the engine, the model, or any hot path.
 
@@ -49,7 +49,7 @@ stub for one release, then deleted.
 
 ## A. Playground on Cloudflare — DONE 2026-09-22
 
-Shipped as the private repo `Fundaments-Work/akshar-playground`
+Shipped as the private repo `sapienskid/akshar-playground`
 (self-contained: engine + wrapper + model bundled, no CDN, clean editor,
 no integration guide). Deploy: `wrangler deploy` (Workers) or
 `wrangler pages deploy public`. Engine refresh = copy the 3 paths in that

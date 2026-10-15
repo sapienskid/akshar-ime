@@ -329,7 +329,7 @@ of `user_confirms` (sets prev, clears the prev-dependent suggestion cache).
 ### Playground: separate self-contained repo (no CDN)
 
 - `apps/playground/` moved OUT to the private repo
-  `Fundaments-Work/akshar-playground` (nested here only under gitignored
+  `sapienskid/akshar-playground` (nested here only under gitignored
   `deploy/`): clean editor shell (word/document, copy/download/clear,
   learned-reset; no integration guide, no emojis), engine + wrapper + model
   bundled under `public/` — no CDN, no external requests, no build step.

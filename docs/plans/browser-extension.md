@@ -5,7 +5,7 @@ Status: **plan only, nothing built.** This document supersedes section B
 `docs/plans/archive/playground-extension.md` (2026-09-22), which assumed a
 single-browser, in-repo extension. Both the repository decision and the
 target-browser set have changed. Section A of that document (the playground,
-shipped to `Fundaments-Work/akshar-playground`) is unaffected and remains
+shipped to `sapienskid/akshar-playground`) is unaffected and remains
 the record of that work.
 
 Nothing here touches the engine's scoring, the model, or any hot path. The
@@ -16,7 +16,7 @@ defaults to today's behaviour.
 
 | Decision | Choice | Basis |
 | :--- | :--- | :--- |
-| Repository | **Separate repo**, `Fundaments-Work/akshar-extension` | See "Why a separate repo" |
+| Repository | **Separate repo**, `sapienskid/akshar-extension` | See "Why a separate repo" |
 | Target browsers | **Chrome + Firefox**, MV3, from first release | Firefox diverges on background model; see "Firefox is not a port" |
 | Model delivery | **Bundled inside the extension** | Preserves the "nothing leaves your device" claim with zero network code |
 | Engine coupling | **Pinned GitHub release tag**, consumed at build time | Reproducible builds; no vendored binaries; no submodule |
@@ -94,7 +94,7 @@ Not "extension code is different" — the substantive reasons:
 - **The coupling is one artifact.** wasm pkg + model, both already
   published as release artifacts. A pinned tag resolves it.
 - **Precedent.** The playground already moved to
-  `Fundaments-Work/akshar-playground` for the same class of reason.
+  `sapienskid/akshar-playground` for the same class of reason.
 
 The honest cost: an engine fix reaches users only after publish → bump pin
 → rebuild → **re-review**. Mitigation is to pin the engine version and not

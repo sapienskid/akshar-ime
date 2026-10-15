@@ -13,7 +13,7 @@ dist
 .zcode/
 
 # Nested deploy checkout (separate private repo
-# Fundaments-Work/akshar-playground, cloned for sync convenience).
+# sapienskid/akshar-playground, cloned for sync convenience).
 # Never commit engine work through it.
 /deploy/
 
