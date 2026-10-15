@@ -4,7 +4,7 @@ Fast, lightweight, and intelligent phonetic Input Method Engine (IME) for **Nepa
 
 Akshar converts Roman-script typing into Devanagari. One unified phonetic transducer, an orthographic syllable language model, and a frequency-ranked lexicon of 700,000 Nepali words. You type `namaste`, it offers `नमस्ते`.
 
-![CI](https://github.com/Fundaments-Work/akshar-ime/actions/workflows/ci.yml/badge.svg)
+![CI](https://github.com/sapienskid/akshar-ime/actions/workflows/ci.yml/badge.svg)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
 ---

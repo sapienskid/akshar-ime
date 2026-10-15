@@ -1958,7 +1958,7 @@ rerankerUrl)` from `packages/engine-wasm/pkg/akshar_ime.js` (raw factory
 `getSuggestions`, `confirm`, `export_state`/`import_state`.
 
 The runnable playground (editor UI) ships from the separate private repo
-`Fundaments-Work/akshar-playground` — self-contained (engine, wrapper and
+`sapienskid/akshar-playground` — self-contained (engine, wrapper and
 model bundled under `public/`, no CDN, no external requests), deployable to
 Cloudflare Workers or Pages. Sync flow: copy `packages/engine-js/`,
 `packages/engine-wasm/pkg/` and `data/akshar_wasm.model` into its `public/`
