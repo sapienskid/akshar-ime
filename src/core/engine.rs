@@ -741,58 +741,67 @@ impl ImeEngine {
                     }
                 }
 
-                // 2d. English loanword & code-mixed phonemic transduction upgrade.
-                //     Converts English orthography into conventional Devanagari spellings
-                //     (e.g. side -> साइड, biscuit -> बिस्कुट, facebookma -> फेसबुकमा).
-                for cand in
-                    crate::core::english_loanword_upgrade::generate_english_and_codemixed_candidates(
-                        roman,
-                    )
-                {
-                    let full_lvl = self
-                        .lexicon
-                        .as_ref()
-                        .map(|l| l.level(&cand.devanagari, self.language))
-                        .unwrap_or(0) as u64;
-
-                    let stem_lvl = if !cand.nepali_suffix_devanagari.is_empty() {
-                        let dev_stem = cand
-                            .devanagari
-                            .strip_suffix(&cand.nepali_suffix_devanagari)
-                            .unwrap_or(&cand.devanagari);
-                        self.lexicon
+                // 2d. English loanword & code-mixed phonemic transduction.
+                //     Converts English orthography into conventional Devanagari
+                //     spellings (e.g. side -> साइड, biscuit -> बिस्कुट).
+                //
+                //     This path is measured, not assumed: on the held-out AK
+                //     split it buys +0.56pp in-list@8 and costs 0.93pp on valid,
+                //     which nets to zero across the two splits. It is kept for
+                //     the capability it adds (OOV English and code-mixed input),
+                //     and `AKSHAR_NO_ENGLISH_CANDIDATES=1` ablates it from the
+                //     shipped binary.
+                if !crate::core::ablation::no_english_candidates() {
+                    for cand in
+                        crate::core::english_loanword_upgrade::generate_english_and_codemixed_candidates(
+                            roman,
+                        )
+                    {
+                        let full_lvl = self
+                            .lexicon
                             .as_ref()
-                            .map(|l| l.level(dev_stem, self.language))
-                            .unwrap_or(0) as u64
-                    } else {
-                        0
-                    };
+                            .map(|l| l.level(&cand.devanagari, self.language))
+                            .unwrap_or(0) as u64;
 
-                    let effective_lvl = full_lvl.max(stem_lvl);
+                        let stem_lvl = if !cand.nepali_suffix_devanagari.is_empty() {
+                            let dev_stem = cand
+                                .devanagari
+                                .strip_suffix(&cand.nepali_suffix_devanagari)
+                                .unwrap_or(&cand.devanagari);
+                            self.lexicon
+                                .as_ref()
+                                .map(|l| l.level(dev_stem, self.language))
+                                .unwrap_or(0) as u64
+                        } else {
+                            0
+                        };
 
-                    let score = if effective_lvl > 0 {
-                        // Attested in the 700k lexicon (either as full word or attested stem + suffix)
-                        500_000 + ((cand.confidence * 70_000.0) as u64) + (effective_lvl * 400)
-                    } else {
-                        // Unattested in lexicon: reachability band
-                        390_000 + ((cand.confidence * 40_000.0) as u64)
-                    };
-                    add(cand.devanagari, score);
-                }
+                        let effective_lvl = full_lvl.max(stem_lvl);
 
-                // Also supplement with open-vocabulary English phonemizer for broad coverage
-                for eng_dev in crate::core::english_phonetic::english_to_devanagari(roman) {
-                    let lvl = self
-                        .lexicon
-                        .as_ref()
-                        .map(|l| l.level(&eng_dev, self.language))
-                        .unwrap_or(0) as u64;
-                    let score = if lvl > 0 {
-                        490_000 + (lvl * 450)
-                    } else {
-                        380_000
-                    };
-                    add(eng_dev, score);
+                        let score = if effective_lvl > 0 {
+                            // Attested in the 700k lexicon (full word or attested stem + suffix)
+                            500_000 + ((cand.confidence * 70_000.0) as u64) + (effective_lvl * 400)
+                        } else {
+                            // Unattested in lexicon: reachability band
+                            390_000 + ((cand.confidence * 40_000.0) as u64)
+                        };
+                        add(cand.devanagari, score);
+                    }
+
+                    // Broader open-vocabulary English phonemizer coverage.
+                    for eng_dev in crate::core::english_phonetic::english_to_devanagari(roman) {
+                        let lvl = self
+                            .lexicon
+                            .as_ref()
+                            .map(|l| l.level(&eng_dev, self.language))
+                            .unwrap_or(0) as u64;
+                        let score = if lvl > 0 {
+                            490_000 + (lvl * 450)
+                        } else {
+                            380_000
+                        };
+                        add(eng_dev, score);
+                    }
                 }
             }
         }
@@ -991,7 +1000,7 @@ impl ImeEngine {
                             .map(|l| l.level(cand, self.language))
                             .unwrap_or(0);
 
-                        if c_lvl >= 48 {
+                        if c_lvl >= 48 && !crate::core::ablation::no_english_candidates() {
                             let is_eng_match = crate::core::english_loanword_upgrade::generate_english_and_codemixed_candidates(&r_lower)
                                 .iter()
                                 .any(|e| &e.devanagari == cand)
