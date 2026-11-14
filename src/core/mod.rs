@@ -6,9 +6,11 @@ pub mod context;
 pub mod decoder;
 pub mod em_trainer;
 pub mod engine;
+pub mod english_loanword_upgrade;
 pub mod english_phonetic;
 pub mod holdout;
 pub mod lexicon;
+pub mod multi_key_generator;
 pub mod normalizer;
 pub mod phonetic_key;
 pub mod reranker;
@@ -40,6 +42,8 @@ pub mod wordtrie;
 /// | `AKSHAR_USER_TRIE_BASE` | learned-word base score (default 900000) |
 /// | `AKSHAR_FUZZY_BASE` | fuzzy-match base score (default 600000) |
 /// | `AKSHAR_KN_FIXED_DISCOUNT` | single-discount LM ablation |
+/// | `AKSHAR_NO_ENGLISH_CANDIDATES` | skip open-vocabulary English/loanword candidates |
+/// | `AKSHAR_NO_MULTI_KEY` | skip multi-key projections in the phonetic index |
 pub mod ablation {
     use std::sync::OnceLock;
 
@@ -77,6 +81,11 @@ pub mod ablation {
     cached_flag!(no_variants, "AKSHAR_NO_VARIANTS");
     cached_flag!(no_phonetic_key, "AKSHAR_NO_PHONETIC_KEY");
     cached_flag!(no_eow, "AKSHAR_NO_EOW");
+    // The English/loanword path and the multi-key index are supplementary
+    // candidate sources. These flags exist so both can be ablated from the
+    // shipped binary, the same way the older components are.
+    cached_flag!(no_english_candidates, "AKSHAR_NO_ENGLISH_CANDIDATES");
+    cached_flag!(no_multi_key, "AKSHAR_NO_MULTI_KEY");
 
     /// Dense/heuristic blend override; `None` means use the compiled GAMMA.
     /// Non-finite values (NaN/±inf from a bad env string) are rejected here

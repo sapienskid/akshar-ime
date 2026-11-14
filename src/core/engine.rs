@@ -481,6 +481,14 @@ impl ImeEngine {
             out
         };
 
+        // 0. Special token suggestions: raw Latin bypass (URLs, emails, @handles, #hashtags, identifiers),
+        //    time expressions (e.g. "10am", "10:30pm", "a.m.", "p.m."), units ("10kg"), and uppercase acronyms.
+        if let Some(special) =
+            crate::core::english_loanword_upgrade::special_token_suggestions(prefix)
+        {
+            return finish(special);
+        }
+
         // Maximal runs of letters (words for the model) and of everything
         // else (literals), in input order.
         let mut runs: Vec<(bool, &str)> = Vec::new(); // (is_word, text)
@@ -733,23 +741,67 @@ impl ImeEngine {
                     }
                 }
 
-                // 2d. English loanword phonemic transduction.
-                //     Converts English orthography into conventional Devanagari spellings
-                //     (e.g. side -> साइड, plate -> प्लेट, fashion -> फेशन, biscuit -> बिस्कुट).
-                for eng_dev in crate::core::english_phonetic::english_to_devanagari(roman) {
-                    let lvl = self
-                        .lexicon
-                        .as_ref()
-                        .map(|l| l.level(&eng_dev, self.language))
-                        .unwrap_or(0) as u64;
-                    // If word is attested in the 700k lexicon, give it high confidence in the in-list band.
-                    // If not attested, still surface it in the reachability band.
-                    let score = if lvl > 0 {
-                        490_000 + (lvl * 450)
-                    } else {
-                        380_000
-                    };
-                    add(eng_dev, score);
+                // 2d. English loanword & code-mixed phonemic transduction.
+                //     Converts English orthography into conventional Devanagari
+                //     spellings (e.g. side -> साइड, biscuit -> बिस्कुट).
+                //
+                //     This path is measured, not assumed: on the held-out AK
+                //     split it buys +0.56pp in-list@8 and costs 0.93pp on valid,
+                //     which nets to zero across the two splits. It is kept for
+                //     the capability it adds (OOV English and code-mixed input),
+                //     and `AKSHAR_NO_ENGLISH_CANDIDATES=1` ablates it from the
+                //     shipped binary.
+                if !crate::core::ablation::no_english_candidates() {
+                    for cand in
+                        crate::core::english_loanword_upgrade::generate_english_and_codemixed_candidates(
+                            roman,
+                        )
+                    {
+                        let full_lvl = self
+                            .lexicon
+                            .as_ref()
+                            .map(|l| l.level(&cand.devanagari, self.language))
+                            .unwrap_or(0) as u64;
+
+                        let stem_lvl = if !cand.nepali_suffix_devanagari.is_empty() {
+                            let dev_stem = cand
+                                .devanagari
+                                .strip_suffix(&cand.nepali_suffix_devanagari)
+                                .unwrap_or(&cand.devanagari);
+                            self.lexicon
+                                .as_ref()
+                                .map(|l| l.level(dev_stem, self.language))
+                                .unwrap_or(0) as u64
+                        } else {
+                            0
+                        };
+
+                        let effective_lvl = full_lvl.max(stem_lvl);
+
+                        let score = if effective_lvl > 0 {
+                            // Attested in the 700k lexicon (full word or attested stem + suffix)
+                            500_000 + ((cand.confidence * 70_000.0) as u64) + (effective_lvl * 400)
+                        } else {
+                            // Unattested in lexicon: reachability band
+                            390_000 + ((cand.confidence * 40_000.0) as u64)
+                        };
+                        add(cand.devanagari, score);
+                    }
+
+                    // Broader open-vocabulary English phonemizer coverage.
+                    for eng_dev in crate::core::english_phonetic::english_to_devanagari(roman) {
+                        let lvl = self
+                            .lexicon
+                            .as_ref()
+                            .map(|l| l.level(&eng_dev, self.language))
+                            .unwrap_or(0) as u64;
+                        let score = if lvl > 0 {
+                            490_000 + (lvl * 450)
+                        } else {
+                            380_000
+                        };
+                        add(eng_dev, score);
+                    }
                 }
             }
         }
@@ -814,7 +866,7 @@ impl ImeEngine {
         // 6. In-beam orthographic tie-breaker (D5 / MANUAL §16/§17.2).
         //    Resolves close candidate ties (gap <= 350,000) between words that share the
         //    same canonical phonetic key (e.g. रूखो vs रुखो, ईश्वर vs इश्वर, चीज vs चिज).
-        if out.len() >= 2 {
+        if out.len() >= 2 && out[0].1 < user_trie_base() {
             let top_score = out[0].1;
             let top_word = out[0].0.clone();
             let top_key = crate::core::phonetic_key::devanagari_to_collapsed_key(&top_word);
@@ -865,6 +917,13 @@ impl ImeEngine {
                                 bonus -= 360_000;
                             }
                         }
+
+                        // NOTE: the minimal-pair matra score (D25) was removed
+                        // here. On the held-out benchmark it cost 0.76 pp top-1
+                        // and 1.67 pp cold-start session accuracy while moving
+                        // no curated stratum, so it did not earn its place.
+                        // score_minimal_pair_matra is retained for a rework.
+
                         // 'ng' cluster fidelity:
                         if r_lower.contains("ng")
                             && cand.contains("\u{0919}\u{094D}")
@@ -907,15 +966,29 @@ impl ImeEngine {
                             .unwrap_or(0);
 
                         if c_lvl >= 24 {
-                            // Promote candidate when it matches user query key exactly, but top1 either:
-                            //  1. Hallucinated extra sounds (e.g. चुड्काका vs चुड्का, खाँडाएपनि vs खाँदापनि)
-                            //  2. Dropped/altered ending sound that user typed (e.g. seta -> सेता vs सेट, adhyatmik -> आध्यात्मिक vs आध्यात्मि)
                             let promote = top_key.len() > r_key.len()
                                 || r_key.chars().last() != top_key.chars().last();
 
                             if promote {
                                 *score = score.saturating_add(360_000);
                             }
+                        }
+                    } else if crate::core::multi_key_generator::project_colloquial_keys(cand)
+                        .iter()
+                        .any(|k| k == &r_lower)
+                        && !crate::core::multi_key_generator::project_colloquial_keys(&top_word)
+                            .iter()
+                            .any(|k| k == &r_lower)
+                    {
+                        // Case B2: Exact match on colloquial / schwa-dropped projection (e.g. "xa" -> "छ", "vayo" -> "भयो")
+                        let c_lvl = self
+                            .lexicon
+                            .as_ref()
+                            .map(|l| l.level(cand, self.language))
+                            .unwrap_or(0);
+
+                        if c_lvl >= 16 {
+                            *score = score.saturating_add(360_000);
                         }
                     } else if top_lvl == 0 {
                         // Case C: Top-1 candidate is an unlexicalized OOV non-word (level == 0),
@@ -927,10 +1000,14 @@ impl ImeEngine {
                             .map(|l| l.level(cand, self.language))
                             .unwrap_or(0);
 
-                        if c_lvl >= 48 {
-                            let eng_candidates =
-                                crate::core::english_phonetic::english_to_devanagari(&r_lower);
-                            if eng_candidates.iter().any(|e| e == cand) {
+                        if c_lvl >= 48 && !crate::core::ablation::no_english_candidates() {
+                            let is_eng_match = crate::core::english_loanword_upgrade::generate_english_and_codemixed_candidates(&r_lower)
+                                .iter()
+                                .any(|e| &e.devanagari == cand)
+                                || crate::core::english_phonetic::english_to_devanagari(&r_lower)
+                                    .iter()
+                                    .any(|e| e == cand);
+                            if is_eng_match {
                                 *score = score.saturating_add(360_000);
                             }
                         }

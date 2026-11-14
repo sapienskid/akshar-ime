@@ -163,7 +163,11 @@ fn transduce_stem(word: &str) -> Vec<String> {
         ("hood", &["हुड"]),
         ("ology", &["ोलोजी"]),
         ("graphy", &["ग्राफी"]),
+        ("spital", &["स्पिटल"]),
+        ("pital", &["पिटल"]),
+        ("ital", &["िटल"]),
         ("ical", &["िकल"]),
+        ("al", &["ल"]),
         ("istic", &["िस्टिक"]),
         ("ism", &["इजम"]),
         ("ist", &["इस्ट"]),
@@ -232,7 +236,12 @@ fn transduce_base(word: &str) -> Vec<String> {
         if is_vowel(vowel) && !is_vowel(coda) && !is_vowel(pre_vowel) {
             let onset_str: String = chars[..n - 3].iter().collect();
             if let Some(onset_dev) = map_onset(&onset_str) {
-                if let Some(coda_dev) = map_coda(coda) {
+                let coda_dev = match coda {
+                    'c' => Some("स"),
+                    'g' => Some("ज"),
+                    other => map_coda(other),
+                };
+                if let Some(coda_dev) = coda_dev {
                     let mut out = Vec::new();
                     match vowel {
                         'i' | 'y' => {
@@ -467,6 +476,32 @@ fn transduce_base(word: &str) -> Vec<String> {
             continue;
         }
 
+        if rem.starts_with("nk") {
+            tokens.push("ङ्क");
+            i += 2;
+            continue;
+        }
+        if rem.starts_with("ng") && (i + 2 == n || !chars[i + 2].is_ascii_alphabetic()) {
+            tokens.push("ङ");
+            i += 2;
+            continue;
+        }
+        if rem.starts_with("mp") && (i + 2 == n || !chars[i + 2].is_ascii_alphabetic()) {
+            tokens.push("म्प");
+            i += 2;
+            continue;
+        }
+        if rem.starts_with("nt") && (i + 2 == n || !chars[i + 2].is_ascii_alphabetic()) {
+            tokens.push("न्ट");
+            i += 2;
+            continue;
+        }
+        if rem.starts_with("nd") && (i + 2 == n || !chars[i + 2].is_ascii_alphabetic()) {
+            tokens.push("न्ड");
+            i += 2;
+            continue;
+        }
+
         // Vowel digraphs
         if rem.starts_with("ee") || rem.starts_with("ea") {
             tokens.push("ी");
@@ -691,8 +726,8 @@ fn transduce_base(word: &str) -> Vec<String> {
         if c == 'o' {
             if i == 0 {
                 tokens.push("अ");
-            } else if i + 1 < n && matches!(chars[i + 1], 'x' | 't' | 'p' | 'k' | 'c' | 'g') {
-                // Short 'o' before coda stops (fox, box, hot, top) retains inherent vowel
+            } else if i + 1 < n && matches!(chars[i + 1], 'x' | 't' | 'p' | 'k' | 'c' | 'g' | 's') {
+                // Short 'o' before coda stops/sibilants (fox, box, hot, top, hospital, cost) retains inherent vowel
             } else {
                 tokens.push("ो");
             }

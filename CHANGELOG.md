@@ -1,5 +1,75 @@
 # Changelog
 
+## 1.3.0 — Code-mixed input, times, units and acronyms
+
+The Nepali decoder is unchanged. This release adds the candidate sources a real
+keyboard needs around it, removes one that did not pay for itself, and makes
+every new source ablatable from the shipped binary.
+
+### New behaviour
+
+- **Time, units and acronyms.** `10am` → `१० AM`, `5pm` → `५ PM`,
+  `10:30am` → `१०:३० AM`, `3kg` → `३ kg`, `2km` → `२ km`; uppercase acronyms
+  stay Latin (`NASA` → `NASA`) with a native spelling next in the list.
+- **Raw-Latin bypass.** URLs, emails, `@handles` and `#hashtags` pass through
+  unchanged instead of being transliterated.
+- **Colloquial spellings.** Schwa-dropped and chat-style roman (`xa`, `vayo`,
+  `huncha`) project onto the same keys as their standard spellings.
+- **Open-vocabulary English and code-mixed input.** Unseen loanwords and
+  Nepali-inflected English stems are transduced instead of failing to decode.
+- **Multi-key phonetic index.** Alternate roman spellings are indexed alongside
+  the canonical keys; `AKSHAR_NO_MULTI_KEY=1` ablates them from the shipped
+  binary.
+
+### Tooling
+
+- **`eval_stratified`** — a 173-case harness across seven strata (core native,
+  agglutinative, colloquial, curated loanwords, OOV English, homograph guard,
+  times/units/acronyms). It reports valid-top-1, strict-top-1, popup@5,
+  in-list@8, reach@50, MRR and a keystroke ratio, and is what the stratum table
+  below was measured with. The cases are authored alongside the features, so
+  that table is in-sample and is not used as the release gate.
+
+### Removed: D25 minimal-pair matra scoring
+
+It shipped with the loanword work and was measured against the same held-out
+harness. It cost 0.76pp top-1 and 1.67pp cold-start session accuracy while
+moving no curated stratum, so it is gone. `score_minimal_pair_matra` is kept in
+`multi_key_generator` for a future rework.
+
+### Measured results
+
+Identical model files on both sides; 4,101 held-out AK rows for `test` and
+2,804 for `valid`; paired McNemar tests on per-case ranks.
+
+| Harness | previous | 1.3.0 | Δ |
+| :-- | --: | --: | --: |
+| test top-1 | 62.16% | 62.20% | +0.04 |
+| test in-list@8 | 80.20% | 80.76% | +0.56 (p = 0.008) |
+| test MRR | 0.689 | 0.691 | +0.002 |
+| valid top-1 | 66.33% | 66.48% | +0.15 |
+| valid in-list@8 | 91.41% | 90.48% | −0.93 (p < 0.001) |
+| valid MRR | 0.757 | 0.754 | −0.003 |
+| session cold | 78.20% | 78.14% | −0.06 |
+| session overall | 95.94% | 97.98% | +2.04 |
+
+**The in-list split is a real trade, not noise.** The English candidate path
+gains 46 cases and loses 23 on `test`, and loses 33 while gaining 7 on `valid`.
+Across the 6,905 held-out rows the net change is −0.04pp, i.e. zero. It is kept
+for the capability it adds; `AKSHAR_NO_ENGLISH_CANDIDATES=1` disables it.
+
+Curated strata (in-sample for the new features):
+
+| Stratum | previous | 1.3.0 |
+| :-- | --: | --: |
+| Overall | 67.63% | 78.61% |
+| Time, units, acronyms | 0.00% | 93.33% |
+| Colloquial / social | 60.00% | 90.00% |
+| Homograph guard | 81.48% | 77.78% |
+| OOV English | 70.00% | 73.33% |
+| Curated loanwords | 60.00% | 60.00% |
+| Core native | 83.87% | 83.87% |
+
 ## 1.2.0 — Nepali-only
 
 The eight-language edition is retired. This release rebuilds the project around
