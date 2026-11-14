@@ -145,3 +145,35 @@ data/
     ├── nep_valid.json      # 2,804 pairs (214 KB)
     └── nep_test.json       # 4,101 AK-Freq pairs (286 KB)
 ```
+
+---
+
+## 5. Archival
+
+`data/` is the only copy of the corpus. Archive it off-machine before making
+any irreversible change:
+
+```sh
+tar -cf - data/nepali_corpus.txt data/aksharantar data/baselines \
+        data/akshar.model data/akshar_wasm.model data/README.md \
+  | zstd -19 -T0 -o akshar-data-$(date +%F).tar.zst
+sha256sum akshar-data-$(date +%F).tar.zst > akshar-data-$(date +%F).tar.zst.sha256
+```
+
+Verify the checksum after uploading (object stores have no checksum API you can
+query). The project keeps the tarball in a **private** Google Drive folder:
+the corpus is a crawl of Nepali news sites and must not be republished.
+
+What is and is not in the archive:
+
+| Kept | Why |
+| :-- | :-- |
+| `nepali_corpus.txt` | The one input that cannot be regenerated; the source crawl is ad hoc and the news sites are not vendored. |
+| `aksharantar/` | Pinned upstream revision. Reproducible in principle, but 184 MB is cheap insurance against the revision disappearing. |
+| `baselines/` | The "previous" side of every A/B number. Losing it makes published comparisons unreproducible. |
+| `akshar.model`, `akshar_wasm.model` | The shipped artifacts. Seeded training is reproducible in principle, but floats and toolchains still move bits. |
+
+Deliberately excluded: `pairs/`, `lexicon.bin` and any rebuilt model. They are
+derived from the rows above by `make data-prepare lexicon train model` with
+seed 7.
+
