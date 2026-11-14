@@ -909,19 +909,11 @@ impl ImeEngine {
                             }
                         }
 
-                        // Principled minimal pair matra scoring (D25)
-                        let cand_matra = crate::core::multi_key_generator::score_minimal_pair_matra(
-                            &r_lower, cand,
-                        );
-                        let top_matra = crate::core::multi_key_generator::score_minimal_pair_matra(
-                            &r_lower, &top_word,
-                        );
-                        let matra_diff = cand_matra - top_matra;
-                        if matra_diff > 0.4 {
-                            bonus += 360_000;
-                        } else if matra_diff < -0.4 {
-                            bonus -= 360_000;
-                        }
+                        // NOTE: the minimal-pair matra score (D25) was removed
+                        // here. On the held-out benchmark it cost 0.76 pp top-1
+                        // and 1.67 pp cold-start session accuracy while moving
+                        // no curated stratum, so it did not earn its place.
+                        // score_minimal_pair_matra is retained for a rework.
 
                         // 'ng' cluster fidelity:
                         if r_lower.contains("ng")
