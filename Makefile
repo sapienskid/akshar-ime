@@ -30,7 +30,7 @@ DESKTOP_TRIGRAM_THRESHOLD ?= 3e-2
         install uninstall reinstall restart-ibus \
         data-prepare lexicon train calibrate promote model eval eval-session \
         eval-stratified eval-interactive \
-        wasm wasm-clean clean reset-learning release-upload help
+        wasm wasm-clean clean reset-learning release-upload release-checksums help
 
 # --- Build Targets ---
 
@@ -179,40 +179,39 @@ reset-learning:  ## Reset user learned dictionary.
 	@rm -f $${XDG_CONFIG_HOME:-$$HOME/.config}/akshar-devanagari/user_dictionary.bin
 	@echo "User learned dictionary reset."
 
-release-upload:  ## Upload locally-built artifacts to an existing release (TAG=v1.2.0).
-	@if [ -z "$(TAG)" ]; then echo "Usage: make release-upload TAG=v1.2.0"; exit 1; fi
+release-upload:  ## Attach locally-trained models to an existing release (TAG=v1.3.0).
+	@if [ -z "$(TAG)" ]; then echo "Usage: make release-upload TAG=v1.3.0"; exit 1; fi
+	@gh release view $(TAG) >/dev/null 2>&1 \
+		|| { echo "release $(TAG) does not exist."; \
+		     echo "Push the tag first and let the Release workflow create it;"; \
+		     echo "CI builds the native and WASM artifacts, the models cannot be built there."; \
+		     exit 1; }
 	@missing=0; \
-	for f in data/akshar.model data/akshar_wasm.model \
-	         packages/engine-wasm/pkg/akshar_ime_bg.wasm \
-	         packages/engine-wasm/pkg/akshar_ime.js; do \
+	for f in data/akshar.model data/akshar_wasm.model; do \
 		if [ ! -f "$$f" ]; then echo "missing: $$f"; missing=1; fi; \
 	done; \
 	if [ "$$missing" = "1" ]; then \
 		echo ""; \
-		echo "  Build the missing pieces first:"; \
+		echo "  Build the models first:"; \
 		echo "    make train && make model   # data/akshar.model"; \
 		echo "    make train-wasm             # data/akshar_wasm.model"; \
-		echo "    make wasm                   # packages/engine-wasm/pkg/"; \
 		exit 1; \
 	fi
-	@gh release view $(TAG) >/dev/null 2>&1 \
-		|| gh release create $(TAG) --generate-notes --verify-tag
-	@echo "Uploading artifacts to release $(TAG)..."
-	@gh release upload $(TAG) --clobber \
-		data/akshar.model \
-		data/akshar_wasm.model \
-		packages/engine-wasm/pkg/akshar_ime_bg.wasm \
-		packages/engine-wasm/pkg/akshar_ime_bg.wasm.d.ts \
-		packages/engine-wasm/pkg/akshar_ime.js \
-		packages/engine-wasm/pkg/akshar_ime.d.ts \
-		packages/engine-js/akshar-ime.js
+	@echo "Uploading models to $(TAG)..."
+	@gh release upload $(TAG) data/akshar.model data/akshar_wasm.model
 	@echo ""
-	@echo "Verify the release lists all seven artifacts:"
-	@echo "  akshar.model, akshar_wasm.model, akshar_ime_bg.wasm,"
-	@echo "  akshar_ime_bg.wasm.d.ts, akshar_ime.js, akshar_ime.d.ts, akshar-ime.js"
-	@echo ""
-	@echo "The wasm model and package are what akshar-playground serves. Without"
-	@echo "them the playground keeps its previous version rather than updating."
+	@echo "No --clobber: a published release is immutable. To ship different"
+	@echo "bytes, cut a new version instead of overwriting this one."
+	@echo "Next: make release-checksums TAG=$(TAG)"
+
+release-checksums:  ## Download a release and attach SHA256SUMS (TAG=v1.3.0).
+	@if [ -z "$(TAG)" ]; then echo "Usage: make release-checksums TAG=v1.3.0"; exit 1; fi
+	@rm -rf dist/checksums && mkdir -p dist/checksums
+	@gh release download $(TAG) --dir dist/checksums --clobber
+	@cd dist/checksums && sha256sum $$(ls | grep -v '^SHA256SUMS$$') > SHA256SUMS
+	@gh release upload $(TAG) dist/checksums/SHA256SUMS --clobber
+	@echo "Attached SHA256SUMS to $(TAG):"
+	@cat dist/checksums/SHA256SUMS
 
 help:  ## Show this help message.
 	@echo "Akshar Devanagari IME"
