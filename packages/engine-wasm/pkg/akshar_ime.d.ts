@@ -1,6 +1,14 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
+ * Returns the engine version (crate version).
+ */
+export function getVersion(): string;
+/**
+ * Create engine from model URL only (convenience, lexicon optional).
+ */
+export function createEngineFromModelUrl(model_url: string): Promise<WasmEngine>;
+/**
  * Transliterate without needing an engine instance, using an empty model — mainly for testing wiring.
  */
 export function quickTransliterate(roman: string): string;
@@ -15,15 +23,7 @@ export function quickTransliterate(roman: string): string;
  * ```
  */
 export function createEngine(model_url: string, lexicon_url?: string | null, reranker_url?: string | null): Promise<WasmEngine>;
-/**
- * Returns the engine version (crate version).
- */
-export function getVersion(): string;
 export function init_panic_hook(): void;
-/**
- * Create engine from model URL only (convenience, lexicon optional).
- */
-export function createEngineFromModelUrl(model_url: string): Promise<WasmEngine>;
 export class WasmEngine {
   free(): void;
   /**

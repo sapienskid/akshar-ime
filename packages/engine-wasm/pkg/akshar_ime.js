@@ -222,6 +222,35 @@ function getArrayJsValueFromWasm0(ptr, len) {
     return result;
 }
 /**
+ * Returns the engine version (crate version).
+ * @returns {string}
+ */
+export function getVersion() {
+    let deferred1_0;
+    let deferred1_1;
+    try {
+        const ret = wasm.getVersion();
+        deferred1_0 = ret[0];
+        deferred1_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+    }
+}
+
+/**
+ * Create engine from model URL only (convenience, lexicon optional).
+ * @param {string} model_url
+ * @returns {Promise<WasmEngine>}
+ */
+export function createEngineFromModelUrl(model_url) {
+    const ptr0 = passStringToWasm0(model_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.createEngineFromModelUrl(ptr0, len0);
+    return ret;
+}
+
+/**
  * Transliterate without needing an engine instance, using an empty model — mainly for testing wiring.
  * @param {string} roman
  * @returns {string}
@@ -266,37 +295,8 @@ export function createEngine(model_url, lexicon_url, reranker_url) {
     return ret;
 }
 
-/**
- * Returns the engine version (crate version).
- * @returns {string}
- */
-export function getVersion() {
-    let deferred1_0;
-    let deferred1_1;
-    try {
-        const ret = wasm.getVersion();
-        deferred1_0 = ret[0];
-        deferred1_1 = ret[1];
-        return getStringFromWasm0(ret[0], ret[1]);
-    } finally {
-        wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
-    }
-}
-
 export function init_panic_hook() {
     wasm.init_panic_hook();
-}
-
-/**
- * Create engine from model URL only (convenience, lexicon optional).
- * @param {string} model_url
- * @returns {Promise<WasmEngine>}
- */
-export function createEngineFromModelUrl(model_url) {
-    const ptr0 = passStringToWasm0(model_url, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.createEngineFromModelUrl(ptr0, len0);
-    return ret;
 }
 
 function __wbg_adapter_24(arg0, arg1, arg2) {
@@ -740,7 +740,7 @@ function __wbg_get_imports() {
         const ret = false;
         return ret;
     };
-    imports.wbg.__wbindgen_closure_wrapper502 = function(arg0, arg1, arg2) {
+    imports.wbg.__wbindgen_closure_wrapper520 = function(arg0, arg1, arg2) {
         const ret = makeMutClosure(arg0, arg1, 94, __wbg_adapter_24);
         return ret;
     };
