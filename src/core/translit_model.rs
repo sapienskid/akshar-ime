@@ -282,15 +282,11 @@ impl TranslitModel {
             return false;
         }
         let n = self.aksharas.len();
-        if self.emissions.len() != n
-            || self.bigrams.len() != n
-            || self.backoff.len() != n
-            || self.unigram_kn.len() != n
-            || self.word_start.len() != n
-        {
-            return false;
-        }
-        true
+        self.emissions.len() == n
+            && self.bigrams.len() == n
+            && self.backoff.len() == n
+            && self.unigram_kn.len() == n
+            && self.word_start.len() == n
     }
 }
 
